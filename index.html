@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>НЕШОП</title>
+    <title>SMOKING MANIA</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body {
@@ -21,6 +21,7 @@
             padding: 15px;
             background: #fff;
             border-bottom: 1px solid #e5e5ea;
+            letter-spacing: 0.5px;
         }
         .search-bar {
             padding: 10px;
@@ -62,23 +63,41 @@
         .product-card {
             background: #fff;
             border-radius: 12px;
-            padding: 10px;
+            padding: 12px;
             text-align: center;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .product-image-container {
+            height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 8px;
         }
         .product-card img {
             max-width: 100%;
-            height: 120px;
+            max-height: 100%;
             object-fit: contain;
         }
         .product-title {
-            font-size: 14px;
+            font-size: 13px;
             margin: 8px 0;
             font-weight: 500;
+            line-height: 1.3;
+            height: 34px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
         }
         .product-price {
             font-weight: bold;
             color: #6b2d38;
+            font-size: 15px;
+            margin-top: auto;
         }
         .nav-bar {
             position: fixed;
@@ -92,6 +111,7 @@
             align-items: center;
             border-top: 1px solid #e5e5ea;
             box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+            z-index: 1000;
         }
         .nav-item {
             text-align: center;
@@ -121,12 +141,13 @@
             text-align: center;
             color: #8e8e93;
             padding: 40px 20px;
+            grid-column: span 2;
         }
     </style>
 </head>
 <body>
 
-    <div class="header">НЕШОП</div>
+    <div class="header">SMOKING MANIA</div>
 
     <div id="page-shop" class="page active">
         <div class="search-bar">
@@ -189,15 +210,14 @@
         async function loadProducts() {
             const container = document.getElementById('products-container');
             try {
-                // Запрос к нашей функции Vercel Serverless
                 const response = await fetch('/api/get-data');
-                if (!response.ok) throw new Error('Сервер ответил с ошибкой: ' + response.status);
+                if (!response.ok) throw new Error('Ошибка сервера: ' + response.status);
                 
                 const data = await response.json();
                 const products = data.rows || [];
                 
                 if (products.length === 0) {
-                    container.innerHTML = '<div class="empty-message">Товары в каталоге не найдены. Проверьте остатки в МоемСкладе.</div>';
+                    container.innerHTML = '<div class="empty-message">Товары не найдены.</div>';
                     return;
                 }
 
@@ -207,10 +227,19 @@
                     const name = prod.name || 'Товар без названия';
                     const price = prod.salePrices && prod.salePrices[0] ? (prod.salePrices[0].value / 100) : 0;
                     
+                    // Проверяем, есть ли изображение в карточке МоегоСклада
+                    let imageUrl = 'https://via.placeholder.com/150?text=SMOKING+MANIA';
+                    if (prod.images && prod.images.rows && prod.images.rows.length > 0) {
+                        // Если картинка есть, берём ссылку на её миниатюру или оригинал
+                        imageUrl = prod.images.rows[0].miniature?.downloadHref || prod.images.rows[0].downloadHref || imageUrl;
+                    }
+                    
                     const card = document.createElement('div');
                     card.className = 'product-card';
                     card.innerHTML = `
-                        <img src="https://via.placeholder.com/150?text=No+Image" alt="${name}">
+                        <div class="product-image-container">
+                            <img src="${imageUrl}" alt="${name}" onerror="this.src='https://via.placeholder.com/150?text=SMOKING+MANIA'">
+                        </div>
                         <div class="product-title">${name}</div>
                         <div class="product-price">${price.toLocaleString('ru-RU')} ₽</div>
                     `;
@@ -218,7 +247,7 @@
                 });
 
             } catch (error) {
-                container.innerHTML = `<div class="empty-message" style="color:red;">Ошибка загрузки каталога: ${error.message}</div>`;
+                container.innerHTML = `<div class="empty-message" style="color:red;">Ошибка: ${error.message}</div>`;
             }
         }
 
