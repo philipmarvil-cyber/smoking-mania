@@ -8,22 +8,26 @@
     
     <title>SMOKING MANIA</title>
     
+    <!-- Подключение Telegram Web App API -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         if (window.Telegram && window.Telegram.WebApp) {
             const tg = window.Telegram.WebApp;
             tg.ready();
             
-            // Красим системные элементы в белый
+            // Красим системные элементы Telegram в белый
             tg.setHeaderColor('#ffffff');
             tg.setBackgroundColor('#f5f5f7');
             
-            // Включаем полноэкранный режим принудительно (как на скриншоте)
+            // Блокировка случайного закрытия свайпом вниз (появится диалог подтверждения)
+            tg.enableClosingConfirmation();
+            
+            // Переход в полноэкранный режим (как на iOS/Android в современных Mini Apps)
             try {
                 if (tg.requestFullscreen) {
                     tg.requestFullscreen();
                 } else {
-                    tg.expand(); // Запасной вариант для старых версий Telegram
+                    tg.expand();
                 }
             } catch (e) {
                 console.error("Ошибка перехода в полный экран:", e);
@@ -174,8 +178,10 @@
 </head>
 <body>
 
+    <!-- Заголовок приложения -->
     <div class="header">SMOKING MANIA</div>
 
+    <!-- Вкладка Магазин -->
     <div id="page-shop" class="page active">
         <div class="search-bar">
             <input type="text" placeholder="Поиск по товарам и брендам">
@@ -193,6 +199,7 @@
         </div>
     </div>
 
+    <!-- Остальные вкладки заглушки -->
     <div id="page-favorites" class="page">
         <div class="empty-message"><br><br>Здесь будут избранные товары</div>
     </div>
@@ -203,6 +210,7 @@
         <div class="empty-message"><br><br>Личный кабинет в разработке</div>
     </div>
 
+    <!-- Нижнее меню навигации -->
     <div class="nav-bar">
         <div class="nav-item active" onclick="switchPage('shop', this)">
             <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
@@ -223,6 +231,7 @@
     </div>
 
     <script>
+        // Переключение вкладок приложения
         function switchPage(pageId, element) {
             document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
@@ -231,6 +240,7 @@
             element.classList.add('active');
         }
 
+        // Асинхронная загрузка товаров из бэкенда (МойСклад)
         async function loadProducts() {
             const container = document.getElementById('products-container');
             try {
@@ -249,8 +259,10 @@
 
                 products.forEach(prod => {
                     const name = prod.name || 'Товар без названия';
+                    // Преобразуем копейки из МоегоСклада в рубли
                     const price = prod.salePrices && prod.salePrices[0] ? (prod.salePrices[0].value / 100) : 0;
                     
+                    // Обработка картинок из МоегоСклада
                     let imageUrl = 'https://via.placeholder.com/150?text=SMOKING+MANIA';
                     if (prod.images && prod.images.rows && prod.images.rows.length > 0) {
                         imageUrl = prod.images.rows[0].miniature?.downloadHref || prod.images.rows[0].downloadHref || imageUrl;
@@ -273,6 +285,7 @@
             }
         }
 
+        // Инициализация загрузки товаров при старте
         loadProducts();
     </script>
 </body>
