@@ -1,5 +1,4 @@
 export default async function handler(req, res) {
-    // Разрешаем CORS-запросы
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -11,10 +10,10 @@ export default async function handler(req, res) {
     const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9"; 
 
     try {
-        const response = await fetch("https://api.moysklad.ru/api/remap/1.2/entity/product?limit=20", {
+        // Добавили параметр &expand=images, чтобы склад присылал ссылки на фото товаров
+        const response = await fetch("https://api.moysklad.ru/api/remap/1.2/entity/product?limit=20&expand=images", {
             method: "GET",
             headers: {
-                // Передаем токен через Authorization Bearer, как требует API МоегоСклада для Node.js
                 "Authorization": `Bearer ${MY_SKLAD_TOKEN}`,
                 "Content-Type": "application/json"
             }
