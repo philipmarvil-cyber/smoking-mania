@@ -42,11 +42,21 @@
         }
     </script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background-color: #f2f2f7; color: #1c1c1e; padding-bottom: 80px; padding-top: env(safe-area-inset-top); overscroll-behavior: none; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background-color: #f2f2f7; color: #1c1c1e; padding-bottom: 80px; padding-top: env(safe-area-inset-top); overscroll-behavior: none; box-sizing: border-box; }
+        
         .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: #fff; font-weight: 700; font-size: 18px; }
         
         /* Плавающая кнопка поддержки */
-        .support-fab { position: fixed; bottom: 85px; right: 20px; background: #6b2d38; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; cursor: pointer; text-decoration: none; }
+        .support-fab { position: fixed; bottom: 85px; right: 20px; background: #6b2d38; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; cursor: pointer; text-decoration: none; font-size: 24px; }
+        
+        /* Categories Scroll */
+        .categories-scroll { display: flex; overflow-x: auto; gap: 10px; padding: 10px 15px; -webkit-overflow-scrolling: touch; }
+        .categories-scroll::-webkit-scrollbar { display: none; }
+        .cat-item { background: #fff; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 500; white-space: nowrap; border: 1px solid #e5e5ea; }
+        
+        /* Search Bar */
+        .search-bar { padding: 0 15px 10px 15px; }
+        .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
         
         /* Product Detail */
         .product-detail-content { padding: 15px; }
@@ -66,7 +76,6 @@
         .product-title { font-size: 13px; height: 32px; overflow: hidden; line-height: 1.2; }
         .product-price { font-weight: 700; margin-top: 4px; font-size: 14px; color: #333;}
         
-        /* Nav Bar с иконками */
         .nav-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 65px; background: #fff; display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #e5e5ea; z-index: 1000; padding-bottom: env(safe-area-inset-bottom); }
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
         .nav-item.active { color: #6b2d38; font-weight: 600; }
@@ -77,11 +86,23 @@
 </head>
 <body>
 
-    <a href="https://t.me/ВАШ_USERNAME" class="support-fab">?</a>
+    <a href="https://t.me/smokingmaniasup" class="support-fab" target="_blank">?</a>
 
     <div id="page-shop" class="page active">
         <div class="header">SMOKING MANIA</div>
         <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
+        
+        <div class="section-title" style="margin: 0 15px 10px 15px; font-weight:700;">Категории</div>
+        <div class="categories-scroll">
+            <div class="cat-item">Табак</div>
+            <div class="cat-item">Кальяны</div>
+            <div class="cat-item">Аксессуары</div>
+            <div class="cat-item">Уголь</div>
+            <div class="cat-item">Чаши</div>
+        </div>
+
+        <div class="search-bar"><input type="text" placeholder="Поиск товаров"></div>
+        
         <div class="products-grid" id="products-container"><div>Загрузка...</div></div>
     </div>
 
