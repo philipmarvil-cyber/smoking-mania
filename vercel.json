@@ -1,6 +1,3 @@
 {
-  "version": 2,
-  "rewrites": [
-    { "source": "/api/get-data", "destination": "/api/get-data.js" }
-  ]
+  "cleanUrls": true
 }
