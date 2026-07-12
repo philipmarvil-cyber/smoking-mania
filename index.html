@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#ffffff">
     
     <title>SMOKING MANIA</title>
@@ -13,22 +13,17 @@
             const tg = window.Telegram.WebApp;
             
             tg.ready();
-            tg.expand(); // Развернуть на весь экран
+            tg.expand(); 
             
-            // Настройка цветов интерфейса
             tg.setHeaderColor('#ffffff');
             tg.setBackgroundColor('#f5f5f7');
             
-            // КЛЮЧЕВЫЕ НАСТРОЙКИ ПОВЕДЕНИЯ:
-            // 1. Отключаем свайп вниз, чтобы не закрывалось
             if (tg.isVerticalSwipesEnabled) {
                 tg.disableVerticalSwipes();
             }
             
-            // 2. Требуем подтверждение при закрытии
             tg.enableClosingConfirmation();
             
-            // 3. Пытаемся принудительно убрать системную плашку
             try {
                 tg.requestFullscreen();
             } catch (e) {
@@ -45,7 +40,9 @@
             background-color: #f5f5f7;
             color: #333;
             padding-bottom: 70px;
-            overscroll-behavior: none; /* Блокировка "резинового" скролла */
+            /* Сдвиг контента вниз, чтобы он не уходил под вырез экрана */
+            padding-top: env(safe-area-inset-top);
+            overscroll-behavior: none; 
         }
         .header {
             text-align: center;
@@ -108,6 +105,8 @@
         }
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; }
         .nav-item.active { color: #6b2d38; font-weight: bold; }
+        /* Стили для иконок */
+        .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 4px; fill: currentColor; }
         .page { display: none; }
         .page.active { display: block; }
     </style>
@@ -124,10 +123,22 @@
     </div>
 
     <div class="nav-bar">
-        <div class="nav-item active">Магазин</div>
-        <div class="nav-item">Избранное</div>
-        <div class="nav-item">Корзина</div>
-        <div class="nav-item">Аккаунт</div>
+        <div class="nav-item active">
+            <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+            Магазин
+        </div>
+        <div class="nav-item">
+            <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            Избранное
+        </div>
+        <div class="nav-item">
+            <svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
+            Корзина
+        </div>
+        <div class="nav-item">
+            <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            Аккаунт
+        </div>
     </div>
 
     <script>
@@ -137,7 +148,9 @@
                 const response = await fetch('/api/get-data');
                 const data = await response.json();
                 container.innerHTML = '';
-                (data.rows || []).forEach(prod => {
+                
+                // Добавлен фильтр: !prod.archived
+                (data.rows || []).filter(prod => !prod.archived).forEach(prod => {
                     const price = (prod.salePrices?.[0]?.value || 0) / 100;
                     const img = prod.images?.rows?.[0]?.miniature?.downloadHref || 'https://via.placeholder.com/150';
                     const card = document.createElement('div');
