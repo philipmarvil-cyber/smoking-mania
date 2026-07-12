@@ -128,7 +128,6 @@
 
     <div class="header">НЕШОП</div>
 
-    <!-- СТРАНИЦА МАГАЗИНА -->
     <div id="page-shop" class="page active">
         <div class="search-bar">
             <input type="text" placeholder="Поиск по товарам и брендам">
@@ -146,7 +145,6 @@
         </div>
     </div>
 
-    <!-- ОСТАЛЬНЫЕ СТРАНИЦЫ (ЗАГЛУШКИ) -->
     <div id="page-favorites" class="page">
         <div class="empty-message"><br><br>Здесь будут избранные товары</div>
     </div>
@@ -157,7 +155,6 @@
         <div class="empty-message"><br><br>Личный кабинет в разработке</div>
     </div>
 
-    <!-- НИЖНЕЕ МЕНЮ -->
     <div class="nav-bar">
         <div class="nav-item active" onclick="switchPage('shop', this)">
             <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
@@ -178,11 +175,9 @@
     </div>
 
     <script>
-        // Инициализация Telegram WebApp
         const tg = window.Telegram.WebApp;
         tg.expand();
 
-        // Функция переключения страниц меню
         function switchPage(pageId, element) {
             document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
@@ -191,16 +186,23 @@
             element.classList.add('active');
         }
 
-        // Загрузка товаров из нашего API
         async function loadProducts() {
             const container = document.getElementById('products-container');
+            const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9";
+
             try {
-                const response = await fetch('/api/get-data');
-                if (!response.ok) throw new Error('Ошибка сети');
+                // Прямой запрос к МоемуСкладу
+                const response = await fetch("https://api.moysklad.ru/api/remap/1.2/entity/product?limit=20", {
+                    method: "GET",
+                    headers: {
+                        "Lognex-Web-Token": MY_SKLAD_TOKEN,
+                        "Content-Type": "application/json"
+                    }
+                });
+
+                if (!response.ok) throw new Error('Ошибка API МоегоСклада: ' + response.status);
                 
                 const data = await response.json();
-                
-                // Проверяем наличие товаров в структуре МоегоСклада (внутри rows)
                 const products = data.rows || [];
                 
                 if (products.length === 0) {
@@ -208,11 +210,10 @@
                     return;
                 }
 
-                container.innerHTML = ''; // Очищаем индикатор загрузки
+                container.innerHTML = '';
 
                 products.forEach(prod => {
                     const name = prod.name || 'Товар без названия';
-                    // Переводим цену из копеек в рубли
                     const price = prod.salePrices && prod.salePrices[0] ? (prod.salePrices[0].value / 100) : 0;
                     
                     const card = document.createElement('div');
@@ -230,7 +231,6 @@
             }
         }
 
-        // Запуск при загрузке страницы
         loadProducts();
     </script>
 </body>
