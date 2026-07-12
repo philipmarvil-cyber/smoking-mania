@@ -3,8 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#ffffff">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    
     <title>SMOKING MANIA</title>
+    
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+        // Моментальная инициализация цвета шапки до рендеринга страницы
+        if (window.Telegram && window.Telegram.WebApp) {
+            window.Telegram.WebApp.init();
+            window.Telegram.WebApp.setHeaderColor('#ffffff'); // Чисто белый цвет для верхней панели
+            window.Telegram.WebApp.setBackgroundColor('#f5f5f7'); // Светлый фон при свайпах
+            window.Telegram.WebApp.expand(); // Развернуть на весь экран
+        }
+    </script>
+
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -196,9 +210,6 @@
     </div>
 
     <script>
-        const tg = window.Telegram.WebApp;
-        tg.expand();
-
         function switchPage(pageId, element) {
             document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
@@ -227,10 +238,8 @@
                     const name = prod.name || 'Товар без названия';
                     const price = prod.salePrices && prod.salePrices[0] ? (prod.salePrices[0].value / 100) : 0;
                     
-                    // Проверяем, есть ли изображение в карточке МоегоСклада
                     let imageUrl = 'https://via.placeholder.com/150?text=SMOKING+MANIA';
                     if (prod.images && prod.images.rows && prod.images.rows.length > 0) {
-                        // Если картинка есть, берём ссылку на её миниатюру или оригинал
                         imageUrl = prod.images.rows[0].miniature?.downloadHref || prod.images.rows[0].downloadHref || imageUrl;
                     }
                     
