@@ -10,10 +10,7 @@
         const tg = window.Telegram.WebApp;
         tg.ready(); tg.expand();
         tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#f2f2f7');
-        if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
-        tg.enableClosingConfirmation();
         
-        // Переключение страниц
         function switchPage(pageId, element) {
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
@@ -21,21 +18,40 @@
             if (element) element.classList.add('active');
         }
 
-        // Открытие товара
+        // Логика формы
+        function toggleAuthMode(isRegister) {
+            const title = document.getElementById('auth-title');
+            const btn = document.getElementById('auth-btn');
+            const toggle = document.getElementById('auth-toggle');
+            
+            if (isRegister) {
+                title.innerText = "Регистрация";
+                btn.innerText = "Зарегистрироваться";
+                toggle.innerHTML = 'Уже есть аккаунт? <b onclick="toggleAuthMode(false)">Войти</b>';
+            } else {
+                title.innerText = "Вход";
+                btn.innerText = "Войти";
+                toggle.innerHTML = 'Нет аккаунта? <b onclick="toggleAuthMode(true)">Регистрация</b>';
+            }
+        }
+
+        function handleAuth(event) {
+            event.preventDefault();
+            alert("Форма отправлена! (Здесь будет ваш API запрос)");
+            // Пример: fetch('/api/register', { ... })
+        }
+
         function openProduct(name, price, img) {
             const detailPage = document.getElementById('page-detail');
             detailPage.innerHTML = `
-                <div class="header-fixed">
+                <div class="header-safe-zone">
                     <div class="back-btn" onclick="switchPage('shop', document.querySelector('.nav-item'))">← Назад</div>
-                    <div class="header-title">Товар</div>
                 </div>
                 <div class="product-detail-content">
                     <div class="product-main-img"><img src="${img}"></div>
                     <div class="product-info-box">
                         <div class="detail-title">${name}</div>
                         <div class="detail-price">От ${price} ₽</div>
-                        <div class="accordion">Описание <span>▼</span></div>
-                        <div class="accordion">Доставка <span>▼</span></div>
                     </div>
                 </div>
             `;
@@ -43,44 +59,31 @@
         }
     </script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background-color: #f2f2f7; color: #1c1c1e; padding-bottom: 80px; padding-top: env(safe-area-inset-top); overscroll-behavior: none; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background-color: #f2f2f7; padding-bottom: 80px; overscroll-behavior: none; }
         
-        /* Хедеры */
-        .header { padding: 15px 20px; background: #fff; font-weight: 700; font-size: 18px; display: flex; align-items: center; }
-        .header-fixed { padding: 15px 20px; background: #fff; font-weight: 700; font-size: 18px; display: flex; align-items: center; position: sticky; top: 0; z-index: 999; border-bottom: 1px solid #e5e5ea; }
-        .back-btn { cursor: pointer; padding: 10px 10px 10px 0; font-weight: 500; font-size: 16px; color: #6b2d38; }
-        .header-title { margin-left: 20px; }
-        
-        /* Кнопка поддержки */
-        .support-fab { position: fixed; bottom: 85px; right: 20px; background: #6b2d38; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; cursor: pointer; text-decoration: none; font-size: 24px; }
-        
-        /* Формы авторизации */
+        /* Исправление перекрытия: добавляем отступ сверху для всех страниц */
+        .page { padding-top: env(safe-area-inset-top); }
+        .header-safe-zone { padding: 15px 20px; background: #fff; display: flex; align-items: center; border-bottom: 1px solid #e5e5ea; position: sticky; top: 0; z-index: 100; }
+        .back-btn { cursor: pointer; font-size: 16px; color: #6b2d38; padding: 5px 0; }
+
+        /* Auth Styles */
         .auth-container { padding: 20px; }
-        .input-field { width: 100%; padding: 15px; margin-bottom: 15px; border: none; border-radius: 12px; background: #fff; box-sizing: border-box; }
+        .input-field { width: 100%; padding: 15px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 12px; background: #fff; box-sizing: border-box; }
         .btn-submit { width: 100%; padding: 15px; background: #6b2d38; color: #fff; border: none; border-radius: 12px; font-weight: bold; cursor: pointer; }
-        
-        /* Остальное */
+
+        /* Остальные стили */
+        .support-fab { position: fixed; bottom: 85px; right: 20px; background: #6b2d38; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; text-decoration: none; font-size: 24px; }
+        .banner { background: #6b2d38; color: #fff; margin: 15px; padding: 20px; border-radius: 16px; }
         .categories-scroll { display: flex; overflow-x: auto; gap: 10px; padding: 10px 15px; }
         .cat-item { background: #fff; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 500; white-space: nowrap; border: 1px solid #e5e5ea; }
         .search-bar { padding: 0 15px 10px 15px; }
-        .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
-        
-        .product-detail-content { padding: 15px; }
-        .product-main-img { background: #fff; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 15px; }
-        .product-main-img img { max-width: 100%; height: 300px; object-fit: contain; }
-        .product-info-box { background: #fff; border-radius: 16px; padding: 20px; }
-        .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
-        .detail-price { font-size: 18px; color: #6b2d38; font-weight: 700; margin-bottom: 20px; }
-        .accordion { border-top: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; font-weight: 500; font-size: 14px;}
-        
-        .banner { background: #6b2d38; color: #fff; margin: 15px; padding: 20px; border-radius: 16px; }
+        .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; }
         .products-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 15px; }
         .product-card { background: #fff; border-radius: 16px; padding: 12px; cursor: pointer; }
         .product-image-container { height: 110px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
         .product-card img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .product-title { font-size: 13px; height: 32px; overflow: hidden; line-height: 1.2; }
-        .product-price { font-weight: 700; margin-top: 4px; font-size: 14px; color: #333;}
-        
+        .product-title { font-size: 13px; height: 32px; overflow: hidden; }
+        .product-price { font-weight: 700; margin-top: 4px; font-size: 14px; }
         .nav-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 65px; background: #fff; display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #e5e5ea; z-index: 1000; padding-bottom: env(safe-area-inset-bottom); }
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
         .nav-item.active { color: #6b2d38; font-weight: 600; }
@@ -91,12 +94,11 @@
 </head>
 <body>
 
-    <a href="https://t.me/smokingmaniasup" class="support-fab" target="_blank">?</a>
+    <a href="https://t.me/ВАШ_USERNAME" class="support-fab" target="_blank">?</a>
 
     <div id="page-shop" class="page active">
-        <div class="header">SMOKING MANIA</div>
+        <div class="header-safe-zone"><b>SMOKING MANIA</b></div>
         <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
-        <div class="section-title" style="margin: 0 15px 10px 15px; font-weight:700;">Категории</div>
         <div class="categories-scroll">
             <div class="cat-item">Табак</div><div class="cat-item">Кальяны</div>
             <div class="cat-item">Аксессуары</div><div class="cat-item">Уголь</div>
@@ -108,28 +110,21 @@
     <div id="page-detail" class="page"></div>
 
     <div id="page-account" class="page">
-        <div class="header">Личный кабинет</div>
-        <div id="auth-content" class="auth-container">
-            <h3>Вход</h3>
-            <input type="text" class="input-field" placeholder="Телефон или Email">
-            <input type="password" class="input-field" placeholder="Пароль">
-            <button class="btn-submit">Войти</button>
-            <p style="text-align:center; margin-top:20px; font-size: 14px;">Нет аккаунта? <b>Зарегистрироваться</b></p>
+        <div class="header-safe-zone"><b>Личный кабинет</b></div>
+        <div class="auth-container">
+            <h3 id="auth-title">Вход</h3>
+            <form onsubmit="handleAuth(event)">
+                <input type="text" class="input-field" placeholder="Телефон" required>
+                <input type="password" class="input-field" placeholder="Пароль" required>
+                <button type="submit" class="btn-submit" id="auth-btn">Войти</button>
+            </form>
+            <p id="auth-toggle" style="text-align:center; margin-top:20px; font-size: 14px;">Нет аккаунта? <b onclick="toggleAuthMode(true)">Регистрация</b></p>
         </div>
     </div>
-
-    <div id="page-favorites" class="page"><div class="header">Избранное</div></div>
-    <div id="page-cart" class="page"><div class="header">Корзина</div></div>
 
     <div class="nav-bar">
         <div class="nav-item active" onclick="switchPage('shop', this)">
             <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>Магазин
-        </div>
-        <div class="nav-item" onclick="switchPage('favorites', this)">
-            <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>Избранное
-        </div>
-        <div class="nav-item" onclick="switchPage('cart', this)">
-            <svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>Корзина
         </div>
         <div class="nav-item" onclick="switchPage('account', this)">
             <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>Аккаунт
@@ -139,20 +134,13 @@
     <script>
         async function loadProducts() {
             const container = document.getElementById('products-container');
-            try {
-                const response = await fetch('/api/get-data');
-                const data = await response.json();
-                container.innerHTML = '';
-                (data.rows || []).filter(p => !p.archived).forEach(prod => {
-                    const price = (prod.salePrices?.[0]?.value || 0) / 100;
-                    const img = prod.images?.rows?.[0]?.miniature?.downloadHref || 'https://via.placeholder.com/150';
-                    const card = document.createElement('div');
-                    card.className = 'product-card';
-                    card.onclick = () => openProduct(prod.name, price, img);
-                    card.innerHTML = `<div class="product-image-container"><img src="${img}"></div><div class="product-title">${prod.name}</div><div class="product-price">${price.toLocaleString()} ₽</div>`;
-                    container.appendChild(card);
-                });
-            } catch (e) { container.innerHTML = 'Ошибка загрузки'; }
+            // Mock data or real fetch
+            const prod = { name: "Пример товара", salePrices: [{value: 50000}] };
+            container.innerHTML = `<div class="product-card" onclick="openProduct('${prod.name}', 500, 'https://via.placeholder.com/150')">
+                <div class="product-image-container"><img src="https://via.placeholder.com/150"></div>
+                <div class="product-title">${prod.name}</div>
+                <div class="product-price">500 ₽</div>
+            </div>`;
         }
         loadProducts();
     </script>
