@@ -1,8 +1,8 @@
 export default async function handler(req, res) {
-    // Разрешаем запросы со всех адресов, чтобы не было CORS блокировок
+    // Разрешаем CORS-запросы
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Lognex-Web-Token');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
@@ -14,8 +14,8 @@ export default async function handler(req, res) {
         const response = await fetch("https://api.moysklad.ru/api/remap/1.2/entity/product?limit=20", {
             method: "GET",
             headers: {
-                "Lognex-Web-Token": MY_SKLAD_TOKEN,
-                "Accept-Encoding": "gzip",
+                // Передаем токен через Authorization Bearer, как требует API МоегоСклада для Node.js
+                "Authorization": `Bearer ${MY_SKLAD_TOKEN}`,
                 "Content-Type": "application/json"
             }
         });
