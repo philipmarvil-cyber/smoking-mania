@@ -25,8 +25,11 @@
             const detailPage = document.getElementById('page-detail');
             detailPage.innerHTML = `
                 <div class="header">
-                    <span class="back-btn" onclick="switchPage('shop', document.querySelector('.nav-item'))">← Назад</span>
-                    <span>Товар</span>
+                    <div class="header-content">
+                        <span class="back-btn" onclick="switchPage('shop', document.querySelector('.nav-item'))">← Назад</span>
+                        <span>Товар</span>
+                        <a href="https://t.me/smokingmaniasup" class="support-btn" target="_blank">?</a>
+                    </div>
                 </div>
                 <div class="product-detail-content">
                     <div class="product-main-img"><img src="${img}"></div>
@@ -42,17 +45,74 @@
         }
     </script>
     <style>
-        /* Добавили +45px к верхнему отступу, чтобы опустить интерфейс из-под системной шапки */
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background-color: #f2f2f7; color: #1c1c1e; padding-bottom: 80px; padding-top: calc(env(safe-area-inset-top) + 45px); overscroll-behavior: none; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            margin: 0; 
+            background-color: #f2f2f7; 
+            color: #1c1c1e; 
+            padding-bottom: 80px; 
+            overscroll-behavior: none; 
+            box-sizing: border-box; 
+        }
         
-        /* Центрируем содержимое шапки */
-        .header { display: flex; justify-content: center; align-items: center; padding: 15px 20px; background: #fff; font-weight: 700; font-size: 18px; position: relative; }
-        
-        /* Класс для кнопки "Назад", чтобы она всегда была слева и не ломала центрирование заголовка */
-        .back-btn { position: absolute; left: 20px; cursor: pointer; font-weight: normal; }
+        /* Стили для страниц и отступ под фиксированную шапку */
+        .page { 
+            display: none; 
+            padding-top: calc(env(safe-area-inset-top) + 95px); /* Отступ, чтобы контент не прятался под шапку */
+        }
+        .page.active { 
+            display: block; 
+        }
 
-        /* Плавающая кнопка поддержки */
-        .support-fab { position: fixed; bottom: 85px; right: 20px; background: #6b2d38; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; cursor: pointer; text-decoration: none; font-size: 24px; }
+        /* Фиксированная шапка */
+        .header { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            right: 0; 
+            /* Добавляем верхний отступ для системной шапки Telegram */
+            padding-top: calc(env(safe-area-inset-top) + 45px); 
+            background: #fff; 
+            z-index: 1000; 
+            border-bottom: 1px solid #e5e5ea; /* Легкая граница для отделения от контента при скролле */
+        }
+        
+        /* Контейнер внутри шапки для правильного центрирования */
+        .header-content {
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 50px; 
+            position: relative; 
+            padding: 0 20px; 
+            font-weight: 700; 
+            font-size: 18px; 
+        }
+        
+        /* Кнопки в шапке */
+        .back-btn { 
+            position: absolute; 
+            left: 20px; 
+            cursor: pointer; 
+            font-weight: normal; 
+            font-size: 16px;
+        }
+
+        .support-btn { 
+            position: absolute; 
+            right: 20px; 
+            background: #6b2d38; 
+            color: white; 
+            width: 30px; 
+            height: 30px; 
+            border-radius: 50%; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            text-decoration: none; 
+            font-size: 18px; 
+            font-weight: 600; 
+        }
         
         /* Categories Scroll */
         .categories-scroll { display: flex; overflow-x: auto; gap: 10px; padding: 10px 15px; -webkit-overflow-scrolling: touch; }
@@ -85,16 +145,18 @@
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
         .nav-item.active { color: #6b2d38; font-weight: 600; }
         .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
-        .page { display: none; }
-        .page.active { display: block; }
     </style>
 </head>
 <body>
 
-    <a href="https://t.me/smokingmaniasup" class="support-fab" target="_blank">?</a>
-
     <div id="page-shop" class="page active">
-        <div class="header"><span>SMOKING MANIA</span></div>
+        <div class="header">
+            <div class="header-content">
+                <span>SMOKING MANIA</span>
+                <a href="https://t.me/smokingmaniasup" class="support-btn" target="_blank">?</a>
+            </div>
+        </div>
+        
         <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
         
         <div class="section-title" style="margin: 0 15px 10px 15px; font-weight:700;">Категории</div>
@@ -112,9 +174,33 @@
     </div>
 
     <div id="page-detail" class="page"></div>
-    <div id="page-favorites" class="page"><div class="header"><span>Избранное</span></div></div>
-    <div id="page-cart" class="page"><div class="header"><span>Корзина</span></div></div>
-    <div id="page-account" class="page"><div class="header"><span>Аккаунт</span></div></div>
+    
+    <div id="page-favorites" class="page">
+        <div class="header">
+            <div class="header-content">
+                <span>Избранное</span>
+                <a href="https://t.me/smokingmaniasup" class="support-btn" target="_blank">?</a>
+            </div>
+        </div>
+    </div>
+    
+    <div id="page-cart" class="page">
+        <div class="header">
+            <div class="header-content">
+                <span>Корзина</span>
+                <a href="https://t.me/smokingmaniasup" class="support-btn" target="_blank">?</a>
+            </div>
+        </div>
+    </div>
+    
+    <div id="page-account" class="page">
+        <div class="header">
+            <div class="header-content">
+                <span>Аккаунт</span>
+                <a href="https://t.me/smokingmaniasup" class="support-btn" target="_blank">?</a>
+            </div>
+        </div>
+    </div>
 
     <div class="nav-bar">
         <div class="nav-item active" onclick="switchPage('shop', this)">
@@ -140,7 +226,10 @@
                 container.innerHTML = '';
                 (data.rows || []).filter(p => !p.archived).forEach(prod => {
                     const price = (prod.salePrices?.[0]?.value || 0) / 100;
-                    const img = prod.images?.rows?.[0]?.miniature?.downloadHref || 'https://via.placeholder.com/150';
+                    
+                    // Обновлено: сначала пытаемся взять оригинальное качество (meta.downloadHref), затем миниатюру
+                    const img = prod.images?.rows?.[0]?.meta?.downloadHref || prod.images?.rows?.[0]?.miniature?.downloadHref || 'https://via.placeholder.com/150';
+                    
                     const card = document.createElement('div');
                     card.className = 'product-card';
                     card.onclick = () => openProduct(prod.name, price, img);
