@@ -24,7 +24,7 @@
         function openProduct(name, price, img) {
             const detailPage = document.getElementById('page-detail');
             detailPage.innerHTML = `
-                <div class="header" style="margin-top: 0;">
+                <div class="header">
                     <span class="back-btn" onclick="switchPage('shop', document.querySelector('.nav-item'))">← Назад</span>
                     <span>Товар</span>
                     <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">
@@ -53,18 +53,13 @@
             background-color: #f2f2f7; 
             color: #1c1c1e; 
             padding-bottom: 80px; 
-            padding-top: calc(env(safe-area-inset-top) + 90px); /* увеличили отступ для закреплённой шапки */
+            padding-top: calc(env(safe-area-inset-top) + 75px); /* увеличен отступ */
             overscroll-behavior: none; 
             box-sizing: border-box; 
         }
         
-        /* Закреплённая шапка */
+        /* Шапка с обычным позиционированием (не фиксированная) */
         .header { 
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 1000;
             display: flex; 
             justify-content: center; 
             align-items: center; 
@@ -72,10 +67,9 @@
             background: #fff; 
             font-weight: 700; 
             font-size: 18px; 
+            position: relative; 
+            margin-top: 10px; /* дополнительный отступ сверху */
             border-bottom: 1px solid #e5e5ea;
-            margin-top: env(safe-area-inset-top); /* учитываем безопасную зону */
-            padding-top: calc(15px + env(safe-area-inset-top));
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         }
         
         /* Кнопка "Назад" остаётся слева */
@@ -92,47 +86,44 @@
             right: 20px;
             background: #6b2d38;
             color: white;
-            width: 38px;
-            height: 38px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             text-decoration: none;
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 700;
-            box-shadow: 0 2px 8px rgba(107, 45, 56, 0.3);
+            box-shadow: 0 2px 6px rgba(107, 45, 56, 0.3);
             transition: transform 0.1s ease;
             cursor: pointer;
-            border: 2px solid #fff;
+            border: none;
             position: relative;
         }
         .support-header-btn:active {
             transform: scale(0.92);
         }
 
-        /* Мигающая точка онлайн */
+        /* Маленькая мигающая точка онлайн */
         .online-dot {
             position: absolute;
-            bottom: -2px;
-            right: -2px;
-            width: 14px;
-            height: 14px;
+            bottom: -1px;
+            right: -1px;
+            width: 10px;
+            height: 10px;
             background: #4cd964;
             border: 2px solid #fff;
             border-radius: 50%;
             animation: pulse-dot 1.5s ease-in-out infinite;
-            box-shadow: 0 0 0 2px rgba(76, 217, 100, 0.3);
+            box-shadow: 0 0 0 2px rgba(76, 217, 100, 0.2);
         }
 
         @keyframes pulse-dot {
-            0% { transform: scale(0.95); opacity: 0.7; }
-            50% { transform: scale(1.15); opacity: 1; }
-            100% { transform: scale(0.95); opacity: 0.7; }
+            0% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.6; }
         }
-
-        /* Плавающая кнопка удалена */
-        .support-fab { display: none; }
 
         /* Categories Scroll */
         .categories-scroll { display: flex; overflow-x: auto; gap: 10px; padding: 10px 15px; -webkit-overflow-scrolling: touch; }
@@ -144,7 +135,7 @@
         .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
         
         /* Product Detail */
-        .product-detail-content { padding: 15px; margin-top: 70px; }
+        .product-detail-content { padding: 15px; }
         .product-main-img { background: #fff; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 15px; }
         .product-main-img img { max-width: 100%; height: 300px; object-fit: contain; }
         .product-info-box { background: #fff; border-radius: 16px; padding: 20px; }
@@ -165,27 +156,26 @@
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
         .nav-item.active { color: #6b2d38; font-weight: 600; }
         .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
-        .page { display: none; padding-top: 70px; }
+        .page { display: none; }
         .page.active { display: block; }
 
-        /* Для страниц без шапки добавляем отступ */
-        #page-favorites, #page-cart, #page-account {
-            padding-top: 70px;
+        /* Для всех страниц добавляем такую же шапку */
+        #page-favorites .header, #page-cart .header, #page-account .header {
+            margin-top: 10px;
         }
     </style>
 </head>
 <body>
 
-    <!-- Шапка с кнопкой поддержки и мигающей точкой -->
-    <div class="header" id="main-header">
-        <span>SMOKING MANIA</span>
-        <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">
-            ?
-            <span class="online-dot"></span>
-        </a>
-    </div>
-
+    <!-- Шапка с кнопкой поддержки справа и маленькой точкой -->
     <div id="page-shop" class="page active">
+        <div class="header">
+            <span>SMOKING MANIA</span>
+            <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">
+                ?
+                <span class="online-dot"></span>
+            </a>
+        </div>
         <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
         
         <div class="section-title" style="margin: 0 15px 10px 15px; font-weight:700;">Категории</div>
@@ -202,18 +192,36 @@
         <div class="products-grid" id="products-container"><div>Загрузка...</div></div>
     </div>
 
-    <!-- Остальные страницы -->
+    <!-- Остальные страницы с такой же шапкой -->
     <div id="page-detail" class="page"></div>
     <div id="page-favorites" class="page">
-        <div class="banner" style="margin: 15px;"><h3>Избранное</h3></div>
+        <div class="header">
+            <span>Избранное</span>
+            <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">
+                ?
+                <span class="online-dot"></span>
+            </a>
+        </div>
         <div style="padding: 15px; text-align: center; color: #8e8e93;">Здесь будут ваши любимые товары</div>
     </div>
     <div id="page-cart" class="page">
-        <div class="banner" style="margin: 15px;"><h3>Корзина</h3></div>
+        <div class="header">
+            <span>Корзина</span>
+            <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">
+                ?
+                <span class="online-dot"></span>
+            </a>
+        </div>
         <div style="padding: 15px; text-align: center; color: #8e8e93;">Ваша корзина пуста</div>
     </div>
     <div id="page-account" class="page">
-        <div class="banner" style="margin: 15px;"><h3>Аккаунт</h3></div>
+        <div class="header">
+            <span>Аккаунт</span>
+            <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">
+                ?
+                <span class="online-dot"></span>
+            </a>
+        </div>
         <div style="padding: 15px; text-align: center; color: #8e8e93;">Информация о профиле</div>
     </div>
 
