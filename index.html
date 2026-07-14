@@ -70,6 +70,12 @@
             top: env(safe-area-inset-top);
             z-index: 1000;
             margin-top: 15px; /* дополнительный отступ для смещения шапки ниже */
+            border-bottom: 1px solid transparent;
+            transition: background-color 0.25s ease, border-color 0.25s ease;
+        }
+        .header.scrolled {
+            background: #fff;
+            border-bottom: 1px solid #e5e5ea;
         }
         
         /* Кнопка "Назад" остаётся слева, прижата к низу шапки */
@@ -242,7 +248,11 @@
             } catch (e) { container.innerHTML = 'Ошибка загрузки'; }
         }
         loadProducts();
+
+        window.addEventListener('scroll', () => {
+            const scrolled = window.scrollY > 10;
+            document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', scrolled));
+        });
     </script>
 </body>
 </html>
-
