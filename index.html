@@ -25,18 +25,16 @@
             const detailPage = document.getElementById('page-detail');
             detailPage.innerHTML = `
                 <div class="header">
-                    <span onclick="switchPage('shop', document.querySelector('.nav-item'))" style="cursor:pointer; font-weight:normal">← Назад</span>
+                    <span class="back-btn" onclick="switchPage('shop', document.querySelector('.nav-item'))">← Назад</span>
                     <span>Товар</span>
                 </div>
-                <div class="content-area">
-                    <div class="product-detail-content">
-                        <div class="product-main-img"><img src="${img}"></div>
-                        <div class="product-info-box">
-                            <div class="detail-title">${name}</div>
-                            <div class="detail-price">От ${price} ₽</div>
-                            <div class="accordion">Описание <span>▼</span></div>
-                            <div class="accordion">Доставка <span>▼</span></div>
-                        </div>
+                <div class="product-detail-content">
+                    <div class="product-main-img"><img src="${img}"></div>
+                    <div class="product-info-box">
+                        <div class="detail-title">${name}</div>
+                        <div class="detail-price">От ${price} ₽</div>
+                        <div class="accordion">Описание <span>▼</span></div>
+                        <div class="accordion">Доставка <span>▼</span></div>
                     </div>
                 </div>
             `;
@@ -44,58 +42,17 @@
         }
     </script>
     <style>
-        /* Основной контейнер */
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-            margin: 0; 
-            background-color: #f2f2f7; 
-            color: #1c1c1e; 
-            height: 100dvh; 
-            display: flex; 
-            flex-direction: column; 
-            overflow: hidden; 
-            overscroll-behavior: none; 
-        }
-
-        .page { display: none; flex: 1; flex-direction: column; overflow: hidden; }
-        .page.active { display: flex; }
-        .content-area { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-
-        /* Шапка с учетом выреза (notch) */
-        .header { 
-            background: #fff; 
-            font-weight: 700; 
-            font-size: 18px; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            border-bottom: 1px solid #e5e5ea; 
-            flex-shrink: 0;
-            padding: 15px 20px;
-            /* ДОБАВЛЯЕМ ОТСТУП СВЕРХУ ДЛЯ NOTCH */
-            padding-top: calc(15px + env(safe-area-inset-top));
-        }
+        /* Добавили +45px к верхнему отступу, чтобы опустить интерфейс из-под системной шапки */
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background-color: #f2f2f7; color: #1c1c1e; padding-bottom: 80px; padding-top: calc(env(safe-area-inset-top) + 45px); overscroll-behavior: none; box-sizing: border-box; }
         
+        /* Центрируем содержимое шапки */
+        .header { display: flex; justify-content: center; align-items: center; padding: 15px 20px; background: #fff; font-weight: 700; font-size: 18px; position: relative; }
+        
+        /* Класс для кнопки "Назад", чтобы она всегда была слева и не ломала центрирование заголовка */
+        .back-btn { position: absolute; left: 20px; cursor: pointer; font-weight: normal; }
+
         /* Плавающая кнопка поддержки */
-        .support-fab { 
-            position: fixed; 
-            /* Поднимаем выше, чтобы не перекрывалось навигацией */
-            bottom: calc(85px + env(safe-area-inset-bottom)); 
-            right: 20px; 
-            background: #6b2d38; 
-            color: white; 
-            width: 50px; 
-            height: 50px; 
-            border-radius: 50%; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3); 
-            z-index: 1000; 
-            cursor: pointer; 
-            text-decoration: none; 
-            font-size: 24px; 
-        }
+        .support-fab { position: fixed; bottom: 85px; right: 20px; background: #6b2d38; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; cursor: pointer; text-decoration: none; font-size: 24px; }
         
         /* Categories Scroll */
         .categories-scroll { display: flex; overflow-x: auto; gap: 10px; padding: 10px 15px; -webkit-overflow-scrolling: touch; }
@@ -124,26 +81,12 @@
         .product-title { font-size: 13px; height: 32px; overflow: hidden; line-height: 1.2; }
         .product-price { font-weight: 700; margin-top: 4px; font-size: 14px; color: #333;}
         
-        /* НИЖНЯЯ ПАНЕЛЬ С УЧЕТОМ SAFE AREA */
-        .nav-bar { 
-            position: fixed; 
-            bottom: 0; 
-            left: 0; 
-            right: 0; 
-            height: auto; /* Адаптивная высота */
-            background: #fff; 
-            display: flex; 
-            justify-content: space-around; 
-            align-items: center; 
-            border-top: 1px solid #e5e5ea; 
-            z-index: 1000; 
-            /* ДОБАВЛЯЕМ ОТСТУП СНИЗУ ДЛЯ СИСТЕМНОЙ ПОЛОСКИ ТЕЛЕФОНА */
-            padding: 15px 0 calc(10px + env(safe-area-inset-bottom)) 0;
-        }
-        
+        .nav-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 65px; background: #fff; display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #e5e5ea; z-index: 1000; padding-bottom: env(safe-area-inset-bottom); }
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
         .nav-item.active { color: #6b2d38; font-weight: 600; }
         .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
+        .page { display: none; }
+        .page.active { display: block; }
     </style>
 </head>
 <body>
@@ -151,31 +94,27 @@
     <a href="https://t.me/smokingmaniasup" class="support-fab" target="_blank">?</a>
 
     <div id="page-shop" class="page active">
-        <div class="header">SMOKING MANIA</div>
-        <div class="content-area">
-            <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
-            
-            <div class="section-title" style="margin: 0 15px 10px 15px; font-weight:700;">Категории</div>
-            <div class="categories-scroll">
-                <div class="cat-item">Табак</div>
-                <div class="cat-item">Кальяны</div>
-                <div class="cat-item">Аксессуары</div>
-                <div class="cat-item">Уголь</div>
-                <div class="cat-item">Чаши</div>
-            </div>
-
-            <div class="search-bar"><input type="text" placeholder="Поиск товаров"></div>
-            
-            <div class="products-grid" id="products-container"><div>Загрузка...</div></div>
+        <div class="header"><span>SMOKING MANIA</span></div>
+        <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
+        
+        <div class="section-title" style="margin: 0 15px 10px 15px; font-weight:700;">Категории</div>
+        <div class="categories-scroll">
+            <div class="cat-item">Табак</div>
+            <div class="cat-item">Кальяны</div>
+            <div class="cat-item">Аксессуары</div>
+            <div class="cat-item">Уголь</div>
+            <div class="cat-item">Чаши</div>
         </div>
+
+        <div class="search-bar"><input type="text" placeholder="Поиск товаров"></div>
+        
+        <div class="products-grid" id="products-container"><div>Загрузка...</div></div>
     </div>
 
-    <div style="height: 80px; flex-shrink: 0;"></div>
-
     <div id="page-detail" class="page"></div>
-    <div id="page-favorites" class="page"><div class="header">Избранное</div></div>
-    <div id="page-cart" class="page"><div class="header">Корзина</div></div>
-    <div id="page-account" class="page"><div class="header">Аккаунт</div></div>
+    <div id="page-favorites" class="page"><div class="header"><span>Избранное</span></div></div>
+    <div id="page-cart" class="page"><div class="header"><span>Корзина</span></div></div>
+    <div id="page-account" class="page"><div class="header"><span>Аккаунт</span></div></div>
 
     <div class="nav-bar">
         <div class="nav-item active" onclick="switchPage('shop', this)">
