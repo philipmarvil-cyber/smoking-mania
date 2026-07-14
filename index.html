@@ -24,7 +24,7 @@
         function openProduct(name, price, img) {
             const detailPage = document.getElementById('page-detail');
             detailPage.innerHTML = `
-                <div class="header">
+                <div class="header" style="margin-top: 0;">
                     <span class="back-btn" onclick="switchPage('shop', document.querySelector('.nav-item'))">← Назад</span>
                     <span>Товар</span>
                 </div>
@@ -42,18 +42,67 @@
         }
     </script>
     <style>
-        /* Добавили +45px к верхнему отступу, чтобы опустить интерфейс из-под системной шапки */
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background-color: #f2f2f7; color: #1c1c1e; padding-bottom: 80px; padding-top: calc(env(safe-area-inset-top) + 45px); overscroll-behavior: none; box-sizing: border-box; }
+        /* Основные стили */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            margin: 0; 
+            background-color: #f2f2f7; 
+            color: #1c1c1e; 
+            padding-bottom: 80px; 
+            padding-top: calc(env(safe-area-inset-top) + 45px); 
+            overscroll-behavior: none; 
+            box-sizing: border-box; 
+        }
         
-        /* Центрируем содержимое шапки */
-        .header { display: flex; justify-content: center; align-items: center; padding: 15px 20px; background: #fff; font-weight: 700; font-size: 18px; position: relative; }
+        /* Стили для шапки: увеличенный отступ сверху и центрирование */
+        .header { 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            padding: 15px 20px; 
+            background: #fff; 
+            font-weight: 700; 
+            font-size: 18px; 
+            position: relative; 
+            margin-top: 15px; /* дополнительный отступ для смещения шапки ниже */
+            border-bottom: 1px solid #e5e5ea;
+        }
         
-        /* Класс для кнопки "Назад", чтобы она всегда была слева и не ломала центрирование заголовка */
-        .back-btn { position: absolute; left: 20px; cursor: pointer; font-weight: normal; }
+        /* Кнопка "Назад" остаётся слева */
+        .back-btn { 
+            position: absolute; 
+            left: 20px; 
+            cursor: pointer; 
+            font-weight: normal; 
+        }
 
-        /* Плавающая кнопка поддержки */
-        .support-fab { position: fixed; bottom: 85px; right: 20px; background: #6b2d38; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1000; cursor: pointer; text-decoration: none; font-size: 24px; }
-        
+        /* Стили для кнопки поддержки внутри шапки (справа) */
+        .support-header-btn {
+            position: absolute;
+            right: 20px;
+            background: #6b2d38;
+            color: white;
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            font-size: 18px;
+            font-weight: 700;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            transition: transform 0.1s ease;
+            cursor: pointer;
+            border: none;
+        }
+        .support-header-btn:active {
+            transform: scale(0.92);
+        }
+
+        /* Плавающая кнопка удалена — используем встроенную в шапку */
+        .support-fab { display: none; }
+
         /* Categories Scroll */
         .categories-scroll { display: flex; overflow-x: auto; gap: 10px; padding: 10px 15px; -webkit-overflow-scrolling: touch; }
         .categories-scroll::-webkit-scrollbar { display: none; }
@@ -87,14 +136,21 @@
         .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
         .page { display: none; }
         .page.active { display: block; }
+
+        /* Для страниц без шапки (избранное, корзина, аккаунт) добавляем такую же шапку */
+        #page-favorites .header, #page-cart .header, #page-account .header {
+            margin-top: 15px;
+        }
     </style>
 </head>
 <body>
 
-    <a href="https://t.me/smokingmaniasup" class="support-fab" target="_blank">?</a>
-
+    <!-- Шапка с кнопкой поддержки -->
     <div id="page-shop" class="page active">
-        <div class="header"><span>SMOKING MANIA</span></div>
+        <div class="header">
+            <span>SMOKING MANIA</span>
+            <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">?</a>
+        </div>
         <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
         
         <div class="section-title" style="margin: 0 15px 10px 15px; font-weight:700;">Категории</div>
@@ -111,11 +167,19 @@
         <div class="products-grid" id="products-container"><div>Загрузка...</div></div>
     </div>
 
+    <!-- Остальные страницы с такой же шапкой -->
     <div id="page-detail" class="page"></div>
-    <div id="page-favorites" class="page"><div class="header"><span>Избранное</span></div></div>
-    <div id="page-cart" class="page"><div class="header"><span>Корзина</span></div></div>
-    <div id="page-account" class="page"><div class="header"><span>Аккаунт</span></div></div>
+    <div id="page-favorites" class="page">
+        <div class="header"><span>Избранное</span></div>
+    </div>
+    <div id="page-cart" class="page">
+        <div class="header"><span>Корзина</span></div>
+    </div>
+    <div id="page-account" class="page">
+        <div class="header"><span>Аккаунт</span></div>
+    </div>
 
+    <!-- Навигация -->
     <div class="nav-bar">
         <div class="nav-item active" onclick="switchPage('shop', this)">
             <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>Магазин
