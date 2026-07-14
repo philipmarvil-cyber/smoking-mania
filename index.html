@@ -4,52 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#ffffff">
-    
     <title>SMOKING MANIA</title>
-    
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    
     <script>
-        // Инициализация Telegram Web App
         const tg = window.Telegram.WebApp;
-        tg.ready(); 
-        tg.expand();
-        
-        tg.setHeaderColor('#ffffff'); 
-        tg.setBackgroundColor('#f2f2f7');
-        
-        if (tg.isVerticalSwipesEnabled) {
-            tg.disableVerticalSwipes();
-        }
-        
+        tg.ready(); tg.expand();
+        tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#f2f2f7');
+        if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
         tg.enableClosingConfirmation();
-        
-        try { 
-            tg.requestFullscreen(); 
-        } catch (e) {
-            console.log("Fullscreen not available");
-        }
+        try { tg.requestFullscreen(); } catch (e) {}
 
-        // Функция переключения страниц
         function switchPage(pageId, element) {
-            // Скрываем все страницы
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            // Убираем активный класс у навигации
             document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-            
-            // Показываем нужную страницу
             document.getElementById('page-' + pageId).classList.add('active');
-            
-            // Добавляем активный класс элементу меню
-            if (element) {
-                element.classList.add('active');
-            }
+            if (element) element.classList.add('active');
         }
 
-        // Функция открытия страницы товара
         function openProduct(name, price, img) {
             const detailPage = document.getElementById('page-detail');
-            
             detailPage.innerHTML = `
                 <div class="header">
                     <span onclick="switchPage('shop', document.querySelector('.nav-item'))" style="cursor:pointer; font-weight:normal">← Назад</span>
@@ -70,16 +43,13 @@
             switchPage('detail');
         }
     </script>
-
     <style>
-        /* Основные настройки тела документа */
+        /* Основной контейнер */
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
             margin: 0; 
             background-color: #f2f2f7; 
             color: #1c1c1e; 
-            
-            /* Исправление для высоты */
             height: 100dvh; 
             display: flex; 
             flex-direction: column; 
@@ -87,28 +57,12 @@
             overscroll-behavior: none; 
         }
 
-        /* Общие стили для страниц */
-        .page { 
-            display: none; 
-            flex: 1; 
-            flex-direction: column; 
-            overflow: hidden; 
-        }
-        
-        .page.active { 
-            display: flex; 
-        }
+        .page { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+        .page.active { display: flex; }
+        .content-area { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
-        /* Область контента с прокруткой */
-        .content-area { 
-            flex: 1; 
-            overflow-y: auto; 
-            -webkit-overflow-scrolling: touch; 
-        }
-
-        /* Шапка приложения */
+        /* Шапка с учетом выреза (notch) */
         .header { 
-            padding: 15px 20px; 
             background: #fff; 
             font-weight: 700; 
             font-size: 18px; 
@@ -116,13 +70,17 @@
             justify-content: space-between; 
             align-items: center; 
             border-bottom: 1px solid #e5e5ea; 
-            flex-shrink: 0; 
+            flex-shrink: 0;
+            padding: 15px 20px;
+            /* ДОБАВЛЯЕМ ОТСТУП СВЕРХУ ДЛЯ NOTCH */
+            padding-top: calc(15px + env(safe-area-inset-top));
         }
-
+        
         /* Плавающая кнопка поддержки */
         .support-fab { 
             position: fixed; 
-            bottom: 85px; 
+            /* Поднимаем выше, чтобы не перекрывалось навигацией */
+            bottom: calc(85px + env(safe-area-inset-bottom)); 
             right: 20px; 
             background: #6b2d38; 
             color: white; 
@@ -139,173 +97,53 @@
             font-size: 24px; 
         }
         
-        /* Скролл категорий */
-        .categories-scroll { 
-            display: flex; 
-            overflow-x: auto; 
-            gap: 10px; 
-            padding: 10px 15px; 
-        }
+        /* Categories Scroll */
+        .categories-scroll { display: flex; overflow-x: auto; gap: 10px; padding: 10px 15px; -webkit-overflow-scrolling: touch; }
+        .categories-scroll::-webkit-scrollbar { display: none; }
+        .cat-item { background: #fff; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 500; white-space: nowrap; border: 1px solid #e5e5ea; }
         
-        .categories-scroll::-webkit-scrollbar { 
-            display: none; 
-        }
+        /* Search Bar */
+        .search-bar { padding: 0 15px 10px 15px; }
+        .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
         
-        .cat-item { 
-            background: #fff; 
-            padding: 8px 16px; 
-            border-radius: 20px; 
-            font-size: 13px; 
-            font-weight: 500; 
-            white-space: nowrap; 
-            border: 1px solid #e5e5ea; 
-        }
+        /* Product Detail */
+        .product-detail-content { padding: 15px; }
+        .product-main-img { background: #fff; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 15px; }
+        .product-main-img img { max-width: 100%; height: 300px; object-fit: contain; }
+        .product-info-box { background: #fff; border-radius: 16px; padding: 20px; }
+        .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
+        .detail-price { font-size: 18px; color: #6b2d38; font-weight: 700; margin-bottom: 20px; }
+        .accordion { border-top: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; font-weight: 500; font-size: 14px;}
         
-        /* Поиск */
-        .search-bar { 
-            padding: 0 15px 10px 15px; 
-        }
+        /* Shop Page */
+        .banner { background: #6b2d38; color: #fff; margin: 15px; padding: 20px; border-radius: 16px; }
+        .products-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 15px; }
+        .product-card { background: #fff; border-radius: 16px; padding: 12px; cursor: pointer; }
+        .product-image-container { height: 110px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+        .product-card img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .product-title { font-size: 13px; height: 32px; overflow: hidden; line-height: 1.2; }
+        .product-price { font-weight: 700; margin-top: 4px; font-size: 14px; color: #333;}
         
-        .search-bar input { 
-            width: 100%; 
-            padding: 12px 15px; 
-            box-sizing: border-box; 
-            border-radius: 20px; 
-            border: none; 
-            background: #eaeaed; 
-            font-size: 15px; 
-        }
-        
-        /* Карточки товаров */
-        .products-grid { 
-            display: grid; 
-            grid-template-columns: 1fr 1fr; 
-            gap: 12px; 
-            padding: 0 15px 20px 15px; 
-        }
-        
-        .product-card { 
-            background: #fff; 
-            border-radius: 16px; 
-            padding: 12px; 
-            cursor: pointer; 
-        }
-        
-        .product-image-container { 
-            height: 110px; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            margin-bottom: 8px; 
-        }
-        
-        .product-card img { 
-            max-width: 100%; 
-            max-height: 100%; 
-            object-fit: contain; 
-        }
-        
-        .product-title { 
-            font-size: 13px; 
-            height: 32px; 
-            overflow: hidden; 
-            line-height: 1.2; 
-        }
-        
-        .product-price { 
-            font-weight: 700; 
-            margin-top: 4px; 
-            font-size: 14px; 
-            color: #333;
-        }
-
-        /* Детали товара */
-        .product-detail-content { 
-            padding: 15px; 
-        }
-        
-        .product-main-img { 
-            background: #fff; 
-            border-radius: 16px; 
-            padding: 20px; 
-            text-align: center; 
-            margin-bottom: 15px; 
-        }
-        
-        .product-main-img img { 
-            max-width: 100%; 
-            height: 300px; 
-            object-fit: contain; 
-        }
-        
-        .product-info-box { 
-            background: #fff; 
-            border-radius: 16px; 
-            padding: 20px; 
-        }
-        
-        .detail-title { 
-            font-size: 20px; 
-            font-weight: 700; 
-            margin-bottom: 10px; 
-        }
-        
-        .detail-price { 
-            font-size: 18px; 
-            color: #6b2d38; 
-            font-weight: 700; 
-            margin-bottom: 20px; 
-        }
-        
-        .accordion { 
-            border-top: 1px solid #eee; 
-            padding: 15px 0; 
-            display: flex; 
-            justify-content: space-between; 
-            font-weight: 500; 
-            font-size: 14px;
-        }
-
-        /* Нижняя навигация */
+        /* НИЖНЯЯ ПАНЕЛЬ С УЧЕТОМ SAFE AREA */
         .nav-bar { 
-            flex-shrink: 0; 
+            position: fixed; 
+            bottom: 0; 
+            left: 0; 
+            right: 0; 
+            height: auto; /* Адаптивная высота */
             background: #fff; 
             display: flex; 
             justify-content: space-around; 
             align-items: center; 
             border-top: 1px solid #e5e5ea; 
-            padding: 10px 0;
-            padding-bottom: max(env(safe-area-inset-bottom), 10px); 
+            z-index: 1000; 
+            /* ДОБАВЛЯЕМ ОТСТУП СНИЗУ ДЛЯ СИСТЕМНОЙ ПОЛОСКИ ТЕЛЕФОНА */
+            padding: 15px 0 calc(10px + env(safe-area-inset-bottom)) 0;
         }
         
-        .nav-item { 
-            text-align: center; 
-            font-size: 11px; 
-            color: #8e8e93; 
-            cursor: pointer; 
-            flex: 1; 
-        }
-        
-        .nav-item.active { 
-            color: #6b2d38; 
-            font-weight: 600; 
-        }
-        
-        .nav-item svg { 
-            width: 24px; 
-            height: 24px; 
-            display: block; 
-            margin: 0 auto 2px; 
-            fill: currentColor; 
-        }
-
-        .banner { 
-            background: #6b2d38; 
-            color: #fff; 
-            margin: 15px; 
-            padding: 20px; 
-            border-radius: 16px; 
-        }
+        .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
+        .nav-item.active { color: #6b2d38; font-weight: 600; }
+        .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
     </style>
 </head>
 <body>
@@ -332,22 +170,12 @@
         </div>
     </div>
 
+    <div style="height: 80px; flex-shrink: 0;"></div>
+
     <div id="page-detail" class="page"></div>
-    
-    <div id="page-favorites" class="page">
-        <div class="header">Избранное</div>
-        <div class="content-area"></div>
-    </div>
-    
-    <div id="page-cart" class="page">
-        <div class="header">Корзина</div>
-        <div class="content-area"></div>
-    </div>
-    
-    <div id="page-account" class="page">
-        <div class="header">Аккаунт</div>
-        <div class="content-area"></div>
-    </div>
+    <div id="page-favorites" class="page"><div class="header">Избранное</div></div>
+    <div id="page-cart" class="page"><div class="header">Корзина</div></div>
+    <div id="page-account" class="page"><div class="header">Аккаунт</div></div>
 
     <div class="nav-bar">
         <div class="nav-item active" onclick="switchPage('shop', this)">
@@ -365,37 +193,23 @@
     </div>
 
     <script>
-        // Функция загрузки товаров
         async function loadProducts() {
             const container = document.getElementById('products-container');
-            
             try {
                 const response = await fetch('/api/get-data');
                 const data = await response.json();
-                
                 container.innerHTML = '';
-                
                 (data.rows || []).filter(p => !p.archived).forEach(prod => {
                     const price = (prod.salePrices?.[0]?.value || 0) / 100;
                     const img = prod.images?.rows?.[0]?.miniature?.downloadHref || 'https://via.placeholder.com/150';
-                    
                     const card = document.createElement('div');
                     card.className = 'product-card';
                     card.onclick = () => openProduct(prod.name, price, img);
-                    
-                    card.innerHTML = `
-                        <div class="product-image-container"><img src="${img}"></div>
-                        <div class="product-title">${prod.name}</div>
-                        <div class="product-price">${price.toLocaleString()} ₽</div>
-                    `;
-                    
+                    card.innerHTML = `<div class="product-image-container"><img src="${img}"></div><div class="product-title">${prod.name}</div><div class="product-price">${price.toLocaleString()} ₽</div>`;
                     container.appendChild(card);
                 });
-            } catch (e) { 
-                container.innerHTML = 'Ошибка загрузки'; 
-            }
+            } catch (e) { container.innerHTML = 'Ошибка загрузки'; }
         }
-        
         loadProducts();
     </script>
 </body>
