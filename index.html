@@ -51,26 +51,29 @@
             background-color: #f2f2f7; 
             color: #1c1c1e; 
             padding-bottom: 80px; 
+            padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
             overscroll-behavior: none; 
             box-sizing: border-box; 
         }
         
-        /* Смещаем контент страницы ниже фиксированной шапки (высота шапки 60px) */
+        /* Надежное смещение контента страницы ниже шапки */
         .page { 
             display: none; 
-            padding-top: calc(env(safe-area-inset-top) + 60px); 
+            padding-top: 75px; /* Базовый отступ (работает везде) */
+            padding-top: calc(env(safe-area-inset-top, 0px) + 60px); /* Смартфоны с челками */
         }
         .page.active { 
             display: block; 
         }
 
-        /* Фиксируем шапку, чтобы она оставалась при скролле */
+        /* Надежная фиксация шапки сверху */
         .header { 
             position: fixed; 
             top: 0; 
             left: 0; 
             right: 0; 
-            padding-top: env(safe-area-inset-top); /* Отступ для нативной шторки Telegram */
+            padding-top: 0;
+            padding-top: env(safe-area-inset-top, 0px); /* Отступ для статус-бара Telegram */
             background: #fff; 
             z-index: 1000; 
             border-bottom: 1px solid #e5e5ea; 
@@ -80,7 +83,7 @@
             display: flex; 
             justify-content: center; 
             align-items: center; 
-            height: 60px; /* Фиксированная высота */
+            height: 60px; 
             position: relative; 
             padding: 0 20px; 
             font-weight: 700; 
@@ -136,12 +139,26 @@
         .product-card { background: #fff; border-radius: 16px; padding: 12px; cursor: pointer; }
         .product-image-container { height: 110px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
         
-        /* Добавили image-rendering чтобы визуально улучшить мелкие картинки */
         .product-card img { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: -webkit-optimize-contrast; }
         .product-title { font-size: 13px; height: 32px; overflow: hidden; line-height: 1.2; }
         .product-price { font-weight: 700; margin-top: 4px; font-size: 14px; color: #333;}
         
-        .nav-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 65px; background: #fff; display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #e5e5ea; z-index: 1000; padding-bottom: env(safe-area-inset-bottom); }
+        /* Нижняя навигационная панель с резервными стилями */
+        .nav-bar { 
+            position: fixed; 
+            bottom: 0; 
+            left: 0; 
+            right: 0; 
+            height: 65px; 
+            background: #fff; 
+            display: flex; 
+            justify-content: space-around; 
+            align-items: center; 
+            border-top: 1px solid #e5e5ea; 
+            z-index: 1000; 
+            padding-bottom: 0;
+            padding-bottom: env(safe-area-inset-bottom, 0px); 
+        }
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
         .nav-item.active { color: #6b2d38; font-weight: 600; }
         .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
@@ -226,8 +243,6 @@
                 container.innerHTML = '';
                 (data.rows || []).filter(p => !p.archived).forEach(prod => {
                     const price = (prod.salePrices?.[0]?.value || 0) / 100;
-                    
-                    // Возвращаем получение публичных миниатюр, так как meta заблокирована
                     const img = prod.images?.rows?.[0]?.miniature?.downloadHref || 'https://via.placeholder.com/150';
                     
                     const card = document.createElement('div');
