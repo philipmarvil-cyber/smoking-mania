@@ -10,8 +10,9 @@ export default async function handler(req, res) {
     const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9"; 
 
     try {
-        // Добавили параметр &expand=images, чтобы склад присылал ссылки на фото товаров
-        const response = await fetch("https://api.moysklad.ru/api/remap/1.2/entity/product?limit=20&expand=images", {
+        // Добавили параметр &expand=images, чтобы склад присылал ссылки на фото товаров.
+        // Архивные товары МойСклад по умолчанию НЕ включает в список — их нужно запросить явно.
+        const response = await fetch("https://api.moysklad.ru/api/remap/1.2/entity/product?limit=20&expand=images&filter=archived=true;archived=false", {
             method: "GET",
             headers: {
                 "Authorization": `Bearer ${MY_SKLAD_TOKEN}`,
