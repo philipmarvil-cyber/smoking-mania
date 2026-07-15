@@ -25,6 +25,7 @@
         let allProducts = [];   // все товары, полученные со склада
         let categories = [];    // категории (группы товаров) со склада
         let activeCategory = null; // null = "Все"
+        let activeSubcategory = null; // null = "Все" внутри выбранной категории
         let cart = {};       // { productId: { id, name, price, img, qty } }
         let favorites = {};  // { productId: { id, name, price, img } }
         let detailQtyValue = 1;
@@ -295,11 +296,45 @@
                 btn.onclick = () => selectCategory(cat.id, btn);
                 wrap.appendChild(btn);
             });
+            renderSubcategories();
         }
 
         function selectCategory(id, el) {
             activeCategory = id;
-            document.querySelectorAll('.cat-item').forEach(b => b.classList.remove('active'));
+            activeSubcategory = null;
+            document.querySelectorAll('#categories-container .cat-item').forEach(b => b.classList.remove('active'));
+            el.classList.add('active');
+            renderSubcategories();
+            renderProducts();
+        }
+
+        function renderSubcategories() {
+            const wrap = document.getElementById('subcategories-container');
+            const cat = categories.find(c => c.id === activeCategory);
+            if (!cat || !cat.subcategories.length) {
+                wrap.innerHTML = '';
+                wrap.style.display = 'none';
+                return;
+            }
+            wrap.style.display = 'flex';
+            wrap.innerHTML = '';
+            const allBtn = document.createElement('div');
+            allBtn.className = 'cat-item sub' + (activeSubcategory === null ? ' active' : '');
+            allBtn.textContent = 'Все';
+            allBtn.onclick = () => selectSubcategory(null, allBtn);
+            wrap.appendChild(allBtn);
+            cat.subcategories.forEach(sub => {
+                const btn = document.createElement('div');
+                btn.className = 'cat-item sub' + (activeSubcategory === sub.id ? ' active' : '');
+                btn.textContent = sub.name;
+                btn.onclick = () => selectSubcategory(sub.id, btn);
+                wrap.appendChild(btn);
+            });
+        }
+
+        function selectSubcategory(id, el) {
+            activeSubcategory = id;
+            document.querySelectorAll('#subcategories-container .cat-item').forEach(b => b.classList.remove('active'));
             el.classList.add('active');
             renderProducts();
         }
@@ -309,8 +344,12 @@
             const container = document.getElementById('products-container');
             const searchTerm = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
             let list = allProducts;
-            if (activeCategory !== null) {
-                list = list.filter(p => p.folderId === activeCategory);
+            if (activeSubcategory !== null) {
+                list = list.filter(p => p.folderId === activeSubcategory);
+            } else if (activeCategory !== null) {
+                const cat = categories.find(c => c.id === activeCategory);
+                const ids = cat ? [cat.id, ...cat.subcategories.map(s => s.id)] : [activeCategory];
+                list = list.filter(p => ids.includes(p.folderId));
             }
             if (searchTerm) {
                 list = list.filter(p => p.name.toLowerCase().includes(searchTerm));
@@ -484,6 +523,9 @@
         .categories-scroll::-webkit-scrollbar { display: none; }
         .cat-item { background: #fff; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 500; white-space: nowrap; border: 1px solid #e5e5ea; cursor: pointer; }
         .cat-item.active { background: #000; color: #fff; border-color: #000; }
+        .sub-scroll { padding-top: 0; }
+        .cat-item.sub { background: #eceef1; border-color: transparent; font-size: 12px; padding: 6px 14px; }
+        .cat-item.sub.active { background: #6b2d38; color: #fff; }
         
         /* Search Bar */
         .search-bar { padding: 0 15px 10px 15px; }
@@ -581,6 +623,7 @@
         
         <div class="section-title" style="margin: 0 15px 10px 15px; font-weight:700;">Категории</div>
         <div class="categories-scroll" id="categories-container"></div>
+        <div class="categories-scroll sub-scroll" id="subcategories-container" style="display:none;"></div>
 
         <div class="search-bar"><input type="text" id="search-input" placeholder="Поиск товаров" oninput="renderProducts()"></div>
         
