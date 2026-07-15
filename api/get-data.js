@@ -24,6 +24,17 @@ export default async function handler(req, res) {
         }
 
         const data = await response.json();
+
+        // Товары, которые в МойСклад помечены как архивные, не скрываем,
+        // а помечаем меткой "Под заказ" — фронтенд покажет их с этой пометкой.
+        if (Array.isArray(data.rows)) {
+            data.rows = data.rows.map(product => ({
+                ...product,
+                preOrder: !!product.archived,
+                preOrderLabel: product.archived ? "Под заказ" : null
+            }));
+        }
+
         return res.status(200).json(data);
     } catch (error) {
         return res.status(500).json({ error: error.message });
