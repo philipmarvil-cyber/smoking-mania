@@ -7,36 +7,49 @@ export default async function handler(req, res) {
         return res.status(200).end();
     }
 
-    const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9"; 
+    const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9";
+    const headers = {
+        "Authorization": `Bearer ${MY_SKLAD_TOKEN}`,
+        "Content-Type": "application/json"
+    };
 
     try {
-        // Добавили параметр &expand=images, чтобы склад присылал ссылки на фото товаров.
-        // Архивные товары МойСклад по умолчанию НЕ включает в список — их нужно запросить явно.
-        const response = await fetch("https://api.moysklad.ru/api/remap/1.2/entity/product?limit=20&expand=images&filter=archived=true;archived=false", {
-            method: "GET",
-            headers: {
-                "Authorization": `Bearer ${MY_SKLAD_TOKEN}`,
-                "Content-Type": "application/json"
-            }
+        // Товары: expand=images подтягивает фото, filter=archived=true;archived=false
+        // просит склад отдать И архивные, И обычные товары (по умолчанию архивные скрыты).
+        // Категории: отдельный справочник "Группы товаров" (productfolder).
+        const [productsRes, foldersRes] = await Promise.all([
+            fetch("https://api.moysklad.ru/api/remap/1.2/entity/product?limit=20&expand=images&filter=archived=true;archived=false", { headers }),
+            fetch("https://api.moysklad.ru/api/remap/1.2/entity/productfolder?limit=100", { headers })
+        ]);
+
+        if (!productsRes.ok) {
+            return res.status(productsRes.status).json({ error: `Склад ответил статусом ${productsRes.status} (товары)` });
+        }
+        if (!foldersRes.ok) {
+            return res.status(foldersRes.status).json({ error: `Склад ответил статусом ${foldersRes.status} (категории)` });
+        }
+
+        const productsData = await productsRes.json();
+        const foldersData = await foldersRes.json();
+
+        // Привязываем товар к категории по ссылке productFolder, и явно помечаем,
+        // что товар архивный (использует фронтенд для метки "Нет в наличии").
+        const products = (productsData.rows || []).map(product => {
+            const folderHref = product.productFolder?.meta?.href || '';
+            const folderId = folderHref ? folderHref.split('/').pop() : null;
+            return {
+                ...product,
+                folderId,
+                outOfStock: !!product.archived
+            };
         });
 
-        if (!response.ok) {
-            return res.status(response.status).json({ error: `Склад ответил статусом ${response.status}` });
-        }
+        const categories = (foldersData.rows || []).map(folder => ({
+            id: folder.id,
+            name: folder.name
+        }));
 
-        const data = await response.json();
-
-        // Товары, которые в МойСклад помечены как архивные, не скрываем,
-        // а помечаем меткой "Под заказ" — фронтенд покажет их с этой пометкой.
-        if (Array.isArray(data.rows)) {
-            data.rows = data.rows.map(product => ({
-                ...product,
-                preOrder: !!product.archived,
-                preOrderLabel: product.archived ? "Под заказ" : null
-            }));
-        }
-
-        return res.status(200).json(data);
+        return res.status(200).json({ products, categories });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
