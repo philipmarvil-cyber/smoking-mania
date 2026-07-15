@@ -44,13 +44,35 @@ export default async function handler(req, res) {
             };
         });
 
-        const categories = (foldersData.rows || []).map(folder => ({
-            id: folder.id,
-            name: folder.name
-        }));
+        const categories = buildCategoryTree(foldersData.rows || []);
 
         return res.status(200).json({ products, categories });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
+}
+
+function getParentFolderId(folder) {
+    const href = folder.productFolder?.meta?.href || '';
+    return href ? href.split('/').pop() : null;
+}
+
+// Берём только категории, лежащие внутри папки "Katalog" в МойСклад,
+// и строим по ним двухуровневое дерево: категория -> подкатегории.
+function buildCategoryTree(allFolders) {
+    const katalogFolder = allFolders.find(
+        f => (f.name || '').trim().toLowerCase() === 'katalog'
+    );
+    if (!katalogFolder) return [];
+
+    const topFolders = allFolders.filter(f => getParentFolderId(f) === katalogFolder.id);
+
+    return topFolders.map(top => {
+        const subFolders = allFolders.filter(f => getParentFolderId(f) === top.id);
+        return {
+            id: top.id,
+            name: top.name,
+            subcategories: subFolders.map(sub => ({ id: sub.id, name: sub.name }))
+        };
+    });
 }
