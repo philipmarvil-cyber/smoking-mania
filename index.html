@@ -909,6 +909,10 @@
             try {
                 const response = await fetch('/api/get-data');
                 const data = await response.json();
+                if (data.error) {
+                    showLoadError(data.error);
+                    return;
+                }
                 allProducts = (data.products || []).map(prod => ({
                     id: prod.id,
                     name: prod.name,
@@ -921,9 +925,18 @@
                 categories = data.categories || [];
                 renderScreen(currentScreen());
             } catch (e) {
-                const container = document.getElementById('home-categories-container');
-                if (container) container.innerHTML = 'Ошибка загрузки';
+                showLoadError(e.message);
             }
+        }
+
+        function showLoadError(message) {
+            const container = document.getElementById('home-categories-container');
+            if (container) {
+                container.style.display = 'block';
+                container.innerHTML = `<div class="empty-state" style="grid-column:auto;">Не удалось загрузить каталог.<br>${message || ''}</div>`;
+            }
+            const newestSection = document.getElementById('home-newest-section');
+            if (newestSection) newestSection.style.display = 'none';
         }
 
         loadCartAndFavorites(() => {
