@@ -7,6 +7,11 @@ export default async function handler(req, res) {
         return res.status(200).end();
     }
 
+    // Кэшируем ответ на 30 секунд на уровне Vercel/CDN — при большом каталоге это сильно
+    // ускоряет повторные открытия бота разными людьми в течение этого окна, а через
+    // 30-150 сек данные в любом случае обновятся сами (МойСклад пересчитывать не нужно каждый раз).
+    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
+
     const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9";
     const API = "https://api.moysklad.ru/api/remap/1.2";
     const headers = {
@@ -18,20 +23,19 @@ export default async function handler(req, res) {
         // ВАЖНО: если используется expand, МойСклад требует limit <= 100,
         // иначе expand молча игнорируется и фото пропадают. Поэтому здесь limit=100,
         // а за все товары (если их больше) отвечает постраничный обход через nextHref.
-        const productRows = await fetchAllRows(
-            `${API}/entity/product?limit=100&expand=images&filter=archived=false`,
-            headers
-        );
-        const folderRows = await fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers);
-
-        // Отчёт по остаткам не критичен для работы бота — если он вдруг недоступен,
-        // просто не проставляем "нет в наличии" никому, вместо того чтобы падать целиком.
-        let stockRows = [];
-        try {
-            stockRows = await fetchAllRows(`${API}/report/stock/all?limit=1000`, headers);
-        } catch (e) {
-            stockRows = [];
-        }
+        //
+        // Все три запроса независимы друг от друга — раньше они шли по очереди
+        // (сначала товары, потом категории, потом остатки), из-за чего при большом
+        // каталоге загрузка растягивалась на сумму времени всех трёх запросов.
+        // Теперь они уходят параллельно, и общее время — это время самого медленного из них.
+        const [productRows, folderRows, stockRows] = await Promise.all([
+            fetchAllRows(`${API}/entity/product?limit=100&expand=images&filter=archived=false`, headers),
+            fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers),
+            // Отчёт по остаткам не критичен для работы бота — если он вдруг недоступен
+            // или МойСклад ответит ошибкой, просто не проставляем "нет в наличии" никому,
+            // вместо того чтобы ронять всю загрузку целиком.
+            fetchAllRows(`${API}/report/stock/all?limit=1000`, headers).catch(() => [])
+        ]);
 
         const stockById = {};
         stockRows.forEach(row => {
@@ -71,20 +75,39 @@ function extractId(href) {
     return href.split('/').pop().split('?')[0];
 }
 
-// Проходит по всем страницам списка (используя meta.nextHref), пока не соберёт все строки.
+// Забирает первую страницу, узнаёт из неё общее количество (meta.size),
+// а остальные страницы (если они есть) запрашивает параллельно, а не по очереди —
+// это и есть основной выигрыш в скорости при большом каталоге.
 async function fetchAllRows(url, headers) {
-    let rows = [];
-    let nextUrl = url;
-    while (nextUrl) {
-        const response = await fetch(nextUrl, { headers });
-        if (!response.ok) {
-            throw new Error(`Склад ответил статусом ${response.status} при запросе ${nextUrl}`);
+    const first = await fetchJson(url, headers);
+    let rows = first.rows || [];
+    const meta = first.meta;
+
+    if (meta && typeof meta.size === 'number' && typeof meta.limit === 'number' && meta.size > rows.length) {
+        const pageCount = Math.ceil(meta.size / meta.limit);
+        const pagePromises = [];
+        for (let page = 1; page < pageCount; page++) {
+            pagePromises.push(fetchJson(withOffset(url, page * meta.limit), headers));
         }
-        const data = await response.json();
-        rows = rows.concat(data.rows || []);
-        nextUrl = data.meta && data.meta.nextHref ? data.meta.nextHref : null;
+        const pages = await Promise.all(pagePromises);
+        pages.forEach(p => { rows = rows.concat(p.rows || []); });
     }
+
     return rows;
+}
+
+async function fetchJson(url, headers) {
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+        throw new Error(`Склад ответил статусом ${response.status} при запросе ${url}`);
+    }
+    return response.json();
+}
+
+function withOffset(url, offset) {
+    const u = new URL(url);
+    u.searchParams.set('offset', String(offset));
+    return u.toString();
 }
 
 function getParentFolderId(folder) {
