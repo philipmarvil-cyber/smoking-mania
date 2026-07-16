@@ -15,48 +15,43 @@ export default async function handler(req, res) {
     };
 
     try {
-        // Товары: только НЕ архивные (архивные в бота вообще не должны попадать).
-        // Категории и остатки запрашиваем параллельно.
-        const [productsRes, foldersRes, stockRes] = await Promise.all([
-            fetch(`${API}/entity/product?limit=20&expand=images&filter=archived=false`, { headers }),
-            fetch(`${API}/entity/productfolder?limit=100`, { headers }),
-            fetch(`${API}/report/stock/all?limit=1000`, { headers })
-        ]);
+        // Товары — только НЕ архивные, но ВСЕ (не только первые 20):
+        // склад отдаёт максимум 1000 за раз, поэтому идём по страницам через nextHref,
+        // пока они не закончатся.
+        const productRows = await fetchAllRows(
+            `${API}/entity/product?limit=1000&expand=images&filter=archived=false`,
+            headers
+        );
+        const folderRows = await fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers);
 
-        if (!productsRes.ok) {
-            return res.status(productsRes.status).json({ error: `Склад ответил статусом ${productsRes.status} (товары)` });
+        // Отчёт по остаткам не критичен для работы бота — если он вдруг недоступен,
+        // просто не проставляем "нет в наличии" никому, вместо того чтобы падать целиком.
+        let stockRows = [];
+        try {
+            stockRows = await fetchAllRows(`${API}/report/stock/all?limit=1000`, headers);
+        } catch (e) {
+            stockRows = [];
         }
-        if (!foldersRes.ok) {
-            return res.status(foldersRes.status).json({ error: `Склад ответил статусом ${foldersRes.status} (категории)` });
-        }
-
-        const productsData = await productsRes.json();
-        const foldersData = await foldersRes.json();
-        // Отчёт по остаткам не критичен — если он вдруг недоступен, просто считаем,
-        // что остатков нет данных (и не проставляем "нет в наличии" всем подряд).
-        const stockData = stockRes.ok ? await stockRes.json() : { rows: [] };
 
         const stockById = {};
-        (stockData.rows || []).forEach(row => {
-            const href = row.meta?.href || '';
-            const id = href ? href.split('/').pop() : null;
+        stockRows.forEach(row => {
+            const id = extractId(row.meta?.href);
             if (id) stockById[id] = row.stock ?? 0;
         });
 
         // Привязываем товар к категории по ссылке productFolder,
-        // и помечаем "нет в наличии", если остаток по складу равен 0.
-        const products = (productsData.rows || []).map(product => {
-            const folderHref = product.productFolder?.meta?.href || '';
-            const folderId = folderHref ? folderHref.split('/').pop() : null;
-            const stock = stockById.hasOwnProperty(product.id) ? stockById[product.id] : null;
+        // и помечаем "нет в наличии", если остаток по складу равен 0 (или товара нет в отчёте вовсе).
+        const products = productRows.map(product => {
+            const folderId = extractId(product.productFolder?.meta?.href);
+            const stock = stockById.hasOwnProperty(product.id) ? stockById[product.id] : 0;
             return {
                 ...product,
                 folderId,
-                outOfStock: stock !== null ? stock <= 0 : false
+                outOfStock: stock <= 0
             };
         });
 
-        const categories = buildCategoryTree(foldersData.rows || []);
+        const categories = buildCategoryTree(folderRows);
 
         return res.status(200).json({ products, categories });
     } catch (error) {
@@ -64,9 +59,30 @@ export default async function handler(req, res) {
     }
 }
 
+// Убирает query-параметры (?expand=...) из хвоста ссылки, чтобы корректно достать чистый id.
+function extractId(href) {
+    if (!href) return null;
+    return href.split('/').pop().split('?')[0];
+}
+
+// Проходит по всем страницам списка (используя meta.nextHref), пока не соберёт все строки.
+async function fetchAllRows(url, headers) {
+    let rows = [];
+    let nextUrl = url;
+    while (nextUrl) {
+        const response = await fetch(nextUrl, { headers });
+        if (!response.ok) {
+            throw new Error(`Склад ответил статусом ${response.status} при запросе ${nextUrl}`);
+        }
+        const data = await response.json();
+        rows = rows.concat(data.rows || []);
+        nextUrl = data.meta && data.meta.nextHref ? data.meta.nextHref : null;
+    }
+    return rows;
+}
+
 function getParentFolderId(folder) {
-    const href = folder.productFolder?.meta?.href || '';
-    return href ? href.split('/').pop() : null;
+    return extractId(folder.productFolder?.meta?.href);
 }
 
 // Берём только категории, лежащие внутри папки "Katalog" в МойСклад,
