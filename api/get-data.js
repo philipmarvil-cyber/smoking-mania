@@ -15,11 +15,11 @@ export default async function handler(req, res) {
     };
 
     try {
-        // Товары — только НЕ архивные, но ВСЕ (не только первые 20):
-        // склад отдаёт максимум 1000 за раз, поэтому идём по страницам через nextHref,
-        // пока они не закончатся.
+        // ВАЖНО: если используется expand, МойСклад требует limit <= 100,
+        // иначе expand молча игнорируется и фото пропадают. Поэтому здесь limit=100,
+        // а за все товары (если их больше) отвечает постраничный обход через nextHref.
         const productRows = await fetchAllRows(
-            `${API}/entity/product?limit=1000&expand=images&filter=archived=false`,
+            `${API}/entity/product?limit=100&expand=images&filter=archived=false`,
             headers
         );
         const folderRows = await fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers);
@@ -41,7 +41,7 @@ export default async function handler(req, res) {
 
         // Привязываем товар к категории по ссылке productFolder,
         // помечаем "нет в наличии" при нулевом остатке,
-        // и отмечаем как новинку, если товар создан в МойСклад недавно.
+        // и отмечаем как новинку, если товар СОЗДАН (не отредактирован) в МойСклад недавно.
         const NEW_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 дней
         const now = Date.now();
         const products = productRows.map(product => {
@@ -91,21 +91,34 @@ function getParentFolderId(folder) {
     return extractId(folder.productFolder?.meta?.href);
 }
 
-// Берём только категории, лежащие внутри папки "Katalog" в МойСклад,
-// и строим по ним двухуровневое дерево: категория -> подкатегории.
+function normalizeName(name) {
+    return (name || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// Категории на главной странице = дочерние папки "Katalog" (Жевательный табак, Жидкости, ...)
+// ПЛЮС остальные папки верхнего уровня (Аксессуары, Кальяны, Уголь, Чаши и т.д.),
+// ИСКЛЮЧАЯ саму "Katalog" (это просто технический контейнер), "SALE (Распродажа)" и "Электронки".
+// Для каждой такой категории отдельно считаем её собственные подпапки — это категории второго уровня,
+// которые показываются уже на отдельной странице после клика.
 function buildCategoryTree(allFolders) {
-    const katalogFolder = allFolders.find(
-        f => (f.name || '').trim().toLowerCase() === 'katalog'
-    );
-    if (!katalogFolder) return [];
+    const EXCLUDED_NAMES = ['katalog', 'sale (распродажа)', 'электронки'];
 
-    const topFolders = allFolders.filter(f => getParentFolderId(f) === katalogFolder.id);
+    const katalogFolder = allFolders.find(f => normalizeName(f.name) === 'katalog');
 
-    return topFolders.map(top => {
-        const subFolders = allFolders.filter(f => getParentFolderId(f) === top.id);
+    const katalogChildren = katalogFolder
+        ? allFolders.filter(f => getParentFolderId(f) === katalogFolder.id)
+        : [];
+
+    const rootFolders = allFolders.filter(f => getParentFolderId(f) === null);
+    const otherTopFolders = rootFolders.filter(f => !EXCLUDED_NAMES.includes(normalizeName(f.name)));
+
+    const displayFolders = [...katalogChildren, ...otherTopFolders];
+
+    return displayFolders.map(cat => {
+        const subFolders = allFolders.filter(f => getParentFolderId(f) === cat.id);
         return {
-            id: top.id,
-            name: top.name,
+            id: cat.id,
+            name: cat.name,
             subcategories: subFolders.map(sub => ({ id: sub.id, name: sub.name }))
         };
     });
