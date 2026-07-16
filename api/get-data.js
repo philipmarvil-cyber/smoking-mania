@@ -40,14 +40,20 @@ export default async function handler(req, res) {
         });
 
         // Привязываем товар к категории по ссылке productFolder,
-        // и помечаем "нет в наличии", если остаток по складу равен 0 (или товара нет в отчёте вовсе).
+        // помечаем "нет в наличии" при нулевом остатке,
+        // и отмечаем как новинку, если товар создан в МойСклад недавно.
+        const NEW_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 дней
+        const now = Date.now();
         const products = productRows.map(product => {
             const folderId = extractId(product.productFolder?.meta?.href);
             const stock = stockById.hasOwnProperty(product.id) ? stockById[product.id] : 0;
+            const createdTime = product.created ? new Date(product.created).getTime() : null;
+            const isNew = createdTime !== null && (now - createdTime) < NEW_THRESHOLD_MS;
             return {
                 ...product,
                 folderId,
-                outOfStock: stock <= 0
+                outOfStock: stock <= 0,
+                isNew
             };
         });
 
