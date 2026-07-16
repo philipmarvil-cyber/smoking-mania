@@ -232,19 +232,76 @@
             if (checkoutBtn) checkoutBtn.style.display = total > 0 ? 'block' : 'none';
         }
 
-        function checkout() {
+        function getSavedPhone() {
+            return new Promise(resolve => {
+                if (!tg.CloudStorage) { resolve(null); return; }
+                tg.CloudStorage.getItem('phone_number', (err, value) => {
+                    resolve(!err && value ? value : null);
+                });
+            });
+        }
+
+        async function checkout() {
             const items = Object.values(cart);
             if (!items.length) return;
-            const lines = ['Здравствуйте! Хочу оформить заказ:'];
-            items.forEach(item => lines.push(`— ${item.name} x${item.qty} (${(item.price * item.qty).toLocaleString()} ₽)`));
-            const total = items.reduce((s, i) => s + i.price * i.qty, 0);
-            lines.push(`Итого: ${total.toLocaleString()} ₽`);
-            const text = encodeURIComponent(lines.join('\n'));
-            const url = `https://t.me/smokingmaniasup?text=${text}`;
-            if (tg.openTelegramLink) {
-                tg.openTelegramLink(url);
-            } else {
-                window.open(url, '_blank');
+
+            const phone = await getSavedPhone();
+            if (!phone) {
+                requestPhoneForCheckout();
+                return;
+            }
+            submitOrder(items, phone);
+        }
+
+        function requestPhoneForCheckout() {
+            if (!tg.requestContact) {
+                alert('Чтобы оформить заказ, подтвердите номер телефона в разделе "Аккаунт".');
+                return;
+            }
+            tg.requestContact((shared, response) => {
+                const contact = response?.responseUnsafe?.contact;
+                if (shared && contact?.phone_number) {
+                    showConfirmedPhone(contact.phone_number);
+                    if (tg.CloudStorage) tg.CloudStorage.setItem('phone_number', contact.phone_number, () => {});
+                    submitOrder(Object.values(cart), contact.phone_number);
+                }
+            });
+        }
+
+        async function submitOrder(items, phone) {
+            const btn = document.getElementById('checkout-btn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Оформляем...';
+
+            const user = tg.initDataUnsafe?.user;
+            const customerName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : 'Клиент Telegram';
+
+            try {
+                const response = await fetch('/api/create-order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        items: items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
+                        customerName,
+                        phone
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Не удалось оформить заказ');
+                }
+                cart = {};
+                persistCart();
+                updateCartBadge();
+                document.getElementById('cart-container').innerHTML =
+                    `<div class="empty-state">Заказ ${data.orderName ? '№' + data.orderName + ' ' : ''}оформлен!<br>Мы скоро с вами свяжемся.</div>`;
+                updateCartTotal(0);
+            } catch (e) {
+                alert('Не получилось оформить заказ: ' + e.message + '\n\nПопробуйте ещё раз или напишите в поддержку.');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
         }
 
@@ -583,6 +640,7 @@
         .cart-total-row { display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; margin-bottom: 10px; }
         .checkout-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; }
         .checkout-btn:active { opacity: 0.8; }
+        .checkout-btn:disabled { opacity: 0.6; }
 
         /* Account Page */
         .account-content { padding: 15px; }
