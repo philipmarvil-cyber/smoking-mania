@@ -76,8 +76,11 @@ function extractId(href) {
 }
 
 // Забирает первую страницу, узнаёт из неё общее количество (meta.size),
-// а остальные страницы (если они есть) запрашивает параллельно, а не по очереди —
-// это и есть основной выигрыш в скорости при большом каталоге.
+// а остальные страницы (если они есть) запрашивает параллельно, но НЕ ВСЕ СРАЗУ —
+// МойСклад ограничивает число запросов в секунду (отсюда была ошибка 429), поэтому
+// параллельность страниц одного запроса ограничена небольшим пулом.
+const PAGE_CONCURRENCY = 3;
+
 async function fetchAllRows(url, headers) {
     const first = await fetchJson(url, headers);
     let rows = first.rows || [];
@@ -85,23 +88,65 @@ async function fetchAllRows(url, headers) {
 
     if (meta && typeof meta.size === 'number' && typeof meta.limit === 'number' && meta.size > rows.length) {
         const pageCount = Math.ceil(meta.size / meta.limit);
-        const pagePromises = [];
+        const pageUrls = [];
         for (let page = 1; page < pageCount; page++) {
-            pagePromises.push(fetchJson(withOffset(url, page * meta.limit), headers));
+            pageUrls.push(withOffset(url, page * meta.limit));
         }
-        const pages = await Promise.all(pagePromises);
+        const pages = await fetchWithLimitedConcurrency(pageUrls, headers, PAGE_CONCURRENCY);
         pages.forEach(p => { rows = rows.concat(p.rows || []); });
     }
 
     return rows;
 }
 
-async function fetchJson(url, headers) {
+// Обходит список URL пулом из `concurrency` одновременных запросов вместо того,
+// чтобы стрелять всеми сразу (что и приводило к 429 — "слишком много запросов").
+async function fetchWithLimitedConcurrency(urls, headers, concurrency) {
+    const results = new Array(urls.length);
+    let nextIndex = 0;
+
+    async function worker() {
+        while (nextIndex < urls.length) {
+            const current = nextIndex++;
+            results[current] = await fetchJson(urls[current], headers);
+        }
+    }
+
+    const workers = Array.from({ length: Math.min(concurrency, urls.length) }, () => worker());
+    await Promise.all(workers);
+    return results;
+}
+
+// Делает запрос с автоматическим повтором при 429 (слишком много запросов),
+// выжидая время, которое МойСклад просит подождать (заголовок Retry-After / X-Lognex-Retry-After),
+// либо разумную паузу с нарастанием, если заголовка нет.
+async function fetchJson(url, headers, attempt = 1) {
     const response = await fetch(url, { headers });
+
+    if (response.status === 429) {
+        if (attempt > 5) {
+            throw new Error('Склад отвечает статусом 429 (слишком много запросов) даже после нескольких повторов');
+        }
+        const lognexRetryMs = response.headers.get('X-Lognex-Retry-After');
+        const retryAfterSec = response.headers.get('Retry-After');
+        let waitMs = 800 * attempt; // запасной вариант с нарастанием, если МойСклад не подсказал время
+        if (lognexRetryMs && !isNaN(parseInt(lognexRetryMs, 10))) {
+            waitMs = parseInt(lognexRetryMs, 10);
+        } else if (retryAfterSec && !isNaN(parseInt(retryAfterSec, 10))) {
+            waitMs = parseInt(retryAfterSec, 10) * 1000;
+        }
+        await sleep(waitMs);
+        return fetchJson(url, headers, attempt + 1);
+    }
+
     if (!response.ok) {
         throw new Error(`Склад ответил статусом ${response.status} при запросе ${url}`);
     }
     return response.json();
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function withOffset(url, offset) {
