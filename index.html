@@ -30,6 +30,20 @@
         let favorites = {};  // { productId: { id, name, price, img } }
         let detailQtyValue = 1;
 
+        function confirmAge(isAdult) {
+            const gate = document.getElementById('age-gate');
+            if (isAdult) {
+                if (gate) gate.style.display = 'none';
+            } else {
+                if (tg.close) {
+                    tg.close();
+                } else if (gate) {
+                    gate.querySelector('.age-gate-card').innerHTML =
+                        '<div class="age-gate-title">Доступ запрещён</div><div class="age-gate-text"><p>Извините, этот каталог доступен только совершеннолетним пользователям.</p></div>';
+                }
+            }
+        }
+
         function switchPage(pageId, element) {
             const currentActive = document.querySelector('.page.active');
             if (currentActive) {
@@ -420,12 +434,16 @@
                 const isFav = !!favorites[prod.id];
                 const badgeHtml = prod.archived ? `<div class="oos-badge">Нет в наличии</div>` : '';
                 const imgHtml = prod.img ? `<img src="${prod.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+                const quickAddHtml = prod.archived ? '' : `
+                    <div class="quick-add-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg></div>
+                `;
                 const card = document.createElement('div');
                 card.className = 'product-card';
                 card.innerHTML = `
                     <div class="product-image-container">
                         ${imgHtml}
                         <div class="fav-toggle ${isFav ? 'active' : ''}"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.6 8.4 2 4.8 5.4 4.1 7.6 3.6 9.8 4.6 12 7c2.2-2.4 4.4-3.4 6.6-2.9 3.4.7 4.8 4.3 3.4 7.6C19.5 16.3 12 21 12 21z"/></svg></div>
+                        ${quickAddHtml}
                     </div>
                     ${badgeHtml}
                     <div class="product-title">${prod.name}</div>
@@ -436,6 +454,14 @@
                     e.stopPropagation();
                     toggleFavorite(prod);
                 });
+                const quickAddEl = card.querySelector('.quick-add-btn');
+                if (quickAddEl) {
+                    quickAddEl.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        addToCart(prod, 1);
+                        tg.HapticFeedback?.notificationOccurred('success');
+                    });
+                }
                 container.appendChild(card);
             });
         }
@@ -615,6 +641,9 @@
         .fav-toggle.active svg { fill: #e0245e; stroke: #e0245e; }
         .detail-fav { top: 14px; right: 14px; width: 34px; height: 34px; }
         .detail-fav svg { width: 18px; height: 18px; }
+        .quick-add-btn { position: absolute; bottom: 2px; right: 2px; width: 28px; height: 28px; border-radius: 50%; background: #000; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,0.15); cursor: pointer; }
+        .quick-add-btn svg { width: 15px; height: 15px; }
+        .quick-add-btn:active { opacity: 0.8; }
 
         /* Qty stepper + add to cart */
         .qty-stepper { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
@@ -660,13 +689,68 @@
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
         .nav-item.active { color: #6b2d38; font-weight: 600; }
         .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
-        .nav-icon-wrap { position: relative; display: inline-block; }
+        .nav-icon-wrap { position: relative; display: block; width: 24px; margin: 0 auto 2px; }
+        .nav-icon-wrap svg { margin: 0; display: block; }
         .cart-badge { position: absolute; top: -4px; right: -9px; background: #e0245e; color: #fff; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: none; align-items: center; justify-content: center; padding: 0 4px; }
         .page { display: none; }
         .page.active { display: block; }
+
+        /* Age verification overlay */
+        .age-gate-overlay {
+            position: fixed;
+            inset: 0;
+            background: #7d7d82;
+            z-index: 5000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            box-sizing: border-box;
+        }
+        .age-gate-logo {
+            color: #1c1c1e;
+            font-size: 34px;
+            font-weight: 900;
+            letter-spacing: 1px;
+            text-align: center;
+            margin: auto auto 24px auto;
+            padding: 0 20px;
+        }
+        .age-gate-card {
+            background: #fff;
+            border-radius: 20px 20px 0 0;
+            padding: 24px 20px calc(20px + env(safe-area-inset-bottom)) 20px;
+            width: 100%;
+            max-width: 480px;
+            box-sizing: border-box;
+        }
+        .age-gate-title { font-size: 19px; font-weight: 700; text-align: center; margin-bottom: 14px; }
+        .age-gate-text { font-size: 13px; color: #3a3a3c; line-height: 1.5; max-height: 38vh; overflow-y: auto; margin-bottom: 18px; }
+        .age-gate-text p { margin: 0 0 10px 0; }
+        .age-gate-buttons { display: flex; gap: 10px; }
+        .age-gate-btn-yes { flex: 1; border: none; background: #1c1c1e; color: #fff; font-weight: 700; font-size: 13px; padding: 14px 8px; border-radius: 12px; cursor: pointer; }
+        .age-gate-btn-no { flex: 1; border: none; background: #e5e5ea; color: #1c1c1e; font-weight: 700; font-size: 13px; padding: 14px 8px; border-radius: 12px; cursor: pointer; }
     </style>
 </head>
 <body>
+
+    <div id="age-gate" class="age-gate-overlay">
+        <div class="age-gate-logo">SMOKING MANIA</div>
+        <div class="age-gate-card">
+            <div class="age-gate-title">Уведомление</div>
+            <div class="age-gate-text">
+                <p>Это приложение — каталог, предназначенный исключительно для совершеннолетних граждан Российской Федерации (18+), интересующихся табачной продукцией и аксессуарами для курения.</p>
+                <p>Каталог не является рекламой. Его цель — предоставить ограниченному кругу лиц достоверную информацию о потребительских свойствах и характеристиках табачной продукции в соответствии с пунктами 1 и 2 статьи 10 Закона РФ «О защите прав потребителей».</p>
+                <p><strong>Внимание!</strong> Лицам, не достигшим 18 лет, доступ запрещён (ст. 20 ФЗ №15-ФЗ «Об охране здоровья граждан от воздействия окружающего табачного дыма…» и ч. 7 ст. 15.1 ФЗ №149-ФЗ «Об информации…»).</p>
+                <p>Дистанционная торговля табачной продукцией не осуществляется в соответствии с требованиями законодательства РФ (ФЗ №15-ФЗ от 23.02.2013 и ФЗ №149-ФЗ от 27.07.2006).</p>
+                <p>Для продолжения подтвердите, что вам исполнилось 18 лет.</p>
+            </div>
+            <div class="age-gate-buttons">
+                <button class="age-gate-btn-yes" onclick="confirmAge(true)">Мне исполнилось 18 лет</button>
+                <button class="age-gate-btn-no" onclick="confirmAge(false)">Мне нет 18 лет</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Шапка с кнопкой поддержки -->
     <div id="page-shop" class="page active">
@@ -763,7 +847,7 @@
                     name: prod.name,
                     price: (prod.salePrices?.[0]?.value || 0) / 100,
                     img: prod.images?.rows?.[0]?.miniature?.downloadHref || '',
-                    archived: !!prod.archived,
+                    archived: !!prod.outOfStock,
                     folderId: prod.folderId || null
                 }));
                 categories = data.categories || [];
