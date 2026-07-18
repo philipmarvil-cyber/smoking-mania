@@ -54,7 +54,12 @@ async function loadCatalogData(API, headers, progress) {
     // Все три запроса независимы друг от друга и уходят параллельно — общее время
     // это время самого медленного из них, а не сумма всех трёх.
     const [productRows, folderRows, stockRows] = await Promise.all([
-        fetchAllRows(`${API}/entity/product?limit=100&expand=images&filter=archived=false`, headers)
+        // Раньше здесь стоял expand=images, а из-за него limit был ограничен 100 —
+        // при большом каталоге (сотни/тысячи товаров) это означало десятки страниц подряд,
+        // что и не укладывалось по времени. Фото теперь подгружаются отдельно и лениво
+        // (см. /api/product-image), а сам список товаров тянется большими страницами по 1000 —
+        // это в разы быстрее.
+        fetchAllRows(`${API}/entity/product?limit=1000&filter=archived=false`, headers)
             .then(r => { progress.products = `готово (${r.length})`; return r; }),
         fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers)
             .then(r => { progress.categories = `готово (${r.length})`; return r; }),
@@ -76,6 +81,11 @@ async function loadCatalogData(API, headers, progress) {
         if (id) stockById[id] = row.stock ?? 0;
     });
 
+    // Если отчёт по остаткам целиком пуст (не успел за отведённое время, нет доступа и т.п.),
+    // это значит "мы не знаем остатки", а не "у всех товаров ноль" — поэтому в этом случае
+    // никого не помечаем как "нет в наличии", вместо того чтобы ошибочно скрыть весь каталог.
+    const stockReportHasData = stockRows.length > 0;
+
     // Привязываем товар к категории по ссылке productFolder,
     // помечаем "нет в наличии" при нулевом остатке,
     // и отмечаем как новинку, если товар СОЗДАН (не отредактирован) в МойСклад недавно.
@@ -83,13 +93,15 @@ async function loadCatalogData(API, headers, progress) {
     const now = Date.now();
     const products = productRows.map(product => {
         const folderId = extractId(product.productFolder?.meta?.href);
-        const stock = stockById.hasOwnProperty(product.id) ? stockById[product.id] : 0;
+        const stock = stockById.hasOwnProperty(product.id)
+            ? stockById[product.id]
+            : (stockReportHasData ? 0 : null);
         const createdTime = product.created ? new Date(product.created).getTime() : null;
         const isNew = createdTime !== null && (now - createdTime) < NEW_THRESHOLD_MS;
         return {
             ...product,
             folderId,
-            outOfStock: stock <= 0,
+            outOfStock: stock === null ? false : stock <= 0,
             isNew
         };
     });
