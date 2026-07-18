@@ -1,6 +1,6 @@
 {
   "cleanUrls": true,
   "crons": [
-    { "path": "/api/sync-catalog", "schedule": "*/5 * * * *" }
+    { "path": "/api/sync-catalog", "schedule": "0 3 * * *" }
   ]
 }
