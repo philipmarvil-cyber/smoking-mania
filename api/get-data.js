@@ -19,28 +19,34 @@ export default async function handler(req, res) {
         "Content-Type": "application/json"
     };
 
+    const progress = { products: 'в процессе', categories: 'в процессе', stock: 'в процессе' };
+
     try {
         // Вся загрузка ограничена собственным таймаутом (см. ниже) — если МойСклад
         // отвечает аномально долго (ограничение частоты запросов, огромный каталог и т.п.),
         // мы сами вернём понятную JSON-ошибку раньше, чем платформа (Vercel) прибьёт функцию
         // по своему таймауту и отдаст свою страницу ошибки (не-JSON), которую фронтенд не может разобрать.
         const data = await withTimeout(
-            loadCatalogData(API, headers),
+            loadCatalogData(API, headers, progress),
             8500,
             null
         );
 
         if (data === null) {
-            return res.status(200).json({ error: 'МойСклад отвечает слишком долго. Попробуйте открыть каталог ещё раз через несколько секунд.' });
+            return res.status(200).json({
+                error: `МойСклад отвечает слишком долго. Товары: ${progress.products}, категории: ${progress.categories}, остатки: ${progress.stock}.`
+            });
         }
 
         return res.status(200).json(data);
     } catch (error) {
-        return res.status(200).json({ error: error.message });
+        return res.status(200).json({
+            error: `${error.message} (товары: ${progress.products}, категории: ${progress.categories}, остатки: ${progress.stock})`
+        });
     }
 }
 
-async function loadCatalogData(API, headers) {
+async function loadCatalogData(API, headers, progress) {
     // ВАЖНО: если используется expand, МойСклад требует limit <= 100,
     // иначе expand молча игнорируется и фото пропадают. Поэтому здесь limit=100,
     // а за все товары (если их больше) отвечает постраничный обход через nextHref.
@@ -48,8 +54,10 @@ async function loadCatalogData(API, headers) {
     // Все три запроса независимы друг от друга и уходят параллельно — общее время
     // это время самого медленного из них, а не сумма всех трёх.
     const [productRows, folderRows, stockRows] = await Promise.all([
-        fetchAllRows(`${API}/entity/product?limit=100&expand=images&filter=archived=false`, headers),
-        fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers),
+        fetchAllRows(`${API}/entity/product?limit=100&expand=images&filter=archived=false`, headers)
+            .then(r => { progress.products = `готово (${r.length})`; return r; }),
+        fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers)
+            .then(r => { progress.categories = `готово (${r.length})`; return r; }),
         // Отчёт по остаткам может быть намного больше, чем сами товары (учитывает историю,
         // склады и т.д.), и иногда упирается в лимит запросов МойСклад, из-за чего ждать его
         // целиком может занимать очень много времени. Он не критичен для работы бота —
@@ -59,7 +67,7 @@ async function loadCatalogData(API, headers) {
             fetchAllRows(`${API}/report/stock/all?limit=1000`, headers).catch(() => []),
             3000,
             []
-        )
+        ).then(r => { progress.stock = `готово (${r.length})`; return r; })
     ]);
 
     const stockById = {};
