@@ -1,995 +1,224 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#ffffff">
-    <title>SMOKING MANIA</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script>
-        const tg = window.Telegram.WebApp;
-        tg.ready(); tg.expand();
-        tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#f2f2f7');
-        if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
-        tg.enableClosingConfirmation();
-        try { tg.requestFullscreen(); } catch (e) {}
+export default async function handler(req, res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-        // --- Состояние магазина ---
-        let allProducts = [];   // все товары, полученные со склада
-        let categories = [];    // категории (первый уровень) + их подкатегории
-        let cart = {};          // { productId: { id, name, price, img, qty } }
-        let favorites = {};     // { productId: { id, name, price, img } }
-        let detailQtyValue = 1;
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
 
-        // --- Навигация: стек экранов, чтобы системная кнопка "Назад" Telegram
-        // всегда возвращала на предыдущий именно экран, а не сразу на главную ---
-        let navStack = [{ type: 'shop' }];
+    // Кэшируем ответ на 30 секунд на уровне Vercel/CDN — при большом каталоге это сильно
+    // ускоряет повторные открытия бота разными людьми в течение этого окна, а через
+    // 30-150 сек данные в любом случае обновятся сами (МойСклад пересчитывать не нужно каждый раз).
+    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
 
-        function confirmAge(isAdult) {
-            const gate = document.getElementById('age-gate');
-            if (isAdult) {
-                if (gate) gate.style.display = 'none';
-            } else {
-                if (tg.close) {
-                    tg.close();
-                } else if (gate) {
-                    gate.querySelector('.age-gate-card').innerHTML =
-                        '<div class="age-gate-title">Доступ запрещён</div><div class="age-gate-text"><p>Извините, этот каталог доступен только совершеннолетним пользователям.</p></div>';
-                }
-            }
+    const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9";
+    const API = "https://api.moysklad.ru/api/remap/1.2";
+    const headers = {
+        "Authorization": `Bearer ${MY_SKLAD_TOKEN}`,
+        "Content-Type": "application/json"
+    };
+
+    try {
+        // Вся загрузка ограничена собственным таймаутом (см. ниже) — если МойСклад
+        // отвечает аномально долго (ограничение частоты запросов, огромный каталог и т.п.),
+        // мы сами вернём понятную JSON-ошибку раньше, чем платформа (Vercel) прибьёт функцию
+        // по своему таймауту и отдаст свою страницу ошибки (не-JSON), которую фронтенд не может разобрать.
+        const data = await withTimeout(
+            loadCatalogData(API, headers),
+            8500,
+            null
+        );
+
+        if (data === null) {
+            return res.status(200).json({ error: 'МойСклад отвечает слишком долго. Попробуйте открыть каталог ещё раз через несколько секунд.' });
         }
 
-        function currentScreen() {
-            return navStack[navStack.length - 1];
-        }
+        return res.status(200).json(data);
+    } catch (error) {
+        return res.status(200).json({ error: error.message });
+    }
+}
 
-        function navigateTo(screen) {
-            if (navStack.length) {
-                navStack[navStack.length - 1].scrollY = window.scrollY;
-            }
-            navStack.push(screen);
-            renderScreen(screen);
-        }
+async function loadCatalogData(API, headers) {
+    // ВАЖНО: если используется expand, МойСклад требует limit <= 100,
+    // иначе expand молча игнорируется и фото пропадают. Поэтому здесь limit=100,
+    // а за все товары (если их больше) отвечает постраничный обход через nextHref.
+    //
+    // Все три запроса независимы друг от друга и уходят параллельно — общее время
+    // это время самого медленного из них, а не сумма всех трёх.
+    const [productRows, folderRows, stockRows] = await Promise.all([
+        fetchAllRows(`${API}/entity/product?limit=100&expand=images&filter=archived=false`, headers),
+        fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers),
+        // Отчёт по остаткам может быть намного больше, чем сами товары (учитывает историю,
+        // склады и т.д.), и иногда упирается в лимит запросов МойСклад, из-за чего ждать его
+        // целиком может занимать очень много времени. Он не критичен для работы бота —
+        // если он не успел за 3 секунды, просто продолжаем без пометки "нет в наличии",
+        // а не держим всю загрузку сайта из-за одного медленного отчёта.
+        withTimeout(
+            fetchAllRows(`${API}/report/stock/all?limit=1000`, headers).catch(() => []),
+            3000,
+            []
+        )
+    ]);
 
-        function goBack() {
-            if (navStack.length <= 1) return;
-            navStack.pop();
-            renderScreen(currentScreen());
-        }
+    const stockById = {};
+    stockRows.forEach(row => {
+        const id = extractId(row.meta?.href);
+        if (id) stockById[id] = row.stock ?? 0;
+    });
 
-        // Вызывается табами нижней навигации — сбрасывает стек до этой вкладки.
-        function switchTab(type) {
-            navStack = [{ type }];
-            renderScreen(navStack[0]);
-        }
-
-        tg.BackButton.hide();
-        tg.BackButton.onClick(() => goBack());
-
-        const NAV_TAB_INDEX = { shop: 0, favorites: 1, cart: 2, account: 3 };
-
-        function renderScreen(screen) {
-            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-
-            if (screen.type === 'shop') {
-                document.getElementById('page-shop').classList.add('active');
-                renderHome();
-            } else if (screen.type === 'favorites') {
-                document.getElementById('page-favorites').classList.add('active');
-                renderFavorites();
-            } else if (screen.type === 'cart') {
-                document.getElementById('page-cart').classList.add('active');
-                renderCart();
-            } else if (screen.type === 'account') {
-                document.getElementById('page-account').classList.add('active');
-                renderAccount();
-            } else if (screen.type === 'category') {
-                document.getElementById('page-category').classList.add('active');
-                renderCategoryScreen(screen.categoryId);
-            } else if (screen.type === 'subcategory-products') {
-                document.getElementById('page-category').classList.add('active');
-                renderSubcategoryProducts(screen.categoryId, screen.subcategoryId);
-            } else if (screen.type === 'detail') {
-                document.getElementById('page-detail').classList.add('active');
-                renderProductDetail(screen.productId);
-            }
-
-            const tabIndex = NAV_TAB_INDEX[screen.type];
-            if (tabIndex !== undefined) {
-                const items = document.querySelectorAll('.nav-item');
-                if (items[tabIndex]) items[tabIndex].classList.add('active');
-            }
-
-            window.scrollTo(0, screen.scrollY || 0);
-            document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', (screen.scrollY || 0) > 10));
-
-            if (navStack.length > 1) {
-                tg.BackButton.show();
-            } else {
-                tg.BackButton.hide();
-            }
-        }
-
-        // --- Личный кабинет ---
-        function renderAccount() {
-            const user = tg.initDataUnsafe?.user;
-            const nameEl = document.getElementById('account-name');
-            const usernameEl = document.getElementById('account-username');
-            const avatarEl = document.getElementById('account-avatar');
-
-            if (user) {
-                nameEl.textContent = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Без имени';
-                usernameEl.textContent = user.username ? '@' + user.username : '';
-                if (user.photo_url) {
-                    avatarEl.style.backgroundImage = `url(${user.photo_url})`;
-                    avatarEl.textContent = '';
-                } else {
-                    avatarEl.style.backgroundImage = 'none';
-                    avatarEl.textContent = (user.first_name || '?').charAt(0).toUpperCase();
-                }
-            } else {
-                nameEl.textContent = 'Гость';
-                usernameEl.textContent = '';
-            }
-
-            if (tg.CloudStorage) {
-                tg.CloudStorage.getItem('phone_number', (err, value) => {
-                    if (!err && value) showConfirmedPhone(value);
-                });
-            }
-
-            const favCountEl = document.getElementById('account-fav-count');
-            const cartCountEl = document.getElementById('account-cart-count');
-            if (favCountEl) favCountEl.textContent = Object.keys(favorites).length;
-            if (cartCountEl) cartCountEl.textContent = Object.values(cart).reduce((s, i) => s + i.qty, 0);
-        }
-
-        function showConfirmedPhone(phone) {
-            document.getElementById('account-phone').textContent = phone;
-            const btn = document.getElementById('account-phone-btn');
-            if (btn) btn.style.display = 'none';
-        }
-
-        function requestPhone() {
-            if (!tg.requestContact) return;
-            tg.requestContact((shared, response) => {
-                const contact = response?.responseUnsafe?.contact;
-                if (shared && contact?.phone_number) {
-                    showConfirmedPhone(contact.phone_number);
-                    if (tg.CloudStorage) {
-                        tg.CloudStorage.setItem('phone_number', contact.phone_number, () => {});
-                    }
-                }
-            });
-        }
-
-        // --- Избранное и корзина: сохранение/загрузка через CloudStorage Telegram ---
-        function persistCart() {
-            if (tg.CloudStorage) tg.CloudStorage.setItem('cart_v1', JSON.stringify(cart), () => {});
-        }
-        function persistFavorites() {
-            if (tg.CloudStorage) tg.CloudStorage.setItem('favorites_v1', JSON.stringify(favorites), () => {});
-        }
-        function loadCartAndFavorites(callback) {
-            if (!tg.CloudStorage) { callback && callback(); return; }
-            tg.CloudStorage.getItem('cart_v1', (err, value) => {
-                if (!err && value) { try { cart = JSON.parse(value); } catch (e) {} }
-                updateCartBadge();
-                tg.CloudStorage.getItem('favorites_v1', (err2, value2) => {
-                    if (!err2 && value2) { try { favorites = JSON.parse(value2); } catch (e) {} }
-                    callback && callback();
-                });
-            });
-        }
-
-        function updateCartBadge() {
-            const count = Object.values(cart).reduce((sum, item) => sum + item.qty, 0);
-            const badge = document.getElementById('cart-count-badge');
-            if (!badge) return;
-            if (count > 0) {
-                badge.textContent = count > 99 ? '99+' : count;
-                badge.style.display = 'flex';
-            } else {
-                badge.style.display = 'none';
-            }
-        }
-
-        function toggleFavorite(prod) {
-            if (favorites[prod.id]) {
-                delete favorites[prod.id];
-            } else {
-                favorites[prod.id] = { id: prod.id, name: prod.name, price: prod.price, img: prod.img };
-            }
-            persistFavorites();
-            document.querySelectorAll(`.fav-toggle[data-id="${prod.id}"]`).forEach(el => {
-                el.classList.toggle('active', !!favorites[prod.id]);
-            });
-            if (document.getElementById('page-favorites').classList.contains('active')) renderFavorites();
-        }
-
-        function addToCart(prod, qty) {
-            if (cart[prod.id]) {
-                cart[prod.id].qty += qty;
-            } else {
-                cart[prod.id] = { id: prod.id, name: prod.name, price: prod.price, img: prod.img, qty };
-            }
-            persistCart();
-            updateCartBadge();
-        }
-
-        function addToCartFromDetail(id) {
-            const prod = allProducts.find(p => p.id === id);
-            if (!prod || prod.archived) return;
-            addToCart(prod, detailQtyValue);
-            tg.HapticFeedback?.notificationOccurred('success');
-        }
-
-        function changeDetailQty(delta) {
-            detailQtyValue = Math.max(1, detailQtyValue + delta);
-            const el = document.getElementById('detail-qty');
-            if (el) el.textContent = detailQtyValue;
-        }
-
-        function updateCartQty(id, delta) {
-            if (!cart[id]) return;
-            cart[id].qty += delta;
-            if (cart[id].qty <= 0) delete cart[id];
-            persistCart();
-            updateCartBadge();
-            renderCart();
-        }
-
-        function removeFromCart(id) {
-            delete cart[id];
-            persistCart();
-            updateCartBadge();
-            renderCart();
-        }
-
-        function renderCart() {
-            const container = document.getElementById('cart-container');
-            const items = Object.values(cart);
-            if (!items.length) {
-                container.innerHTML = '<div class="empty-state">Корзина пуста</div>';
-                updateCartTotal(0);
-                return;
-            }
-            container.innerHTML = '';
-            let total = 0;
-            items.forEach(item => {
-                total += item.price * item.qty;
-                const imgHtml = item.img ? `<img src="${item.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
-                const row = document.createElement('div');
-                row.className = 'cart-row';
-                row.innerHTML = `
-                    <div class="cart-row-img">${imgHtml}</div>
-                    <div class="cart-row-info">
-                        <div class="cart-row-name">${item.name}</div>
-                        <div class="cart-row-price">${item.price.toLocaleString()} ₽</div>
-                        <div class="qty-stepper small">
-                            <button data-action="dec">−</button>
-                            <span>${item.qty}</span>
-                            <button data-action="inc">+</button>
-                        </div>
-                    </div>
-                    <div class="cart-row-remove" data-action="remove">✕</div>
-                `;
-                row.querySelector('[data-action="dec"]').onclick = () => updateCartQty(item.id, -1);
-                row.querySelector('[data-action="inc"]').onclick = () => updateCartQty(item.id, 1);
-                row.querySelector('[data-action="remove"]').onclick = () => removeFromCart(item.id);
-                row.querySelector('.cart-row-img').onclick = () => navigateTo({ type: 'detail', productId: item.id });
-                container.appendChild(row);
-            });
-            updateCartTotal(total);
-        }
-
-        function updateCartTotal(total) {
-            const totalEl = document.getElementById('cart-total');
-            const checkoutBtn = document.getElementById('checkout-btn');
-            if (totalEl) totalEl.textContent = total.toLocaleString() + ' ₽';
-            if (checkoutBtn) checkoutBtn.style.display = total > 0 ? 'block' : 'none';
-        }
-
-        function getSavedPhone() {
-            return new Promise(resolve => {
-                if (!tg.CloudStorage) { resolve(null); return; }
-                tg.CloudStorage.getItem('phone_number', (err, value) => {
-                    resolve(!err && value ? value : null);
-                });
-            });
-        }
-
-        async function checkout() {
-            const items = Object.values(cart);
-            if (!items.length) return;
-
-            const phone = await getSavedPhone();
-            if (!phone) {
-                requestPhoneForCheckout();
-                return;
-            }
-            submitOrder(items, phone);
-        }
-
-        function requestPhoneForCheckout() {
-            if (!tg.requestContact) {
-                alert('Чтобы оформить заказ, подтвердите номер телефона в разделе "Аккаунт".');
-                return;
-            }
-            tg.requestContact((shared, response) => {
-                const contact = response?.responseUnsafe?.contact;
-                if (shared && contact?.phone_number) {
-                    showConfirmedPhone(contact.phone_number);
-                    if (tg.CloudStorage) tg.CloudStorage.setItem('phone_number', contact.phone_number, () => {});
-                    submitOrder(Object.values(cart), contact.phone_number);
-                }
-            });
-        }
-
-        async function submitOrder(items, phone) {
-            const btn = document.getElementById('checkout-btn');
-            const originalText = btn.textContent;
-            btn.disabled = true;
-            btn.textContent = 'Оформляем...';
-
-            const user = tg.initDataUnsafe?.user;
-            const customerName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : 'Клиент Telegram';
-
-            try {
-                const response = await fetch('/api/create-order', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        items: items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
-                        customerName,
-                        phone
-                    })
-                });
-                const data = await response.json();
-                if (!response.ok || !data.success) {
-                    throw new Error(data.error || 'Не удалось оформить заказ');
-                }
-                cart = {};
-                persistCart();
-                updateCartBadge();
-                document.getElementById('cart-container').innerHTML =
-                    `<div class="empty-state">Заказ ${data.orderName ? '№' + data.orderName + ' ' : ''}оформлен!<br>Мы скоро с вами свяжемся.</div>`;
-                updateCartTotal(0);
-            } catch (e) {
-                alert('Не получилось оформить заказ: ' + e.message + '\n\nПопробуйте ещё раз или напишите в поддержку.');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = originalText;
-            }
-        }
-
-        function renderFavorites() {
-            const container = document.getElementById('favorites-container');
-            const items = Object.values(favorites);
-            if (!items.length) {
-                container.innerHTML = '<div class="empty-state">Пока нет избранных товаров</div>';
-                return;
-            }
-            container.innerHTML = '';
-            items.forEach(item => {
-                const imgHtml = item.img ? `<img src="${item.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
-                const row = document.createElement('div');
-                row.className = 'fav-row';
-                row.innerHTML = `
-                    <div class="cart-row-img">${imgHtml}</div>
-                    <div class="cart-row-info">
-                        <div class="cart-row-name">${item.name}</div>
-                        <div class="cart-row-price">${item.price.toLocaleString()} ₽</div>
-                    </div>
-                    <div class="cart-row-remove" data-action="remove">✕</div>
-                `;
-                row.querySelector('.cart-row-info').onclick = () => navigateTo({ type: 'detail', productId: item.id });
-                row.querySelector('.cart-row-img').onclick = () => navigateTo({ type: 'detail', productId: item.id });
-                row.querySelector('[data-action="remove"]').onclick = () => {
-                    delete favorites[item.id];
-                    persistFavorites();
-                    renderFavorites();
-                };
-                container.appendChild(row);
-            });
-        }
-
-        // --- Главная страница: категории + новинки ---
-        function renderHome() {
-            renderHomeCategories();
-            renderHomeNewest();
-            const searchInput = document.getElementById('search-input');
-            if (searchInput && searchInput.value.trim()) {
-                handleHomeSearch();
-            } else {
-                document.getElementById('home-browse').style.display = '';
-                document.getElementById('home-search-results').style.display = 'none';
-            }
-        }
-
-        // --- Иконки для плиток категорий (контурные SVG, подбираются по ключевым словам в названии) ---
-        const CATEGORY_ICONS = {
-            leaf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16c8 2 14-4 15-13-9 1-15 7-13 15z"/><path d="M6 18c2-4 5-7 9-9"/></svg>',
-            droplet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c4 5 7 8.5 7 12a7 7 0 1 1-14 0c0-3.5 3-7 7-12z"/></svg>',
-            star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.2-5.4 3.2 1.3-6-4.6-4.1 6.1-.6z"/></svg>',
-            flame: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1 3-3 4-3 8a4 4 0 0 0 8 0c0-1-1-2-2-2 1 3-1 5-3 5a4 4 0 0 1-4-4c0-4 4-5 4-7z"/></svg>',
-            cup: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16l-1.5 8a3 3 0 0 1-3 2.5h-7A3 3 0 0 1 5.5 17L4 9z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/></svg>',
-            shirt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4 4 7l2 3 2-1v10h8V9l2 1 2-3-4-3-2 2h-4z"/></svg>',
-            box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l8-4 8 4-8 4-8-4z"/><path d="M3 7v10l8 4 8-4V7"/><path d="M11 11v10"/></svg>'
+    // Привязываем товар к категории по ссылке productFolder,
+    // помечаем "нет в наличии" при нулевом остатке,
+    // и отмечаем как новинку, если товар СОЗДАН (не отредактирован) в МойСклад недавно.
+    const NEW_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 дней
+    const now = Date.now();
+    const products = productRows.map(product => {
+        const folderId = extractId(product.productFolder?.meta?.href);
+        const stock = stockById.hasOwnProperty(product.id) ? stockById[product.id] : 0;
+        const createdTime = product.created ? new Date(product.created).getTime() : null;
+        const isNew = createdTime !== null && (now - createdTime) < NEW_THRESHOLD_MS;
+        return {
+            ...product,
+            folderId,
+            outOfStock: stock <= 0,
+            isNew
         };
+    });
 
-        function getCategoryIcon(name) {
-            const n = (name || '').toLowerCase();
-            if (n.includes('табак')) return CATEGORY_ICONS.leaf;
-            if (n.includes('жидкост')) return CATEGORY_ICONS.droplet;
-            if (n.includes('аксессуар')) return CATEGORY_ICONS.star;
-            if (n.includes('уголь') || n.includes('угол')) return CATEGORY_ICONS.flame;
-            if (n.includes('чаш') || n.includes('колб')) return CATEGORY_ICONS.cup;
-            if (n.includes('мерч')) return CATEGORY_ICONS.shirt;
-            return CATEGORY_ICONS.box;
+    const categories = buildCategoryTree(folderRows);
+
+    return { products, categories };
+}
+
+// Убирает query-параметры (?expand=...) из хвоста ссылки, чтобы корректно достать чистый id.
+function extractId(href) {
+    if (!href) return null;
+    return href.split('/').pop().split('?')[0];
+}
+
+// Забирает первую страницу, узнаёт из неё общее количество (meta.size),
+// а остальные страницы (если они есть) запрашивает параллельно, но НЕ ВСЕ СРАЗУ —
+// МойСклад ограничивает число запросов в секунду (отсюда была ошибка 429), поэтому
+// параллельность страниц одного запроса ограничена небольшим пулом.
+const PAGE_CONCURRENCY = 2;
+
+async function fetchAllRows(url, headers) {
+    const first = await fetchJson(url, headers);
+    let rows = first.rows || [];
+    const meta = first.meta;
+
+    if (meta && typeof meta.size === 'number' && typeof meta.limit === 'number' && meta.size > rows.length) {
+        const pageCount = Math.ceil(meta.size / meta.limit);
+        const pageUrls = [];
+        for (let page = 1; page < pageCount; page++) {
+            pageUrls.push(withOffset(url, page * meta.limit));
         }
+        const pages = await fetchWithLimitedConcurrency(pageUrls, headers, PAGE_CONCURRENCY);
+        pages.forEach(p => { rows = rows.concat(p.rows || []); });
+    }
 
-        function createCategoryTile(name, onClick) {
-            const tile = document.createElement('div');
-            tile.className = 'category-tile';
-            tile.innerHTML = `
-                <div class="category-tile-icon">${getCategoryIcon(name)}</div>
-                <div class="category-tile-name">${name}</div>
-            `;
-            tile.onclick = onClick;
-            return tile;
+    return rows;
+}
+
+// Обходит список URL пулом из `concurrency` одновременных запросов вместо того,
+// чтобы стрелять всеми сразу (что и приводило к 429 — "слишком много запросов").
+async function fetchWithLimitedConcurrency(urls, headers, concurrency) {
+    const results = new Array(urls.length);
+    let nextIndex = 0;
+
+    async function worker() {
+        while (nextIndex < urls.length) {
+            const current = nextIndex++;
+            results[current] = await fetchJson(urls[current], headers);
         }
+    }
 
-        function renderHomeCategories() {
-            const wrap = document.getElementById('home-categories-container');
-            wrap.innerHTML = '';
-            categories.forEach(cat => {
-                wrap.appendChild(createCategoryTile(cat.name, () => navigateTo({ type: 'category', categoryId: cat.id })));
-            });
+    const workers = Array.from({ length: Math.min(concurrency, urls.length) }, () => worker());
+    await Promise.all(workers);
+    return results;
+}
+
+// Делает запрос с автоматическим повтором при 429 (слишком много запросов),
+// выжидая время, которое МойСклад просит подождать (заголовок Retry-After / X-Lognex-Retry-After),
+// либо разумную паузу с нарастанием, если заголовка нет.
+async function fetchJson(url, headers, attempt = 1) {
+    const response = await fetch(url, { headers });
+
+    if (response.status === 429) {
+        if (attempt > 3) {
+            throw new Error('Склад отвечает статусом 429 (слишком много запросов) даже после нескольких повторов');
         }
-
-        function renderHomeNewest() {
-            const section = document.getElementById('home-newest-section');
-            const wrap = document.getElementById('home-newest-container');
-            const newest = allProducts.filter(p => p.isNew);
-            if (!newest.length) {
-                section.style.display = 'none';
-                return;
-            }
-            section.style.display = '';
-            renderProductCardsInto(wrap, newest);
+        const lognexRetryMs = response.headers.get('X-Lognex-Retry-After');
+        const retryAfterSec = response.headers.get('Retry-After');
+        let waitMs = 500 * attempt; // запасной вариант с нарастанием, если МойСклад не подсказал время
+        if (lognexRetryMs && !isNaN(parseInt(lognexRetryMs, 10))) {
+            waitMs = parseInt(lognexRetryMs, 10);
+        } else if (retryAfterSec && !isNaN(parseInt(retryAfterSec, 10))) {
+            waitMs = parseInt(retryAfterSec, 10) * 1000;
         }
+        await sleep(waitMs);
+        return fetchJson(url, headers, attempt + 1);
+    }
 
-        function handleHomeSearch() {
-            const term = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
-            const browseEl = document.getElementById('home-browse');
-            const resultsEl = document.getElementById('home-search-results');
-            if (!term) {
-                browseEl.style.display = '';
-                resultsEl.style.display = 'none';
-                return;
-            }
-            browseEl.style.display = 'none';
-            resultsEl.style.display = '';
-            const filtered = allProducts.filter(p => p.name.toLowerCase().includes(term));
-            renderProductCardsInto(document.getElementById('products-container'), filtered);
-        }
+    if (!response.ok) {
+        throw new Error(`Склад ответил статусом ${response.status} при запросе ${url}`);
+    }
+    return response.json();
+}
 
-        // --- Страница категории / подкатегории ---
-        function renderCategoryScreen(categoryId) {
-            const cat = categories.find(c => c.id === categoryId);
-            const page = document.getElementById('page-category');
-            if (!cat) { page.innerHTML = ''; return; }
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-            if (cat.subcategories.length) {
-                page.innerHTML = `
-                    <div class="header" style="margin-top:0;"><span>${cat.name}</span></div>
-                    <div class="category-grid" id="subcat-tiles-container" style="padding:15px 12px;"></div>
-                `;
-                const wrap = document.getElementById('subcat-tiles-container');
-                cat.subcategories.forEach(sub => {
-                    wrap.appendChild(createCategoryTile(sub.name, () => navigateTo({ type: 'subcategory-products', categoryId: cat.id, subcategoryId: sub.id })));
-                });
-            } else {
-                renderCategoryProductsPage(cat.name, allProducts.filter(p => p.folderId === cat.id));
-            }
-        }
+// Ждёт промис не дольше `ms` миллисекунд — если он не успел, возвращает `fallback`
+// вместо того, чтобы держать весь ответ из-за одного медленного запроса.
+function withTimeout(promise, ms, fallback) {
+    return Promise.race([
+        promise,
+        sleep(ms).then(() => fallback)
+    ]);
+}
 
-        function renderSubcategoryProducts(categoryId, subcategoryId) {
-            const cat = categories.find(c => c.id === categoryId);
-            const sub = cat?.subcategories.find(s => s.id === subcategoryId);
-            const title = sub ? sub.name : (cat ? cat.name : 'Категория');
-            const list = allProducts.filter(p => p.folderId === subcategoryId);
-            renderCategoryProductsPage(title, list);
-        }
+function withOffset(url, offset) {
+    const u = new URL(url);
+    u.searchParams.set('offset', String(offset));
+    return u.toString();
+}
 
-        function renderCategoryProductsPage(title, list) {
-            const page = document.getElementById('page-category');
-            page.innerHTML = `
-                <div class="header" style="margin-top:0;"><span>${title}</span></div>
-                <div class="products-grid" id="category-products-container" style="padding:15px 12px;"></div>
-            `;
-            renderProductCardsInto(document.getElementById('category-products-container'), list);
-        }
+function getParentFolderId(folder) {
+    return extractId(folder.productFolder?.meta?.href);
+}
 
-        // --- Карточки товаров (переиспользуется на главной, в поиске, в категориях) ---
-        function renderProductCardsInto(container, list) {
-            container.innerHTML = '';
-            if (!list.length) {
-                container.innerHTML = '<div class="empty-state">Ничего не найдено</div>';
-                return;
-            }
-            list.forEach(prod => {
-                const isFav = !!favorites[prod.id];
-                const badgeHtml = prod.archived ? `<div class="oos-badge">Нет в наличии</div>` : '';
-                const imgHtml = prod.img ? `<img src="${prod.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
-                const quickAddHtml = prod.archived ? '' : `
-                    <div class="quick-add-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg></div>
-                `;
-                const newBadgeHtml = prod.isNew ? `<div class="new-badge">NEW</div>` : '';
-                const card = document.createElement('div');
-                card.className = 'product-card';
-                card.dataset.id = prod.id;
-                card.innerHTML = `
-                    <div class="product-image-container">
-                        ${imgHtml}
-                        ${newBadgeHtml}
-                        <div class="fav-toggle ${isFav ? 'active' : ''}" data-id="${prod.id}"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.6 8.4 2 4.8 5.4 4.1 7.6 3.6 9.8 4.6 12 7c2.2-2.4 4.4-3.4 6.6-2.9 3.4.7 4.8 4.3 3.4 7.6C19.5 16.3 12 21 12 21z"/></svg></div>
-                        ${quickAddHtml}
-                    </div>
-                    ${badgeHtml}
-                    <div class="product-title">${prod.name}</div>
-                    <div class="product-price">${prod.price.toLocaleString()} ₽</div>
-                `;
-                card.addEventListener('click', () => navigateTo({ type: 'detail', productId: prod.id }));
-                card.querySelector('.fav-toggle').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    toggleFavorite(prod);
-                });
-                const quickAddEl = card.querySelector('.quick-add-btn');
-                if (quickAddEl) {
-                    quickAddEl.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        addToCart(prod, 1);
-                        tg.HapticFeedback?.notificationOccurred('success');
-                    });
-                }
-                container.appendChild(card);
-            });
-        }
+function normalizeName(name) {
+    return (name || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
 
-        function renderProductDetail(id) {
-            const prod = allProducts.find(p => p.id === id);
-            if (!prod) return;
-            detailQtyValue = 1;
-            const detailPage = document.getElementById('page-detail');
-            const imgHtml = prod.img ? `<img src="${prod.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
-            const isFav = !!favorites[prod.id];
-            const actionHtml = prod.archived
-                ? `<div class="oos-badge" style="margin-bottom:16px;">Нет в наличии</div>`
-                : `
-                    <div class="qty-stepper">
-                        <button onclick="changeDetailQty(-1)">−</button>
-                        <span id="detail-qty">1</span>
-                        <button onclick="changeDetailQty(1)">+</button>
-                    </div>
-                    <button class="add-to-cart-btn" onclick="addToCartFromDetail('${prod.id}')">Добавить в корзину</button>
-                `;
-            detailPage.innerHTML = `
-                <div class="header" style="margin-top: 0;">
-                    <span>Товар</span>
-                </div>
-                <div class="product-detail-content">
-                    <div class="product-main-img">
-                        ${imgHtml}
-                        ${prod.isNew ? '<div class="new-badge">NEW</div>' : ''}
-                        <div class="fav-toggle detail-fav ${isFav ? 'active' : ''}" data-id="${prod.id}"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.6 8.4 2 4.8 5.4 4.1 7.6 3.6 9.8 4.6 12 7c2.2-2.4 4.4-3.4 6.6-2.9 3.4.7 4.8 4.3 3.4 7.6C19.5 16.3 12 21 12 21z"/></svg></div>
-                    </div>
-                    <div class="product-info-box">
-                        <div class="detail-title">${prod.name}</div>
-                        <div class="detail-price">От ${prod.price.toLocaleString()} ₽</div>
-                        ${actionHtml}
-                        <div class="accordion">Описание <span>▼</span></div>
-                        <div class="accordion">Доставка <span>▼</span></div>
-                    </div>
-                </div>
-            `;
-            detailPage.querySelector('.fav-toggle').addEventListener('click', () => toggleFavorite(prod));
-        }
-    </script>
-    <style>
-        html {
-            background-color: #f2f2f7;
-            margin: 0;
-            height: 100%;
-            overflow-x: hidden;
-        }
-        /* Основные стили */
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-            margin: 0; 
-            background-color: #f2f2f7; 
-            color: #1c1c1e; 
-            padding-bottom: 80px; 
-            overscroll-behavior: none; 
-            box-sizing: border-box; 
-            overflow-x: hidden;
-            width: 100%;
-        }
-        
-        /* Стили для шапки: увеличенный отступ сверху и центрирование */
-        .header { 
-            display: flex; 
-            justify-content: center; 
-            align-items: flex-end; 
-            box-sizing: border-box;
-            min-height: calc(135px + env(safe-area-inset-top));
-            padding-top: calc(env(safe-area-inset-top) + 15px);
-            padding-right: 20px;
-            padding-bottom: 16px;
-            padding-left: 20px;
-            background: transparent; 
-            font-weight: 700; 
-            font-size: 18px; 
-            position: sticky; 
-            top: 0;
-            z-index: 1000;
-            border-bottom: 1px solid transparent;
-            transition: background-color 0.25s ease, border-color 0.25s ease;
-        }
-        .header.scrolled {
-            background: #fff;
-            border-bottom: 1px solid #e5e5ea;
-        }
+// Категории на главной странице = дочерние папки "Katalog" (Жевательный табак, Жидкости, ...)
+// ПЛЮС остальные папки верхнего уровня (Аксессуары, Кальяны, Уголь, Чаши и т.д.),
+// ИСКЛЮЧАЯ саму "Katalog" (это просто технический контейнер), "SALE (Распродажа)" и "Электронки".
+// Для каждой такой категории отдельно считаем её собственные подпапки — это категории второго уровня,
+// которые показываются уже на отдельной странице после клика.
+function buildCategoryTree(allFolders) {
+    const EXCLUDED_NAMES = ['katalog', 'sale (распродажа)', 'электронки'];
 
-        /* Стили для кнопки поддержки внутри шапки (справа), прижата к низу шапки */
-        .support-header-btn {
-            position: absolute;
-            right: 20px;
-            bottom: 16px;
-            background: #000;
-            color: white;
-            width: 34px;
-            height: 34px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-decoration: none;
-            font-size: 18px;
-            font-weight: 700;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-            transition: transform 0.1s ease;
-            cursor: pointer;
-            border: none;
-        }
-        .support-header-btn:active {
-            transform: scale(0.92);
-        }
-        .online-dot {
-            position: absolute;
-            top: -1px;
-            right: -1px;
-            width: 11px;
-            height: 11px;
-            background: #34c759;
-            border-radius: 50%;
-            border: 2px solid #fff;
-            box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.7);
-            animation: pulse-dot 1.6s infinite;
-        }
-        @keyframes pulse-dot {
-            0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.6); }
-            70% { box-shadow: 0 0 0 6px rgba(52, 199, 89, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
-        }
+    const katalogFolder = allFolders.find(f => normalizeName(f.name) === 'katalog');
 
-        /* Категории (плитки) на главной и на странице категории */
-        .section-title { margin: 15px 15px 10px 15px; font-weight: 700; }
-        .category-grid { display: flex; overflow-x: auto; gap: 10px; padding: 0 12px 5px 12px; box-sizing: border-box; -webkit-overflow-scrolling: touch; }
-        .category-grid::-webkit-scrollbar { display: none; }
-        .category-tile {
-            flex: 0 0 auto;
-            width: 148px;
-            height: 108px;
-            border-radius: 18px;
-            background: linear-gradient(135deg, #4a4e56 0%, #2b2e34 100%);
-            color: #fff;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            align-items: flex-start;
-            padding: 16px;
-            box-sizing: border-box;
-            cursor: pointer;
-        }
-        .category-tile:active { opacity: 0.85; }
-        .category-tile-icon { width: 26px; height: 26px; color: #fff; }
-        .category-tile-icon svg { width: 100%; height: 100%; }
-        .category-tile-name { font-size: 14px; font-weight: 700; line-height: 1.2; }
+    const katalogChildren = katalogFolder
+        ? allFolders.filter(f => getParentFolderId(f) === katalogFolder.id)
+        : [];
 
-        /* Search Bar */
-        .search-bar { padding: 0 15px 10px 15px; }
-        .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
-        
-        /* Product Detail */
-        .product-detail-content { padding: 15px; }
-        .product-main-img { background: #fff; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 15px; position: relative; }
-        .product-main-img img { max-width: 100%; height: 300px; object-fit: contain; }
-        .product-info-box { background: #fff; border-radius: 16px; padding: 20px; }
-        .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
-        .detail-price { font-size: 18px; color: #6b2d38; font-weight: 700; margin-bottom: 20px; }
-        .accordion { border-top: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; font-weight: 500; font-size: 14px;}
-        
-        /* Shop Page */
-        .banner { background: #6b2d38; color: #fff; margin: 15px; padding: 20px; border-radius: 16px; }
-        .products-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 12px; box-sizing: border-box; }
-        .product-card { background: #fff; border-radius: 12px; padding: 6px; cursor: pointer; min-width: 0; overflow: hidden; box-sizing: border-box; }
-        .product-image-container { height: 68px; display: flex; align-items: center; justify-content: center; margin-bottom: 5px; position: relative; }
-        .product-card img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .no-photo { color: #c7c7cc; font-size: 12px; text-align: center; padding: 8px; line-height: 1.3; }
-        .oos-badge { display: inline-block; font-size: 10px; font-weight: 600; color: #8e8e93; background: #eceef1; padding: 1px 6px; border-radius: 7px; margin-bottom: 3px; }
-        .new-badge { position: absolute; top: 3px; left: 3px; background: #34c759; color: #fff; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 5px; z-index: 2; letter-spacing: 0.3px; }
-        .product-title { font-size: 11px; height: 26px; overflow: hidden; line-height: 1.2; word-break: break-word; }
-        .product-price { font-weight: 700; margin-top: 2px; font-size: 12px; color: #333;}
-        .empty-state { text-align: center; color: #8e8e93; padding: 60px 20px; font-size: 14px; grid-column: 1 / -1; }
+    const rootFolders = allFolders.filter(f => getParentFolderId(f) === null);
+    const otherTopFolders = rootFolders.filter(f => !EXCLUDED_NAMES.includes(normalizeName(f.name)));
 
-        /* Favorite heart toggle */
-        .fav-toggle { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,0.92); display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,0.15); cursor: pointer; }
-        .fav-toggle svg { width: 11px; height: 11px; fill: none; stroke: #8e8e93; stroke-width: 2; }
-        .fav-toggle.active svg { fill: #e0245e; stroke: #e0245e; }
-        .detail-fav { top: 14px; right: 14px; width: 34px; height: 34px; }
-        .detail-fav svg { width: 18px; height: 18px; }
-        .quick-add-btn { position: absolute; bottom: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; background: #000; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,0.15); cursor: pointer; }
-        .quick-add-btn svg { width: 11px; height: 11px; }
-        .quick-add-btn:active { opacity: 0.8; }
+    const displayFolders = [...katalogChildren, ...otherTopFolders];
 
-        /* Qty stepper + add to cart */
-        .qty-stepper { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
-        .qty-stepper button { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #e5e5ea; background: #fff; font-size: 18px; font-weight: 600; cursor: pointer; }
-        .qty-stepper span { font-size: 16px; font-weight: 700; min-width: 20px; text-align: center; }
-        .qty-stepper.small { gap: 10px; margin: 4px 0 0 0; }
-        .qty-stepper.small button { width: 24px; height: 24px; font-size: 14px; }
-        .add-to-cart-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; margin-bottom: 10px; }
-        .add-to-cart-btn:active { opacity: 0.8; }
-
-        /* Cart & Favorites lists */
-        .cart-content, .favorites-content { padding: 15px; padding-bottom: 140px; }
-        .cart-row, .fav-row { background: #fff; border-radius: 14px; padding: 12px; display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-        .cart-row-img { width: 56px; height: 56px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #f8f8f8; border-radius: 10px; overflow: hidden; cursor: pointer; }
-        .cart-row-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .cart-row-img .no-photo { font-size: 9px; padding: 2px; }
-        .cart-row-info { flex: 1; cursor: pointer; }
-        .cart-row-name { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
-        .cart-row-price { font-size: 13px; color: #6b2d38; font-weight: 700; }
-        .cart-row-remove { color: #c7c7cc; font-size: 16px; cursor: pointer; padding: 6px; }
-
-        .cart-footer { position: fixed; left: 0; right: 0; bottom: 65px; background: #fff; border-top: 1px solid #e5e5ea; padding: 14px 15px calc(14px + env(safe-area-inset-bottom)) 15px; z-index: 900; }
-        .cart-total-row { display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; margin-bottom: 10px; }
-        .checkout-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; }
-        .checkout-btn:active { opacity: 0.8; }
-        .checkout-btn:disabled { opacity: 0.6; }
-
-        /* Account Page */
-        .account-content { padding: 15px; }
-        .account-card { background: #fff; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 15px; }
-        .account-avatar { width: 64px; height: 64px; border-radius: 50%; background: #000 center/cover no-repeat; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; margin: 0 auto 12px auto; }
-        .account-name { font-size: 17px; font-weight: 700; }
-        .account-username { font-size: 13px; color: #8e8e93; margin-top: 2px; }
-        .account-phone-label { font-size: 13px; color: #8e8e93; text-align: left; }
-        .account-phone-value { font-size: 16px; font-weight: 600; text-align: left; margin: 6px 0 16px 0; }
-        .account-phone-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 14px; font-weight: 600; padding: 13px; border-radius: 12px; cursor: pointer; }
-        .account-phone-btn:active { opacity: 0.8; }
-        .account-link-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-top: 1px solid #f0f0f0; font-size: 14px; cursor: pointer; }
-        .account-link-row:first-child { border-top: none; }
-        .account-link-row .count { color: #8e8e93; }
-        
-        .nav-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 65px; background: #fff; display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #e5e5ea; z-index: 1000; padding-bottom: env(safe-area-inset-bottom); }
-        .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
-        .nav-item.active { color: #6b2d38; font-weight: 600; }
-        .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
-        .nav-icon-wrap { position: relative; display: block; width: 24px; margin: 0 auto 2px; }
-        .nav-icon-wrap svg { margin: 0; display: block; }
-        .cart-badge { position: absolute; top: -4px; right: -9px; background: #e0245e; color: #fff; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: none; align-items: center; justify-content: center; padding: 0 4px; }
-        .page { display: none; }
-        .page.active { display: block; }
-
-        /* Age verification overlay */
-        .age-gate-overlay {
-            position: fixed;
-            inset: 0;
-            background: #7d7d82;
-            z-index: 5000;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: flex-end;
-            box-sizing: border-box;
-        }
-        .age-gate-logo {
-            color: #1c1c1e;
-            font-size: 34px;
-            font-weight: 900;
-            letter-spacing: 1px;
-            text-align: center;
-            margin: auto auto 24px auto;
-            padding: 0 20px;
-        }
-        .age-gate-card {
-            background: #fff;
-            border-radius: 20px 20px 0 0;
-            padding: 24px 20px calc(20px + env(safe-area-inset-bottom)) 20px;
-            width: 100%;
-            max-width: 480px;
-            box-sizing: border-box;
-        }
-        .age-gate-title { font-size: 19px; font-weight: 700; text-align: center; margin-bottom: 14px; }
-        .age-gate-text { font-size: 13px; color: #3a3a3c; line-height: 1.5; max-height: 38vh; overflow-y: auto; margin-bottom: 18px; }
-        .age-gate-text p { margin: 0 0 10px 0; }
-        .age-gate-buttons { display: flex; gap: 10px; }
-        .age-gate-btn-yes { flex: 1; border: none; background: #1c1c1e; color: #fff; font-weight: 700; font-size: 13px; padding: 14px 8px; border-radius: 12px; cursor: pointer; }
-        .age-gate-btn-no { flex: 1; border: none; background: #e5e5ea; color: #1c1c1e; font-weight: 700; font-size: 13px; padding: 14px 8px; border-radius: 12px; cursor: pointer; }
-    </style>
-</head>
-<body>
-
-    <div id="age-gate" class="age-gate-overlay">
-        <div class="age-gate-logo">SMOKING MANIA</div>
-        <div class="age-gate-card">
-            <div class="age-gate-title">Уведомление</div>
-            <div class="age-gate-text">
-                <p>Это приложение — каталог, предназначенный исключительно для совершеннолетних граждан Российской Федерации (18+), интересующихся табачной продукцией и аксессуарами для курения.</p>
-                <p>Каталог не является рекламой. Его цель — предоставить ограниченному кругу лиц достоверную информацию о потребительских свойствах и характеристиках табачной продукции в соответствии с пунктами 1 и 2 статьи 10 Закона РФ «О защите прав потребителей».</p>
-                <p><strong>Внимание!</strong> Лицам, не достигшим 18 лет, доступ запрещён (ст. 20 ФЗ №15-ФЗ «Об охране здоровья граждан от воздействия окружающего табачного дыма…» и ч. 7 ст. 15.1 ФЗ №149-ФЗ «Об информации…»).</p>
-                <p>Дистанционная торговля табачной продукцией не осуществляется в соответствии с требованиями законодательства РФ (ФЗ №15-ФЗ от 23.02.2013 и ФЗ №149-ФЗ от 27.07.2006).</p>
-                <p>Для продолжения подтвердите, что вам исполнилось 18 лет.</p>
-            </div>
-            <div class="age-gate-buttons">
-                <button class="age-gate-btn-yes" onclick="confirmAge(true)">Мне исполнилось 18 лет</button>
-                <button class="age-gate-btn-no" onclick="confirmAge(false)">Мне нет 18 лет</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Главная -->
-    <div id="page-shop" class="page active">
-        <div class="header">
-            <span>SMOKING MANIA</span>
-            <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">
-                <svg viewBox="0 0 24 24" width="17" height="17" fill="white"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
-                <span class="online-dot"></span>
-            </a>
-        </div>
-        <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
-
-        <div class="search-bar"><input type="text" id="search-input" placeholder="Поиск товаров" oninput="handleHomeSearch()"></div>
-
-        <div id="home-browse">
-            <div class="section-title">Категории</div>
-            <div class="category-grid" id="home-categories-container"></div>
-
-            <div id="home-newest-section">
-                <div class="section-title">Новинки</div>
-                <div class="products-grid" id="home-newest-container"></div>
-            </div>
-        </div>
-
-        <div id="home-search-results" style="display:none;">
-            <div class="products-grid" id="products-container"></div>
-        </div>
-    </div>
-
-    <!-- Страница категории/подкатегории (наполняется динамически) -->
-    <div id="page-category" class="page"></div>
-
-    <!-- Остальные страницы -->
-    <div id="page-detail" class="page"></div>
-    <div id="page-favorites" class="page">
-        <div class="header"><span>Избранное</span></div>
-        <div class="favorites-content" id="favorites-container"><div class="empty-state">Загрузка...</div></div>
-    </div>
-    <div id="page-cart" class="page">
-        <div class="header"><span>Корзина</span></div>
-        <div class="cart-content" id="cart-container"><div class="empty-state">Загрузка...</div></div>
-        <div class="cart-footer">
-            <div class="cart-total-row"><span>Итого</span><span id="cart-total">0 ₽</span></div>
-            <button class="checkout-btn" id="checkout-btn" onclick="checkout()" style="display:none;">Оформить заказ</button>
-        </div>
-    </div>
-    <div id="page-account" class="page">
-        <div class="header"><span>Аккаунт</span></div>
-        <div class="account-content">
-            <div class="account-card">
-                <div class="account-avatar" id="account-avatar"></div>
-                <div class="account-name" id="account-name">—</div>
-                <div class="account-username" id="account-username"></div>
-            </div>
-            <div class="account-card">
-                <div class="account-phone-label">Номер телефона</div>
-                <div class="account-phone-value" id="account-phone">Не подтверждён</div>
-                <button class="account-phone-btn" id="account-phone-btn" onclick="requestPhone()">Подтвердить номер через Telegram</button>
-            </div>
-            <div class="account-card" style="text-align:left;">
-                <div class="account-link-row" onclick="switchTab('favorites')">
-                    <span>Избранное</span>
-                    <span class="count" id="account-fav-count">0</span>
-                </div>
-                <div class="account-link-row" onclick="switchTab('cart')">
-                    <span>Корзина</span>
-                    <span class="count" id="account-cart-count">0</span>
-                </div>
-                <div class="account-link-row" onclick="window.open('https://t.me/smokingmaniasup','_blank')">
-                    <span>Написать в поддержку</span>
-                    <span class="count">→</span>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Навигация -->
-    <div class="nav-bar">
-        <div class="nav-item active" onclick="switchTab('shop')">
-            <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>Магазин
-        </div>
-        <div class="nav-item" onclick="switchTab('favorites')">
-            <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>Избранное
-        </div>
-        <div class="nav-item" onclick="switchTab('cart')">
-            <div class="nav-icon-wrap">
-                <svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
-                <span class="cart-badge" id="cart-count-badge"></span>
-            </div>
-            Корзина
-        </div>
-        <div class="nav-item" onclick="switchTab('account')">
-            <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>Аккаунт
-        </div>
-    </div>
-
-    <script>
-        async function loadShopData() {
-            try {
-                const response = await fetch('/api/get-data');
-                const data = await response.json();
-                if (data.error) {
-                    showLoadError(data.error);
-                    return;
-                }
-                allProducts = (data.products || []).map(prod => ({
-                    id: prod.id,
-                    name: prod.name,
-                    price: (prod.salePrices?.[0]?.value || 0) / 100,
-                    img: prod.images?.rows?.[0]?.miniature?.downloadHref || '',
-                    archived: !!prod.outOfStock,
-                    folderId: prod.folderId || null,
-                    isNew: !!prod.isNew
-                }));
-                categories = data.categories || [];
-                renderScreen(currentScreen());
-            } catch (e) {
-                showLoadError(e.message);
-            }
-        }
-
-        function showLoadError(message) {
-            const container = document.getElementById('home-categories-container');
-            if (container) {
-                container.style.display = 'block';
-                container.innerHTML = `<div class="empty-state" style="grid-column:auto;">Не удалось загрузить каталог.<br>${message || ''}</div>`;
-            }
-            const newestSection = document.getElementById('home-newest-section');
-            if (newestSection) newestSection.style.display = 'none';
-        }
-
-        loadCartAndFavorites(() => {
-            loadShopData();
-        });
-
-        window.addEventListener('scroll', () => {
-            const scrolled = window.scrollY > 10;
-            document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', scrolled));
-        });
-    </script>
-</body>
-</html>
+    return displayFolders.map(cat => {
+        const subFolders = allFolders.filter(f => getParentFolderId(f) === cat.id);
+        return {
+            id: cat.id,
+            name: cat.name,
+            subcategories: subFolders.map(sub => ({ id: sub.id, name: sub.name }))
+        };
+    });
+}
