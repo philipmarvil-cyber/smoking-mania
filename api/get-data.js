@@ -7,11 +7,6 @@ export default async function handler(req, res) {
         return res.status(200).end();
     }
 
-    // Кэшируем ответ на 30 секунд на уровне Vercel/CDN — при большом каталоге это сильно
-    // ускоряет повторные открытия бота разными людьми в течение этого окна, а через
-    // 30-150 сек данные в любом случае обновятся сами (МойСклад пересчитывать не нужно каждый раз).
-    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
-
     const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9";
     const API = "https://api.moysklad.ru/api/remap/1.2";
     const headers = {
@@ -33,13 +28,22 @@ export default async function handler(req, res) {
         );
 
         if (data === null) {
+            // ВАЖНО: ошибки не кэшируем (no-store) — иначе неудачный ответ "приклеивается"
+            // в кэше Vercel/CDN на 30-150 секунд, и следующие заходы видят ту же ошибку
+            // даже после того, как код уже починили и задеплоили.
+            res.setHeader('Cache-Control', 'no-store');
             return res.status(200).json({
                 error: `МойСклад отвечает слишком долго. Товары: ${progress.products}, категории: ${progress.categories}, остатки: ${progress.stock}.`
             });
         }
 
+        // Кэшируем только УСПЕШНЫЙ ответ на 30 секунд на уровне Vercel/CDN — при большом
+        // каталоге это сильно ускоряет повторные открытия бота разными людьми в течение
+        // этого окна, а через 30-150 сек данные в любом случае обновятся сами.
+        res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
         return res.status(200).json(data);
     } catch (error) {
+        res.setHeader('Cache-Control', 'no-store');
         return res.status(200).json({
             error: `${error.message} (товары: ${progress.products}, категории: ${progress.categories}, остатки: ${progress.stock})`
         });
@@ -47,12 +51,14 @@ export default async function handler(req, res) {
 }
 
 async function loadCatalogData(API, headers, progress) {
-    // ВАЖНО: если используется expand, МойСклад требует limit <= 100,
-    // иначе expand молча игнорируется и фото пропадают. Поэтому здесь limit=100,
-    // а за все товары (если их больше) отвечает постраничный обход через nextHref.
+    // Список товаров грузится БЕЗ фото (без expand=images) — фото у каждого товара
+    // подтягиваются отдельно и лениво через /api/product-image, только для карточек,
+    // которые реально показаны на экране. Из-за этого здесь можно указывать большой
+    // limit=1000 за страницу (раньше при expand=images лимит МойСклад ограничивал до 100,
+    // а на большом каталоге это означало десятки страниц подряд и не укладывалось по времени).
     //
-    // Все три запроса независимы друг от друга и уходят параллельно — общее время
-    // это время самого медленного из них, а не сумма всех трёх.
+    // Все три запроса (товары, категории, остатки) независимы друг от друга и уходят
+    // параллельно — общее время это время самого медленного из них, а не сумма всех трёх.
     const [productRows, folderRows, stockRows] = await Promise.all([
         // Раньше здесь стоял expand=images, а из-за него limit был ограничен 100 —
         // при большом каталоге (сотни/тысячи товаров) это означало десятки страниц подряд,
