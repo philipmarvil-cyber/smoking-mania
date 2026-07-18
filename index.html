@@ -408,15 +408,44 @@
             }
         }
 
+        // --- Иконки для плиток категорий (контурные SVG, подбираются по ключевым словам в названии) ---
+        const CATEGORY_ICONS = {
+            leaf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16c8 2 14-4 15-13-9 1-15 7-13 15z"/><path d="M6 18c2-4 5-7 9-9"/></svg>',
+            droplet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c4 5 7 8.5 7 12a7 7 0 1 1-14 0c0-3.5 3-7 7-12z"/></svg>',
+            star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.2-5.4 3.2 1.3-6-4.6-4.1 6.1-.6z"/></svg>',
+            flame: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1 3-3 4-3 8a4 4 0 0 0 8 0c0-1-1-2-2-2 1 3-1 5-3 5a4 4 0 0 1-4-4c0-4 4-5 4-7z"/></svg>',
+            cup: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16l-1.5 8a3 3 0 0 1-3 2.5h-7A3 3 0 0 1 5.5 17L4 9z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/></svg>',
+            shirt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4 4 7l2 3 2-1v10h8V9l2 1 2-3-4-3-2 2h-4z"/></svg>',
+            box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l8-4 8 4-8 4-8-4z"/><path d="M3 7v10l8 4 8-4V7"/><path d="M11 11v10"/></svg>'
+        };
+
+        function getCategoryIcon(name) {
+            const n = (name || '').toLowerCase();
+            if (n.includes('табак')) return CATEGORY_ICONS.leaf;
+            if (n.includes('жидкост')) return CATEGORY_ICONS.droplet;
+            if (n.includes('аксессуар')) return CATEGORY_ICONS.star;
+            if (n.includes('уголь') || n.includes('угол')) return CATEGORY_ICONS.flame;
+            if (n.includes('чаш') || n.includes('колб')) return CATEGORY_ICONS.cup;
+            if (n.includes('мерч')) return CATEGORY_ICONS.shirt;
+            return CATEGORY_ICONS.box;
+        }
+
+        function createCategoryTile(name, onClick) {
+            const tile = document.createElement('div');
+            tile.className = 'category-tile';
+            tile.innerHTML = `
+                <div class="category-tile-icon">${getCategoryIcon(name)}</div>
+                <div class="category-tile-name">${name}</div>
+            `;
+            tile.onclick = onClick;
+            return tile;
+        }
+
         function renderHomeCategories() {
             const wrap = document.getElementById('home-categories-container');
             wrap.innerHTML = '';
             categories.forEach(cat => {
-                const tile = document.createElement('div');
-                tile.className = 'category-tile';
-                tile.textContent = cat.name;
-                tile.onclick = () => navigateTo({ type: 'category', categoryId: cat.id });
-                wrap.appendChild(tile);
+                wrap.appendChild(createCategoryTile(cat.name, () => navigateTo({ type: 'category', categoryId: cat.id })));
             });
         }
 
@@ -460,11 +489,7 @@
                 `;
                 const wrap = document.getElementById('subcat-tiles-container');
                 cat.subcategories.forEach(sub => {
-                    const tile = document.createElement('div');
-                    tile.className = 'category-tile';
-                    tile.textContent = sub.name;
-                    tile.onclick = () => navigateTo({ type: 'subcategory-products', categoryId: cat.id, subcategoryId: sub.id });
-                    wrap.appendChild(tile);
+                    wrap.appendChild(createCategoryTile(sub.name, () => navigateTo({ type: 'subcategory-products', categoryId: cat.id, subcategoryId: sub.id })));
                 });
             } else {
                 renderCategoryProductsPage(cat.name, allProducts.filter(p => p.folderId === cat.id));
@@ -662,9 +687,27 @@
 
         /* Категории (плитки) на главной и на странице категории */
         .section-title { margin: 15px 15px 10px 15px; font-weight: 700; }
-        .category-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 12px 5px 12px; box-sizing: border-box; }
-        .category-tile { background: #fff; border-radius: 14px; padding: 22px 12px; text-align: center; font-size: 13px; font-weight: 600; cursor: pointer; min-width: 0; box-sizing: border-box; }
-        .category-tile:active { opacity: 0.8; }
+        .category-grid { display: flex; overflow-x: auto; gap: 10px; padding: 0 12px 5px 12px; box-sizing: border-box; -webkit-overflow-scrolling: touch; }
+        .category-grid::-webkit-scrollbar { display: none; }
+        .category-tile {
+            flex: 0 0 auto;
+            width: 148px;
+            height: 108px;
+            border-radius: 18px;
+            background: linear-gradient(135deg, #4a4e56 0%, #2b2e34 100%);
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 16px;
+            box-sizing: border-box;
+            cursor: pointer;
+        }
+        .category-tile:active { opacity: 0.85; }
+        .category-tile-icon { width: 26px; height: 26px; color: #fff; }
+        .category-tile-icon svg { width: 100%; height: 100%; }
+        .category-tile-name { font-size: 14px; font-weight: 700; line-height: 1.2; }
 
         /* Search Bar */
         .search-bar { padding: 0 15px 10px 15px; }
