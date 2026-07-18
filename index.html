@@ -532,7 +532,7 @@
                 card.className = 'product-card';
                 card.dataset.id = prod.id;
                 card.innerHTML = `
-                    <div class="product-image-container">
+                    <div class="product-image-container" data-pid="${prod.id}">
                         ${imgHtml}
                         ${newBadgeHtml}
                         <div class="fav-toggle ${isFav ? 'active' : ''}" data-id="${prod.id}"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.6 8.4 2 4.8 5.4 4.1 7.6 3.6 9.8 4.6 12 7c2.2-2.4 4.4-3.4 6.6-2.9 3.4.7 4.8 4.3 3.4 7.6C19.5 16.3 12 21 12 21z"/></svg></div>
@@ -556,7 +556,31 @@
                     });
                 }
                 container.appendChild(card);
+                if (!prod.img) ensureProductImage(prod);
             });
+        }
+
+        // --- Ленивая подгрузка фото: список товаров грузится без фото (это и есть основной
+        // выигрыш в скорости), а конкретное фото каждого товара подтягивается отдельным
+        // маленьким запросом только для тех карточек, что реально показаны на экране. ---
+        const imageFetchInFlight = {};
+
+        function ensureProductImage(prod) {
+            if (prod.img || imageFetchInFlight[prod.id]) return;
+            imageFetchInFlight[prod.id] = true;
+            fetch(`/api/product-image?id=${prod.id}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.img) return;
+                    prod.img = data.img;
+                    document.querySelectorAll(`[data-pid="${prod.id}"] .no-photo`).forEach(placeholder => {
+                        const img = document.createElement('img');
+                        img.src = data.img;
+                        placeholder.replaceWith(img);
+                    });
+                })
+                .catch(() => {})
+                .finally(() => { delete imageFetchInFlight[prod.id]; });
         }
 
         function renderProductDetail(id) {
@@ -581,7 +605,7 @@
                     <span>Товар</span>
                 </div>
                 <div class="product-detail-content">
-                    <div class="product-main-img">
+                    <div class="product-main-img" data-pid="${prod.id}">
                         ${imgHtml}
                         ${prod.isNew ? '<div class="new-badge">NEW</div>' : ''}
                         <div class="fav-toggle detail-fav ${isFav ? 'active' : ''}" data-id="${prod.id}"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.6 8.4 2 4.8 5.4 4.1 7.6 3.6 9.8 4.6 12 7c2.2-2.4 4.4-3.4 6.6-2.9 3.4.7 4.8 4.3 3.4 7.6C19.5 16.3 12 21 12 21z"/></svg></div>
@@ -596,6 +620,7 @@
                 </div>
             `;
             detailPage.querySelector('.fav-toggle').addEventListener('click', () => toggleFavorite(prod));
+            if (!prod.img) ensureProductImage(prod);
         }
     </script>
     <style>
