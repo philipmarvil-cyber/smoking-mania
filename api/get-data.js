@@ -31,10 +31,16 @@ export default async function handler(req, res) {
         const [productRows, folderRows, stockRows] = await Promise.all([
             fetchAllRows(`${API}/entity/product?limit=100&expand=images&filter=archived=false`, headers),
             fetchAllRows(`${API}/entity/productfolder?limit=1000`, headers),
-            // Отчёт по остаткам не критичен для работы бота — если он вдруг недоступен
-            // или МойСклад ответит ошибкой, просто не проставляем "нет в наличии" никому,
-            // вместо того чтобы ронять всю загрузку целиком.
-            fetchAllRows(`${API}/report/stock/all?limit=1000`, headers).catch(() => [])
+            // Отчёт по остаткам может быть намного больше, чем сами товары (учитывает историю,
+            // склады и т.д.), и иногда упирается в лимит запросов МойСклад, из-за чего ждать его
+            // целиком может занимать очень много времени. Он не критичен для работы бота —
+            // если он не успел за 5 секунд, просто продолжаем без пометки "нет в наличии",
+            // а не держим всю загрузку сайта из-за одного медленного отчёта.
+            withTimeout(
+                fetchAllRows(`${API}/report/stock/all?limit=1000`, headers).catch(() => []),
+                5000,
+                []
+            )
         ]);
 
         const stockById = {};
@@ -147,6 +153,15 @@ async function fetchJson(url, headers, attempt = 1) {
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Ждёт промис не дольше `ms` миллисекунд — если он не успел, возвращает `fallback`
+// вместо того, чтобы держать весь ответ из-за одного медленного запроса.
+function withTimeout(promise, ms, fallback) {
+    return Promise.race([
+        promise,
+        sleep(ms).then(() => fallback)
+    ]);
 }
 
 function withOffset(url, offset) {
