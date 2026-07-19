@@ -67,7 +67,7 @@ export async function loadCatalogData() {
     // Если отчёт по остаткам целиком пуст — значит "не знаем остатки", а не "у всех ноль".
     const stockReportHasData = stockRows.length > 0;
 
-    const NEW_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 дней
+    const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
     const now = Date.now();
     const products = productRows.map(product => {
         const folderId = extractId(product.productFolder?.meta?.href);
