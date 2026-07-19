@@ -149,7 +149,14 @@ async function fetchJson(url, attempt = 1) {
     }
 
     if (!response.ok) {
-        throw new Error(`Склад ответил статусом ${response.status} при запросе ${url}`);
+        let detail = '';
+        try {
+            const body = await response.json();
+            detail = body?.errors?.[0]?.error || body?.errors?.[0]?.moreInfo || JSON.stringify(body);
+        } catch (e) {
+            // тело не JSON — оставляем detail пустым
+        }
+        throw new Error(`Склад ответил статусом ${response.status} при запросе ${url}${detail ? ` — ${detail}` : ''}`);
     }
     return response.json();
 }
