@@ -1,9 +1,6 @@
 // Общий модуль: поход в МойСклад + работа с Vercel KV.
-// Имя файла начинается с "_" — Vercel не создаёт для него отдельный API-роут,
-// это просто общий код, который импортируют остальные эндпоинты.
+// Имя файла начинается с "_" — Vercel не создаёт для него отдельный API-роут.
 
-// Токен НЕ хранится в коде — он задаётся в переменных окружения:
-// Vercel → Project → Environments → Environment Variables → MY_SKLAD_TOKEN
 const MY_SKLAD_TOKEN = process.env.MY_SKLAD_TOKEN;
 if (!MY_SKLAD_TOKEN) {
     throw new Error('Не задана переменная окружения MY_SKLAD_TOKEN — добавьте её в настройках проекта на Vercel и сделайте Redeploy');
@@ -15,15 +12,11 @@ const HEADERS = {
     "Content-Type": "application/json"
 };
 
-const CATALOG_KEY = 'catalog:v1';
+const CATALOG_KEY = 'catalog:v2'; // v2 — формат стал компактным (только нужные поля)
 
 // Дата "первого появления" каждого товара: { productId: timestampMs }.
-// У товара в МойСклад НЕТ поля created — только updated, поэтому "новинки"
-// мы определяем сами: когда товар впервые попал в синхронизацию.
-//
-// При самом первом запуске (карты в KV ещё нет) все существующие товары
-// записываются с меткой BASELINE (0) — они считаются "старыми" и НЕ попадают
-// в новинки. Новинками становятся только товары, появившиеся ПОСЛЕ этого.
+// При самом первом запуске все существующие товары получают метку BASELINE (0)
+// и не считаются новинками. Новинки — только то, что появилось после.
 const FIRST_SEEN_KEY = 'product-first-seen:v1';
 const BASELINE = 0;
 
@@ -31,8 +24,6 @@ const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
 
 // =====================================================================
 // Vercel KV (Upstash) через REST API напрямую, без доп. npm-пакетов.
-// Переменные подставляются автоматически при подключении хранилища,
-// проверяем оба варианта названий (старый бренд KV и новый Upstash).
 // =====================================================================
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -77,11 +68,9 @@ export async function kvSetCatalog(value) {
 // =====================================================================
 // Глобальный ограничитель скорости запросов к МойСклад.
 // Лимиты склада: 45 запросов / 3 сек, не более 5 параллельных.
-// Держим большой запас, потому что на Vercel одновременно может работать
-// несколько инстансов функции, и каждый лимитирует только себя.
 // =====================================================================
-const MS_MAX_CONCURRENT = 2;      // одновременных запросов из этого инстанса
-const MS_MIN_INTERVAL_MS = 120;   // пауза между стартами запросов (~8/сек)
+const MS_MAX_CONCURRENT = 2;
+const MS_MIN_INTERVAL_MS = 120; // ~8 запросов/сек с запасом
 
 let msActive = 0;
 let msLastStart = 0;
@@ -108,7 +97,7 @@ function msRelease() {
     msPump();
 }
 
-// Единственная точка входа для ВСЕХ запросов к МойСклад (GET/POST/PUT).
+// Единственная точка входа для ВСЕХ запросов к МойСклад.
 // Троттлинг + ретраи на 429 с уважением Retry-After.
 export async function fetchJson(url, options = {}, attempt = 1) {
     await msAcquire();
@@ -128,7 +117,7 @@ export async function fetchJson(url, options = {}, attempt = 1) {
         }
         const lognexRetryMs = response.headers.get('X-Lognex-Retry-After');
         const retryAfterSec = response.headers.get('Retry-After');
-        let waitMs = 2000 * attempt; // прогрессивная пауза: 2с, 4с, 6с...
+        let waitMs = 2000 * attempt;
         if (lognexRetryMs && !isNaN(parseInt(lognexRetryMs, 10))) {
             waitMs = Math.max(waitMs, parseInt(lognexRetryMs, 10));
         } else if (retryAfterSec && !isNaN(parseInt(retryAfterSec, 10))) {
@@ -143,9 +132,7 @@ export async function fetchJson(url, options = {}, attempt = 1) {
         try {
             const body = await response.json();
             detail = body?.errors?.[0]?.error || body?.errors?.[0]?.moreInfo || JSON.stringify(body);
-        } catch (e) {
-            // тело не JSON — оставляем detail пустым
-        }
+        } catch (e) {}
         throw new Error(`Склад ответил статусом ${response.status} при запросе ${url}${detail ? ` — ${detail}` : ''}`);
     }
     return response.json();
@@ -156,12 +143,14 @@ function sleep(ms) {
 }
 
 // =====================================================================
-// Тяжёлая загрузка каталога из МойСклад. Вызывается из /api/sync-catalog
-// по расписанию, а не при каждом заходе пользователя.
+// Тяжёлая загрузка каталога из МойСклад. Вызывается из /api/sync-catalog.
+// Товары грузим с expand=images (лимит при expand — 100 на страницу),
+// чтобы ссылки на фото попали в каталог сразу и фронту не нужны были
+// сотни отдельных запросов за картинками.
 // =====================================================================
 export async function loadCatalogData() {
     const [productRows, folderRows, stockRows, firstSeenStored] = await Promise.all([
-        fetchAllRows(`${API}/entity/product?limit=1000&filter=archived=false`),
+        fetchAllRows(`${API}/entity/product?limit=100&expand=images&filter=archived=false`),
         fetchAllRows(`${API}/entity/productfolder?limit=1000`),
         fetchAllRows(`${API}/report/stock/all?limit=1000`).catch(() => []),
         kvGetJson(FIRST_SEEN_KEY)
@@ -172,17 +161,15 @@ export async function loadCatalogData() {
         const id = extractId(row.meta?.href);
         if (id) stockById[id] = row.stock ?? 0;
     });
-    // Если отчёт по остаткам целиком пуст — значит "не знаем остатки", а не "у всех ноль".
     const stockReportHasData = stockRows.length > 0;
 
     const now = Date.now();
-
-    // Первый запуск: карты ещё нет → все текущие товары помечаем как BASELINE ("старые").
-    // Со второго запуска: неизвестные товары получают текущую дату и становятся новинками.
     const isFirstRun = !firstSeenStored;
     const firstSeen = firstSeenStored || {};
     const updatedFirstSeen = {};
 
+    // Компактный формат: только те поля, которые реально использует фронтенд.
+    // Полные объекты МойСклад весят в ~20 раз больше и тормозят загрузку.
     const products = productRows.map(product => {
         const folderId = extractId(product.productFolder?.meta?.href);
         const stock = stockById.hasOwnProperty(product.id)
@@ -195,22 +182,19 @@ export async function loadCatalogData() {
         } else {
             seenAt = isFirstRun ? BASELINE : now;
         }
-        // Переносим в новую карту только актуальные товары — так карта
-        // не разрастается от давно удалённых/архивных позиций.
         updatedFirstSeen[product.id] = seenAt;
 
-        const isNew = seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS;
-
         return {
-            ...product,
+            id: product.id,
+            name: product.name,
+            price: (product.salePrices?.[0]?.value || 0) / 100,
+            img: product.images?.rows?.[0]?.miniature?.downloadHref || '',
             folderId,
             outOfStock: stock === null ? false : stock <= 0,
-            isNew
+            isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS
         };
     });
 
-    // Сохраняем карту "первого появления". Если сохранить не вышло — не страшно,
-    // при следующей синхронизации логика отработает заново.
     await kvSetJson(FIRST_SEEN_KEY, updatedFirstSeen);
 
     const categories = buildCategoryTree(folderRows);
@@ -222,7 +206,7 @@ function extractId(href) {
     return href.split('/').pop().split('?')[0];
 }
 
-// Пагинацию грузим строго последовательно — скорость обеспечивает троттлер,
+// Страницы грузим последовательно — скорость дозирует троттлер,
 // а синхронизация раз в сутки может позволить себе быть небыстрой.
 const PAGE_CONCURRENCY = 1;
 
@@ -274,9 +258,6 @@ function normalizeName(name) {
     return (name || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-// Категории на главной странице = дочерние папки "Katalog" (Жевательный табак, Жидкости, ...)
-// ПЛЮС остальные папки верхнего уровня (Аксессуары, Кальяны, Уголь, Чаши и т.д.),
-// ИСКЛЮЧАЯ саму "Katalog", "SALE (Распродажа)" и "Электронки".
 export function buildCategoryTree(allFolders) {
     const EXCLUDED_NAMES = ['katalog', 'sale (распродажа)', 'электронки'];
 
