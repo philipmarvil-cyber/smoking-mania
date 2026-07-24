@@ -1,5 +1,8 @@
 {
   "cleanUrls": true,
+  "functions": {
+    "api/sync-catalog.js": { "maxDuration": 60 }
+  },
   "crons": [
     { "path": "/api/sync-catalog", "schedule": "0 3 * * *" }
   ]
