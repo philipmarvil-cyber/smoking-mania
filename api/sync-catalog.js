@@ -1,21 +1,19 @@
-// Этот файл дёргает cron (см. vercel.json) раз в несколько минут — а не пользователь
-// при заходе в бота. Здесь можно не торопиться: спокойно сходить в МойСклад,
-// собрать весь каталог и сохранить готовый результат в Vercel KV.
-// /api/get-data.js после этого просто читает готовые данные оттуда — мгновенно.
+// Синхронизация каталога: МойСклад → Vercel KV.
+// Запускается кроном (vercel.json) раз в сутки или вручную открытием URL.
 import { loadCatalogData, kvSetCatalog } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     try {
         const data = await loadCatalogData();
-        const saved = await kvSetCatalog({ data, updatedAt: Date.now() });
-        return res.status(200).json({
-            ok: true,
-            saved,
+        const saved = await kvSetCatalog({ ...data, syncedAt: Date.now() });
+        res.status(200).json({
+            success: true,
+            savedToKv: saved,
             products: data.products.length,
             categories: data.categories.length,
-            updatedAt: new Date().toISOString()
+            newItems: data.products.filter(p => p.isNew).length
         });
-    } catch (error) {
-        return res.status(500).json({ ok: false, error: error.message });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
     }
 }
