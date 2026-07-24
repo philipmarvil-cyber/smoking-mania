@@ -973,28 +973,49 @@
     </div>
 
     <script>
-        async function loadShopData() {
+        // --- Мгновенная загрузка: сначала рисуем каталог из localStorage,
+        // потом в фоне обновляем данные с сервера. ---
+        const LOCAL_CATALOG_KEY = 'catalog_cache_v2';
+
+        function applyCatalog(data) {
+            allProducts = (data.products || []).map(prod => ({
+                id: prod.id,
+                name: prod.name,
+                price: prod.price || 0,
+                img: prod.img || '',
+                archived: !!prod.outOfStock,
+                folderId: prod.folderId || null,
+                isNew: !!prod.isNew
+            }));
+            categories = data.categories || [];
+            renderScreen(currentScreen());
+        }
+
+        function loadShopData() {
+            // 1. Мгновенно: локальная копия с прошлого визита
+            let hadLocal = false;
             try {
-                const response = await fetch('/api/get-data');
-                const data = await response.json();
-                if (data.error) {
-                    showLoadError(data.error);
-                    return;
+                const cached = localStorage.getItem(LOCAL_CATALOG_KEY);
+                if (cached) {
+                    applyCatalog(JSON.parse(cached));
+                    hadLocal = true;
                 }
-                allProducts = (data.products || []).map(prod => ({
-                    id: prod.id,
-                    name: prod.name,
-                    price: (prod.salePrices?.[0]?.value || 0) / 100,
-                    img: prod.images?.rows?.[0]?.miniature?.downloadHref || '',
-                    archived: !!prod.outOfStock,
-                    folderId: prod.folderId || null,
-                    isNew: !!prod.isNew
-                }));
-                categories = data.categories || [];
-                renderScreen(currentScreen());
-            } catch (e) {
-                showLoadError(e.message);
-            }
+            } catch (e) {}
+
+            // 2. В фоне: свежие данные с сервера
+            fetch('/api/get-data')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) {
+                        if (!hadLocal) showLoadError(data.error);
+                        return;
+                    }
+                    try { localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(data)); } catch (e) {}
+                    applyCatalog(data);
+                })
+                .catch(e => {
+                    if (!hadLocal) showLoadError(e.message);
+                });
         }
 
         function showLoadError(message) {
