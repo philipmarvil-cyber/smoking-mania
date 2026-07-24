@@ -1,6 +1,6 @@
 // Общий модуль: поход в МойСклад + работа с Vercel KV.
 // Имя файла начинается с "_" — Vercel не создаёт для него отдельный API-роут,
-// это просто общий код, который импортируют get-data.js и sync-catalog.js.
+// это просто общий код, который импортируют остальные эндпоинты.
 
 // Токен НЕ хранится в коде — он задаётся в переменных окружения:
 // Vercel → Project → Environments → Environment Variables → MY_SKLAD_TOKEN
@@ -9,7 +9,7 @@ if (!MY_SKLAD_TOKEN) {
     throw new Error('Не задана переменная окружения MY_SKLAD_TOKEN — добавьте её в настройках проекта на Vercel и сделайте Redeploy');
 }
 
-const API = "https://api.moysklad.ru/api/remap/1.2";
+export const API = "https://api.moysklad.ru/api/remap/1.2";
 const HEADERS = {
     "Authorization": `Bearer ${MY_SKLAD_TOKEN}`,
     "Content-Type": "application/json"
@@ -18,28 +18,26 @@ const HEADERS = {
 const CATALOG_KEY = 'catalog:v1';
 
 // Дата "первого появления" каждого товара: { productId: timestampMs }.
-// Нужна, потому что у товара в МойСклад НЕТ поля created — только updated,
-// поэтому "новинки" мы определяем сами: когда товар впервые попал в синхронизацию.
+// У товара в МойСклад НЕТ поля created — только updated, поэтому "новинки"
+// мы определяем сами: когда товар впервые попал в синхронизацию.
 //
-// ВАЖНО: при самом первом запуске (карта в KV ещё пуста) все существующие
-// товары записываются со специальной меткой BASELINE (0) — они считаются
-// "старыми" и НЕ попадают в новинки. Новинками становятся только товары,
-// которые появились на складе ПОСЛЕ первого запуска.
+// При самом первом запуске (карты в KV ещё нет) все существующие товары
+// записываются с меткой BASELINE (0) — они считаются "старыми" и НЕ попадают
+// в новинки. Новинками становятся только товары, появившиеся ПОСЛЕ этого.
 const FIRST_SEEN_KEY = 'product-first-seen:v1';
-const BASELINE = 0; // метка "товар существовал до первого запуска — не новинка"
+const BASELINE = 0;
 
 const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
 
-// --- Vercel KV через его REST API напрямую, без доп. npm-пакетов ---
-// Переменные KV_REST_API_URL и KV_REST_API_TOKEN подставляются автоматически,
-// когда в настройках проекта на vercel.com подключено хранилище KV.
-// Vercel в 2024 свернул старый бренд "Vercel KV" в пользу Upstash — переменные окружения
-// могут называться и по-старому (KV_REST_API_URL), и по-новому (UPSTASH_REDIS_REST_URL),
-// поэтому проверяем оба варианта, чтобы не зависеть от конкретного названия интеграции.
+// =====================================================================
+// Vercel KV (Upstash) через REST API напрямую, без доп. npm-пакетов.
+// Переменные подставляются автоматически при подключении хранилища,
+// проверяем оба варианта названий (старый бренд KV и новый Upstash).
+// =====================================================================
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-async function kvGetJson(key) {
+export async function kvGetJson(key) {
     if (!KV_URL || !KV_TOKEN) return null;
     try {
         const response = await fetch(`${KV_URL}/get/${key}`, {
@@ -54,7 +52,7 @@ async function kvGetJson(key) {
     }
 }
 
-async function kvSetJson(key, value) {
+export async function kvSetJson(key, value) {
     if (!KV_URL || !KV_TOKEN) return false;
     try {
         const response = await fetch(`${KV_URL}/set/${key}`, {
@@ -76,9 +74,91 @@ export async function kvSetCatalog(value) {
     return kvSetJson(CATALOG_KEY, value);
 }
 
-// --- Тяжёлая загрузка каталога из МойСклад. Вызывается из /api/sync-catalog по расписанию
-// (а не при каждом заходе пользователя в бота), поэтому тут не страшно, если это займёт
-// сколько-то секунд — никто в этот момент не ждёт ответа на экране. ---
+// =====================================================================
+// Глобальный ограничитель скорости запросов к МойСклад.
+// Лимиты склада: 45 запросов / 3 сек, не более 5 параллельных.
+// Держим большой запас, потому что на Vercel одновременно может работать
+// несколько инстансов функции, и каждый лимитирует только себя.
+// =====================================================================
+const MS_MAX_CONCURRENT = 2;      // одновременных запросов из этого инстанса
+const MS_MIN_INTERVAL_MS = 120;   // пауза между стартами запросов (~8/сек)
+
+let msActive = 0;
+let msLastStart = 0;
+const msQueue = [];
+
+function msAcquire() {
+    return new Promise(resolve => {
+        msQueue.push(resolve);
+        msPump();
+    });
+}
+
+function msPump() {
+    if (!msQueue.length || msActive >= MS_MAX_CONCURRENT) return;
+    const wait = Math.max(0, msLastStart + MS_MIN_INTERVAL_MS - Date.now());
+    if (wait > 0) { setTimeout(msPump, wait); return; }
+    msActive++;
+    msLastStart = Date.now();
+    msQueue.shift()();
+}
+
+function msRelease() {
+    msActive--;
+    msPump();
+}
+
+// Единственная точка входа для ВСЕХ запросов к МойСклад (GET/POST/PUT).
+// Троттлинг + ретраи на 429 с уважением Retry-After.
+export async function fetchJson(url, options = {}, attempt = 1) {
+    await msAcquire();
+    let response;
+    try {
+        response = await fetch(url, {
+            ...options,
+            headers: { ...HEADERS, ...(options.headers || {}) }
+        });
+    } finally {
+        msRelease();
+    }
+
+    if (response.status === 429) {
+        if (attempt > 5) {
+            throw new Error('Склад отвечает статусом 429 (слишком много запросов) даже после нескольких повторов');
+        }
+        const lognexRetryMs = response.headers.get('X-Lognex-Retry-After');
+        const retryAfterSec = response.headers.get('Retry-After');
+        let waitMs = 2000 * attempt; // прогрессивная пауза: 2с, 4с, 6с...
+        if (lognexRetryMs && !isNaN(parseInt(lognexRetryMs, 10))) {
+            waitMs = Math.max(waitMs, parseInt(lognexRetryMs, 10));
+        } else if (retryAfterSec && !isNaN(parseInt(retryAfterSec, 10))) {
+            waitMs = Math.max(waitMs, parseInt(retryAfterSec, 10) * 1000);
+        }
+        await sleep(waitMs);
+        return fetchJson(url, options, attempt + 1);
+    }
+
+    if (!response.ok) {
+        let detail = '';
+        try {
+            const body = await response.json();
+            detail = body?.errors?.[0]?.error || body?.errors?.[0]?.moreInfo || JSON.stringify(body);
+        } catch (e) {
+            // тело не JSON — оставляем detail пустым
+        }
+        throw new Error(`Склад ответил статусом ${response.status} при запросе ${url}${detail ? ` — ${detail}` : ''}`);
+    }
+    return response.json();
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// =====================================================================
+// Тяжёлая загрузка каталога из МойСклад. Вызывается из /api/sync-catalog
+// по расписанию, а не при каждом заходе пользователя.
+// =====================================================================
 export async function loadCatalogData() {
     const [productRows, folderRows, stockRows, firstSeenStored] = await Promise.all([
         fetchAllRows(`${API}/entity/product?limit=1000&filter=archived=false`),
@@ -115,8 +195,8 @@ export async function loadCatalogData() {
         } else {
             seenAt = isFirstRun ? BASELINE : now;
         }
-        // Переносим в новую карту только актуальные товары — так карта не разрастается
-        // от давно удалённых/архивных позиций.
+        // Переносим в новую карту только актуальные товары — так карта
+        // не разрастается от давно удалённых/архивных позиций.
         updatedFirstSeen[product.id] = seenAt;
 
         const isNew = seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS;
@@ -142,7 +222,9 @@ function extractId(href) {
     return href.split('/').pop().split('?')[0];
 }
 
-const PAGE_CONCURRENCY = 2;
+// Пагинацию грузим строго последовательно — скорость обеспечивает троттлер,
+// а синхронизация раз в сутки может позволить себе быть небыстрой.
+const PAGE_CONCURRENCY = 1;
 
 async function fetchAllRows(url) {
     const first = await fetchJson(url);
@@ -176,42 +258,6 @@ async function fetchWithLimitedConcurrency(urls, concurrency) {
     const workers = Array.from({ length: Math.min(concurrency, urls.length) }, () => worker());
     await Promise.all(workers);
     return results;
-}
-
-async function fetchJson(url, attempt = 1) {
-    const response = await fetch(url, { headers: HEADERS });
-
-    if (response.status === 429) {
-        if (attempt > 5) {
-            throw new Error('Склад отвечает статусом 429 (слишком много запросов) даже после нескольких повторов');
-        }
-        const lognexRetryMs = response.headers.get('X-Lognex-Retry-After');
-        const retryAfterSec = response.headers.get('Retry-After');
-        let waitMs = 1000 * attempt;
-        if (lognexRetryMs && !isNaN(parseInt(lognexRetryMs, 10))) {
-            waitMs = parseInt(lognexRetryMs, 10);
-        } else if (retryAfterSec && !isNaN(parseInt(retryAfterSec, 10))) {
-            waitMs = parseInt(retryAfterSec, 10) * 1000;
-        }
-        await sleep(waitMs);
-        return fetchJson(url, attempt + 1);
-    }
-
-    if (!response.ok) {
-        let detail = '';
-        try {
-            const body = await response.json();
-            detail = body?.errors?.[0]?.error || body?.errors?.[0]?.moreInfo || JSON.stringify(body);
-        } catch (e) {
-            // тело не JSON — оставляем detail пустым
-        }
-        throw new Error(`Склад ответил статусом ${response.status} при запросе ${url}${detail ? ` — ${detail}` : ''}`);
-    }
-    return response.json();
-}
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function withOffset(url, offset) {
