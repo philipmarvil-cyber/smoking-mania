@@ -2,7 +2,13 @@
 // Имя файла начинается с "_" — Vercel не создаёт для него отдельный API-роут,
 // это просто общий код, который импортируют get-data.js и sync-catalog.js.
 
-const MY_SKLAD_TOKEN = "721093829e8e60da05c4c49e14151eaa92017ee9";
+// Токен НЕ хранится в коде — он задаётся в переменных окружения:
+// Vercel → Project → Settings → Environment Variables → MY_SKLAD_TOKEN
+const MY_SKLAD_TOKEN = process.env.MY_SKLAD_TOKEN;
+if (!MY_SKLAD_TOKEN) {
+    throw new Error('Не задана переменная окружения MY_SKLAD_TOKEN — добавьте её в настройках проекта на Vercel и сделайте Redeploy');
+}
+
 const API = "https://api.moysklad.ru/api/remap/1.2";
 const HEADERS = {
     "Authorization": `Bearer ${MY_SKLAD_TOKEN}`,
