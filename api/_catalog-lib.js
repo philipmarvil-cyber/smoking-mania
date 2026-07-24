@@ -3,7 +3,7 @@
 // это просто общий код, который импортируют get-data.js и sync-catalog.js.
 
 // Токен НЕ хранится в коде — он задаётся в переменных окружения:
-// Vercel → Project → Settings → Environment Variables → MY_SKLAD_TOKEN
+// Vercel → Project → Environments → Environment Variables → MY_SKLAD_TOKEN
 const MY_SKLAD_TOKEN = process.env.MY_SKLAD_TOKEN;
 if (!MY_SKLAD_TOKEN) {
     throw new Error('Не задана переменная окружения MY_SKLAD_TOKEN — добавьте её в настройках проекта на Vercel и сделайте Redeploy');
@@ -17,6 +17,19 @@ const HEADERS = {
 
 const CATALOG_KEY = 'catalog:v1';
 
+// Дата "первого появления" каждого товара: { productId: timestampMs }.
+// Нужна, потому что у товара в МойСклад НЕТ поля created — только updated,
+// поэтому "новинки" мы определяем сами: когда товар впервые попал в синхронизацию.
+//
+// ВАЖНО: при самом первом запуске (карта в KV ещё пуста) все существующие
+// товары записываются со специальной меткой BASELINE (0) — они считаются
+// "старыми" и НЕ попадают в новинки. Новинками становятся только товары,
+// которые появились на складе ПОСЛЕ первого запуска.
+const FIRST_SEEN_KEY = 'product-first-seen:v1';
+const BASELINE = 0; // метка "товар существовал до первого запуска — не новинка"
+
+const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
+
 // --- Vercel KV через его REST API напрямую, без доп. npm-пакетов ---
 // Переменные KV_REST_API_URL и KV_REST_API_TOKEN подставляются автоматически,
 // когда в настройках проекта на vercel.com подключено хранилище KV.
@@ -26,10 +39,10 @@ const CATALOG_KEY = 'catalog:v1';
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-export async function kvGetCatalog() {
+async function kvGetJson(key) {
     if (!KV_URL || !KV_TOKEN) return null;
     try {
-        const response = await fetch(`${KV_URL}/get/${CATALOG_KEY}`, {
+        const response = await fetch(`${KV_URL}/get/${key}`, {
             headers: { Authorization: `Bearer ${KV_TOKEN}` }
         });
         if (!response.ok) return null;
@@ -41,10 +54,10 @@ export async function kvGetCatalog() {
     }
 }
 
-export async function kvSetCatalog(value) {
+async function kvSetJson(key, value) {
     if (!KV_URL || !KV_TOKEN) return false;
     try {
-        const response = await fetch(`${KV_URL}/set/${CATALOG_KEY}`, {
+        const response = await fetch(`${KV_URL}/set/${key}`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${KV_TOKEN}` },
             body: JSON.stringify(value)
@@ -55,14 +68,23 @@ export async function kvSetCatalog(value) {
     }
 }
 
+export async function kvGetCatalog() {
+    return kvGetJson(CATALOG_KEY);
+}
+
+export async function kvSetCatalog(value) {
+    return kvSetJson(CATALOG_KEY, value);
+}
+
 // --- Тяжёлая загрузка каталога из МойСклад. Вызывается из /api/sync-catalog по расписанию
 // (а не при каждом заходе пользователя в бота), поэтому тут не страшно, если это займёт
 // сколько-то секунд — никто в этот момент не ждёт ответа на экране. ---
 export async function loadCatalogData() {
-    const [productRows, folderRows, stockRows] = await Promise.all([
+    const [productRows, folderRows, stockRows, firstSeenStored] = await Promise.all([
         fetchAllRows(`${API}/entity/product?limit=1000&filter=archived=false`),
         fetchAllRows(`${API}/entity/productfolder?limit=1000`),
-        fetchAllRows(`${API}/report/stock/all?limit=1000`).catch(() => [])
+        fetchAllRows(`${API}/report/stock/all?limit=1000`).catch(() => []),
+        kvGetJson(FIRST_SEEN_KEY)
     ]);
 
     const stockById = {};
@@ -73,15 +95,32 @@ export async function loadCatalogData() {
     // Если отчёт по остаткам целиком пуст — значит "не знаем остатки", а не "у всех ноль".
     const stockReportHasData = stockRows.length > 0;
 
-    const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
     const now = Date.now();
+
+    // Первый запуск: карты ещё нет → все текущие товары помечаем как BASELINE ("старые").
+    // Со второго запуска: неизвестные товары получают текущую дату и становятся новинками.
+    const isFirstRun = !firstSeenStored;
+    const firstSeen = firstSeenStored || {};
+    const updatedFirstSeen = {};
+
     const products = productRows.map(product => {
         const folderId = extractId(product.productFolder?.meta?.href);
         const stock = stockById.hasOwnProperty(product.id)
             ? stockById[product.id]
             : (stockReportHasData ? 0 : null);
-        const createdTime = product.created ? new Date(product.created).getTime() : null;
-        const isNew = createdTime !== null && (now - createdTime) < NEW_THRESHOLD_MS;
+
+        let seenAt;
+        if (firstSeen.hasOwnProperty(product.id)) {
+            seenAt = firstSeen[product.id];
+        } else {
+            seenAt = isFirstRun ? BASELINE : now;
+        }
+        // Переносим в новую карту только актуальные товары — так карта не разрастается
+        // от давно удалённых/архивных позиций.
+        updatedFirstSeen[product.id] = seenAt;
+
+        const isNew = seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS;
+
         return {
             ...product,
             folderId,
@@ -89,6 +128,10 @@ export async function loadCatalogData() {
             isNew
         };
     });
+
+    // Сохраняем карту "первого появления". Если сохранить не вышло — не страшно,
+    // при следующей синхронизации логика отработает заново.
+    await kvSetJson(FIRST_SEEN_KEY, updatedFirstSeen);
 
     const categories = buildCategoryTree(folderRows);
     return { products, categories };
