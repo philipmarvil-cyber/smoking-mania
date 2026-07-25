@@ -64,6 +64,14 @@ export default async function handler(req, res) {
         const organization = orgData?.rows?.[0];
         if (!organization) throw new Error('В МойСклад не найдена организация');
 
+        // 1а. Склад. Без него резерв на заказе остаётся просто флагом документа
+        // и не привязывается к остаткам конкретного склада — «Доступно» у товара
+        // не меняется, хотя на заказе стоит галка «Резерв». Берём склад с именем
+        // «Основной склад», если он есть, иначе — первый склад аккаунта.
+        const storesData = await fetchJson(`${API}/entity/store?limit=100`);
+        const stores = storesData?.rows || [];
+        const mainStore = stores.find(s => (s.name || '').trim().toLowerCase() === 'основной склад') || stores[0];
+
         // 2. Контрагент: ищем по телефону, если нет — создаём
         const cleanPhone = String(phone).replace(/[^\d+]/g, '');
         const search = await fetchJson(
@@ -110,6 +118,7 @@ export default async function handler(req, res) {
             body: JSON.stringify({
                 organization: { meta: organization.meta },
                 agent: { meta: agent.meta },
+                ...(mainStore ? { store: { meta: mainStore.meta } } : {}),
                 positions,
                 description: `Заказ из Telegram-бота.\nКлиент: ${customerName || '—'}\nТелефон: ${cleanPhone}`
             })
