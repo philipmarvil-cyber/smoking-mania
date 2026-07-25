@@ -19,12 +19,15 @@ export default async function handler(req, res) {
             return;
         }
 
-        // 0. Проверяем остаток. Кэш каталога (тот же, что видит витрина) обновляется
-        // раз в сутки плюс мгновенно после заказов через бот — но остаток мог
-        // измениться и другим путём (вручную в МойСклад, другой канал продаж),
-        // поэтому здесь дополнительно берём ЖИВОЙ остаток прямо со склада —
-        // именно он и является финальным решающим числом, кэш используем только
-        // как запасной вариант, если запрос к складу не удался.
+        // 0. Проверяем остаток. Берём ОБА источника — наш кэш каталога (который
+        // мы сами мгновенно и синхронно уменьшаем на шаге 5 после каждого
+        // заказа) и живой отчёт склада (report/stock/all) — и для проверки
+        // используем МЕНЬШЕЕ из двух чисел. Это важно: у отчёта МойСклад
+        // бывает небольшая задержка пересчёта после только что созданного
+        // заказа, и если бы мы верили только живым данным, то при быстрых
+        // повторных заказах можно было продать на 1 больше, чем реально есть
+        // (именно так и уходило в -1). Берём минимум — какой бы источник ни
+        // отставал, мы всё равно не продадим лишнего.
         const catalog = await kvGetCatalog();
         const productIds = items.map(i => i.id).filter(Boolean);
         let liveStock = {};
@@ -41,12 +44,10 @@ export default async function handler(req, res) {
                 : null;
             const displayName = cachedProduct?.name || i.name || 'Товар';
 
-            let availableStock = null;
-            if (liveStock.hasOwnProperty(i.id)) {
-                availableStock = liveStock[i.id];
-            } else if (cachedProduct && typeof cachedProduct.stock === 'number') {
-                availableStock = cachedProduct.stock;
-            }
+            const candidates = [];
+            if (liveStock.hasOwnProperty(i.id)) candidates.push(liveStock[i.id]);
+            if (cachedProduct && typeof cachedProduct.stock === 'number') candidates.push(cachedProduct.stock);
+            const availableStock = candidates.length ? Math.min(...candidates) : null;
 
             if (availableStock !== null && availableStock < requestedQty) {
                 res.status(409).json({
@@ -111,9 +112,8 @@ export default async function handler(req, res) {
             };
         });
 
-        // 4. Заказ покупателя (с expand=positions, чтобы сразу получить id
-        // созданных позиций — они нужны для шага 4а).
-        const order = await fetchJson(`${API}/entity/customerorder?expand=positions`, {
+        // 4. Заказ покупателя.
+        const order = await fetchJson(`${API}/entity/customerorder`, {
             method: 'POST',
             body: JSON.stringify({
                 organization: { meta: organization.meta },
@@ -124,16 +124,26 @@ export default async function handler(req, res) {
             })
         });
 
-        // 4а. Подтверждаем резерв отдельным запросом на каждую позицию —
-        // так резерв гарантированно фиксируется в МойСклад (галка "Резерв"
-        // на заказе), а не остаётся незамеченным полем при создании документа.
-        const createdPositions = order?.positions?.rows || [];
-        await Promise.all(createdPositions.map(pos =>
-            fetchJson(`${API}/entity/customerorder/${order.id}/positions/${pos.id}`, {
-                method: 'PUT',
-                body: JSON.stringify({ reserve: pos.quantity })
-            }).catch(() => {}) // не роняем весь заказ, если конкретная позиция не обновилась
-        ));
+        // 4а. Подтверждаем резерв отдельным запросом на каждую позицию — это
+        // задокументированный МойСклад способ гарантированно проставить резерв
+        // (поле reserve, переданное прямо при создании документа, не всегда
+        // применяется надёжно). Берём позиции через отдельный GET по заказу —
+        // `expand=positions` на самом POST создания не гарантированно
+        // возвращает настоящие id позиций, поэтому полагаться на него нельзя.
+        let reservedCount = 0;
+        try {
+            const positionsData = await fetchJson(`${API}/entity/customerorder/${order.id}/positions`);
+            const createdPositions = positionsData?.rows || [];
+            const results = await Promise.all(createdPositions.map(pos =>
+                fetchJson(`${API}/entity/customerorder/${order.id}/positions/${pos.id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ reserve: pos.quantity })
+                }).then(() => true).catch(() => false)
+            ));
+            reservedCount = results.filter(Boolean).length;
+        } catch (e) {
+            reservedCount = 0; // не удалось подтвердить резерв — заказ всё равно создан, разберёмся вручную
+        }
 
         // 5. Списываем купленное количество из кэша каталога сразу же —
         // чтобы все пользователи бота мгновенно увидели актуальный остаток
@@ -150,7 +160,7 @@ export default async function handler(req, res) {
             await kvSetCatalog(catalog);
         }
 
-        res.status(200).json({ success: true, orderName: order.name });
+        res.status(200).json({ success: true, orderName: order.name, reservedPositions: reservedCount });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
