@@ -142,6 +142,25 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Скачивание бинарного файла (картинки) с авторизацией — через тот же троттлер,
+// что и обычные JSON-запросы, чтобы не пробивать лимит МойСклад параллельно.
+export async function fetchBinary(url) {
+    await msAcquire();
+    let response;
+    try {
+        response = await fetch(url, { headers: HEADERS });
+    } finally {
+        msRelease();
+    }
+    if (!response.ok) {
+        throw new Error(`Не удалось скачать файл: ${response.status}`);
+    }
+    return {
+        buffer: Buffer.from(await response.arrayBuffer()),
+        contentType: response.headers.get('content-type') || 'image/jpeg'
+    };
+}
+
 // =====================================================================
 // Тяжёлая загрузка каталога из МойСклад. Вызывается из /api/sync-catalog.
 // Товары грузим с expand=images (лимит при expand — 100 на страницу),
@@ -184,11 +203,17 @@ export async function loadCatalogData() {
         }
         updatedFirstSeen[product.id] = seenAt;
 
+        // ВАЖНО: downloadHref из МойСклад требует заголовок Authorization — браузер
+        // не может подставить его в <img src>, поэтому раньше вместо фото показывались
+        // "битые картинки" (кубики). Отдаём фронту не сам downloadHref, а свой прокси-урл:
+        // /api/product-image сам сходит в МойСклад с токеном и отдаст готовый файл.
+        const hasPhoto = !!product.images?.rows?.[0];
+
         return {
             id: product.id,
             name: product.name,
             price: (product.salePrices?.[0]?.value || 0) / 100,
-            img: product.images?.rows?.[0]?.miniature?.downloadHref || '',
+            img: hasPhoto ? `/api/product-image?id=${product.id}` : '',
             folderId,
             outOfStock: stock === null ? false : stock <= 0,
             isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS
