@@ -461,6 +461,20 @@
                 cart = {};
                 persistCart();
                 updateCartBadge();
+
+                // Клиент грузит каталог только один раз при запуске мини-аппы и
+                // больше не перезапрашивает его в течение сессии — поэтому без
+                // этого шага только что оформленный заказ не был бы виден в виде
+                // "Нет в наличии" нигде на экране до перезапуска бота. Отражаем
+                // списание сразу в allProducts, тем же способом, что и сервер.
+                items.forEach(i => {
+                    const prod = allProducts.find(p => p.id === i.id);
+                    if (prod && typeof prod.stock === 'number') {
+                        prod.stock = Math.max(0, prod.stock - i.qty);
+                        prod.archived = prod.stock <= 0;
+                    }
+                });
+
                 refreshPriceTiersIfVisible();
                 refreshCardPricesIfVisible();
                 document.getElementById('cart-container').innerHTML =
