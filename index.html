@@ -17,10 +17,25 @@
         // --- Состояние магазина ---
         let allProducts = [];   // все товары, полученные со склада
         let categories = [];    // категории (первый уровень) + их подкатегории
-        let cart = {};          // { productId: { id, name, price, img, qty } }
+        let cart = {};          // { productId: { id, name, price, img, folderId, qty } }
         let favorites = {};     // { productId: { id, name, price, img } }
         let detailQtyValue = 1;
         let categoryPageDefaultList = []; // текущий список товаров страницы категории (без учёта поиска) — чтобы возвращаться к нему при очистке поля поиска
+        let currentDetailProductId = null; // id товара, открытого на странице "Товар" — нужно для обновления цены при изменении корзины
+
+        // --- Скидка за объём корзины: от 10 000 ₽ — минус 10% на все позиции ---
+        const BULK_DISCOUNT_THRESHOLD = 10000;
+        const BULK_DISCOUNT_RATE = 0.10;
+
+        function getCartSubtotal() {
+            return Object.values(cart).reduce((sum, item) => sum + item.price * item.qty, 0);
+        }
+        function isBulkDiscountActive() {
+            return getCartSubtotal() >= BULK_DISCOUNT_THRESHOLD;
+        }
+        function getDiscountedUnitPrice(price) {
+            return Math.round(price * (1 - BULK_DISCOUNT_RATE));
+        }
 
         // --- Навигация: стек экранов, чтобы системная кнопка "Назад" Telegram
         // всегда возвращала на предыдущий именно экран, а не сразу на главную ---
@@ -210,10 +225,11 @@
             if (cart[prod.id]) {
                 cart[prod.id].qty += qty;
             } else {
-                cart[prod.id] = { id: prod.id, name: prod.name, price: prod.price, img: prod.img, qty };
+                cart[prod.id] = { id: prod.id, name: prod.name, price: prod.price, img: prod.img, folderId: prod.folderId, qty };
             }
             persistCart();
             updateCartBadge();
+            refreshPriceTiersIfVisible();
         }
 
         function addToCartFromDetail(id) {
@@ -236,6 +252,7 @@
             persistCart();
             updateCartBadge();
             renderCart();
+            refreshPriceTiersIfVisible();
         }
 
         function removeFromCart(id) {
@@ -243,6 +260,18 @@
             persistCart();
             updateCartBadge();
             renderCart();
+            refreshPriceTiersIfVisible();
+        }
+
+        // Находит категорию/подкатегорию товара по folderId — для лейбла в корзине.
+        function getCategoryLabelForFolder(folderId) {
+            if (!folderId) return '';
+            for (const cat of categories) {
+                if (cat.id === folderId) return cat.name;
+                const sub = cat.subcategories.find(s => s.id === folderId);
+                if (sub) return `${cat.name} · ${sub.name}`;
+            }
+            return '';
         }
 
         function renderCart() {
@@ -253,25 +282,39 @@
                 updateCartTotal(0);
                 return;
             }
+            const baseSubtotal = getCartSubtotal();
+            const discountActive = baseSubtotal >= BULK_DISCOUNT_THRESHOLD;
+
             container.innerHTML = '';
-            let total = 0;
+            let grandTotal = 0;
             items.forEach(item => {
-                total += item.price * item.qty;
+                const unitPrice = discountActive ? getDiscountedUnitPrice(item.price) : item.price;
+                const lineTotal = unitPrice * item.qty;
+                grandTotal += lineTotal;
                 const imgHtml = item.img ? `<img src="${item.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+                const categoryLabel = getCategoryLabelForFolder(item.folderId);
                 const row = document.createElement('div');
                 row.className = 'cart-row';
                 row.innerHTML = `
                     <div class="cart-row-img">${imgHtml}</div>
-                    <div class="cart-row-info">
+                    <div class="cart-row-body">
+                        <div class="cart-row-top">
+                            <div class="cart-row-category">${categoryLabel}</div>
+                            <div class="cart-row-remove" data-action="remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></div>
+                        </div>
                         <div class="cart-row-name">${item.name}</div>
-                        <div class="cart-row-price">${item.price.toLocaleString()} ₽</div>
-                        <div class="qty-stepper small">
-                            <button data-action="dec">−</button>
-                            <span>${item.qty}</span>
-                            <button data-action="inc">+</button>
+                        <div class="cart-row-bottom">
+                            <div class="cart-row-price-block">
+                                <div class="cart-row-total">${lineTotal.toLocaleString()} ₽</div>
+                                <div class="cart-row-unit">${unitPrice.toLocaleString()} ₽ / шт</div>
+                            </div>
+                            <div class="qty-stepper small">
+                                <button data-action="dec">−</button>
+                                <span>${item.qty}</span>
+                                <button data-action="inc">+</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="cart-row-remove" data-action="remove">✕</div>
                 `;
                 row.querySelector('[data-action="dec"]').onclick = () => updateCartQty(item.id, -1);
                 row.querySelector('[data-action="inc"]').onclick = () => updateCartQty(item.id, 1);
@@ -279,7 +322,22 @@
                 row.querySelector('.cart-row-img').onclick = () => navigateTo({ type: 'detail', productId: item.id });
                 container.appendChild(row);
             });
-            updateCartTotal(total);
+
+            // Прогресс до скидки за объём корзины
+            const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - baseSubtotal);
+            const pct = Math.min(100, Math.round((baseSubtotal / BULK_DISCOUNT_THRESHOLD) * 100));
+            const progressBox = document.createElement('div');
+            progressBox.className = 'discount-progress-box';
+            progressBox.innerHTML = `
+                <div class="discount-progress-row">
+                    <span>${discountActive ? 'Скидка 10% на всю корзину активна' : `Ещё ${remaining.toLocaleString()} ₽ до следующей цены`}</span>
+                    <span class="discount-progress-goal">${discountActive ? '✓ применена' : 'от ' + BULK_DISCOUNT_THRESHOLD.toLocaleString() + ' ₽'}</span>
+                </div>
+                <div class="discount-progress-track"><div class="discount-progress-fill${discountActive ? ' full' : ''}" style="width:${pct}%"></div></div>
+            `;
+            container.appendChild(progressBox);
+
+            updateCartTotal(grandTotal);
         }
 
         function updateCartTotal(total) {
@@ -335,11 +393,17 @@
             const customerName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : 'Клиент Telegram';
 
             try {
+                const discountActive = isBulkDiscountActive();
                 const response = await fetch('/api/create-order', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        items: items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty })),
+                        items: items.map(i => ({
+                            id: i.id,
+                            name: i.name,
+                            price: discountActive ? getDiscountedUnitPrice(i.price) : i.price,
+                            qty: i.qty
+                        })),
                         customerName,
                         phone
                     })
@@ -351,6 +415,7 @@
                 cart = {};
                 persistCart();
                 updateCartBadge();
+                refreshPriceTiersIfVisible();
                 document.getElementById('cart-container').innerHTML =
                     `<div class="empty-state">Заказ ${data.orderName ? '№' + data.orderName + ' ' : ''}оформлен!<br>Мы скоро с вами свяжемся.</div>`;
                 updateCartTotal(0);
@@ -602,9 +667,39 @@
             }
         }
 
+        // Блок "Базовая цена / цена от 10 000 ₽" + динамическая подсказка —
+        // используется на странице товара, обновляется при любом изменении корзины.
+        function renderPriceTiersHtml(price) {
+            const discounted = getDiscountedUnitPrice(price);
+            const subtotal = getCartSubtotal();
+            const active = subtotal >= BULK_DISCOUNT_THRESHOLD;
+            const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - subtotal);
+            const noteText = active
+                ? `Скидка уже действует — сейчас ${discounted.toLocaleString()} ₽/шт`
+                : `Сейчас ${price.toLocaleString()} ₽/шт · корзина ещё на ${remaining.toLocaleString()} ₽ — и будет ${discounted.toLocaleString()} ₽/шт`;
+            return `
+                <div class="price-tiers-box">
+                    <div class="price-tier-row"><span>Базовая цена</span><span class="price-tier-value${active ? ' struck' : ''}">${price.toLocaleString()} ₽</span></div>
+                    <div class="price-tier-row"><span>Корзина от ${BULK_DISCOUNT_THRESHOLD.toLocaleString()} ₽</span><span class="price-tier-value${active ? ' active' : ''}">${discounted.toLocaleString()} ₽</span></div>
+                </div>
+                <div class="price-tier-note">${noteText}</div>
+            `;
+        }
+
+        // Обновляет блок цены на открытой сейчас странице товара, не перерисовывая
+        // всю страницу — вызывается при любом изменении корзины.
+        function refreshPriceTiersIfVisible() {
+            if (!currentDetailProductId) return;
+            if (!document.getElementById('page-detail')?.classList.contains('active')) return;
+            const wrap = document.getElementById('price-tiers-wrap');
+            const prod = allProducts.find(p => p.id === currentDetailProductId);
+            if (wrap && prod) wrap.innerHTML = renderPriceTiersHtml(prod.price);
+        }
+
         function renderProductDetail(id) {
             const prod = allProducts.find(p => p.id === id);
             if (!prod) return;
+            currentDetailProductId = id;
             detailQtyValue = 1;
             const detailPage = document.getElementById('page-detail');
             const imgHtml = prod.img ? `<img src="${prod.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
@@ -634,7 +729,7 @@
                     </div>
                     <div class="product-info-box">
                         <div class="detail-title">${prod.name}</div>
-                        <div class="detail-price">От ${prod.price.toLocaleString()} ₽</div>
+                        <div id="price-tiers-wrap">${renderPriceTiersHtml(prod.price)}</div>
                         ${actionHtml}
                         <div class="accordion">Описание <span>▼</span></div>
                         <div class="accordion">Доставка <span>▼</span></div>
@@ -769,7 +864,13 @@
         .product-main-img img { max-width: 100%; height: 300px; object-fit: contain; }
         .product-info-box { background: #fff; border-radius: 16px; padding: 20px; }
         .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
-        .detail-price { font-size: 18px; color: #6b2d38; font-weight: 700; margin-bottom: 20px; }
+        .price-tiers-box { background: #f8f8fa; border-radius: 14px; overflow: hidden; margin-bottom: 10px; }
+        .price-tier-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; font-size: 14px; color: #6b6b70; }
+        .price-tier-row + .price-tier-row { border-top: 1px solid #ececef; }
+        .price-tier-value { font-size: 17px; font-weight: 700; color: #1c1c1e; }
+        .price-tier-value.struck { text-decoration: line-through; color: #9a9a9e; font-weight: 600; font-size: 15px; }
+        .price-tier-value.active { color: #2f8f4e; }
+        .price-tier-note { font-size: 12.5px; color: #8a8a8e; padding: 0 2px; margin-bottom: 16px; line-height: 1.4; }
         .accordion { border-top: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; font-weight: 500; font-size: 14px;}
         
         /* Shop Page */
@@ -815,14 +916,28 @@
 
         /* Cart & Favorites lists */
         .cart-content, .favorites-content { padding: 15px; padding-bottom: 140px; }
-        .cart-row, .fav-row { background: #fff; border-radius: 14px; padding: 12px; display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-        .cart-row-img { width: 56px; height: 56px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #f8f8f8; border-radius: 10px; overflow: hidden; cursor: pointer; }
+        .cart-row, .fav-row { background: #fff; border-radius: 14px; padding: 12px; display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+        .cart-row-img { width: 64px; height: 64px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #f8f8f8; border-radius: 10px; overflow: hidden; cursor: pointer; }
         .cart-row-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
         .cart-row-img .no-photo { font-size: 9px; padding: 2px; }
         .cart-row-info { flex: 1; cursor: pointer; }
-        .cart-row-name { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
         .cart-row-price { font-size: 13px; color: #6b2d38; font-weight: 700; }
-        .cart-row-remove { color: #c7c7cc; font-size: 16px; cursor: pointer; padding: 6px; }
+        .cart-row-body { flex: 1; min-width: 0; }
+        .cart-row-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 2px; }
+        .cart-row-category { font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #9a9a9e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cart-row-remove { color: #c7c7cc; font-size: 16px; cursor: pointer; padding: 2px; flex-shrink: 0; }
+        .cart-row-remove svg { width: 17px; height: 17px; display: block; }
+        .cart-row-name { font-size: 14px; font-weight: 700; margin-bottom: 8px; line-height: 1.25; }
+        .cart-row-bottom { display: flex; justify-content: space-between; align-items: center; }
+        .cart-row-total { font-size: 16px; font-weight: 700; color: #1c1c1e; }
+        .cart-row-unit { font-size: 11.5px; color: #9a9a9e; margin-top: 1px; }
+
+        .discount-progress-box { background: #fff; border-radius: 14px; padding: 14px 16px; margin-top: 4px; }
+        .discount-progress-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+        .discount-progress-goal { color: #2f8f4e; font-weight: 700; }
+        .discount-progress-track { height: 6px; border-radius: 3px; background: #ececef; overflow: hidden; }
+        .discount-progress-fill { height: 100%; border-radius: 3px; background: #34c759; transition: width 0.3s ease; }
+        .discount-progress-fill.full { background: #2f8f4e; }
 
         .cart-footer { position: fixed; left: 0; right: 0; bottom: 65px; background: #fff; border-top: 1px solid #e5e5ea; padding: 14px 15px calc(14px + env(safe-area-inset-bottom)) 15px; z-index: 900; }
         .cart-total-row { display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; margin-bottom: 10px; }
@@ -952,7 +1067,7 @@
         <div class="header"><span>Корзина</span></div>
         <div class="cart-content" id="cart-container"><div class="empty-state">Загрузка...</div></div>
         <div class="cart-footer">
-            <div class="cart-total-row"><span>Итого</span><span id="cart-total">0 ₽</span></div>
+            <div class="cart-total-row"><span>Сумма заказа</span><span id="cart-total">0 ₽</span></div>
             <button class="checkout-btn" id="checkout-btn" onclick="checkout()" style="display:none;">Оформить заказ</button>
         </div>
     </div>
