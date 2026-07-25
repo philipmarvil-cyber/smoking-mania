@@ -221,15 +221,42 @@
             if (document.getElementById('page-favorites').classList.contains('active')) renderFavorites();
         }
 
-        function addToCart(prod, qty) {
-            if (cart[prod.id]) {
-                cart[prod.id].qty += qty;
+        // Показывает предупреждение, когда пользователь пытается добавить в корзину
+        // больше единиц товара, чем реально есть в остатках на складе.
+        function notifyStockLimit(name, stockLimit) {
+            tg.HapticFeedback?.notificationOccurred('warning');
+            const message = stockLimit > 0
+                ? `«${name}» — в наличии осталось только ${stockLimit} шт.`
+                : `«${name}» только что раскупили.`;
+            if (tg.showPopup) {
+                tg.showPopup({ message });
             } else {
-                cart[prod.id] = { id: prod.id, name: prod.name, price: prod.price, img: prod.img, folderId: prod.folderId, qty };
+                alert(message);
+            }
+        }
+
+        function addToCart(prod, qty) {
+            const stockLimit = (typeof prod.stock === 'number') ? prod.stock : null;
+            const currentQty = cart[prod.id] ? cart[prod.id].qty : 0;
+            let newQty = currentQty + qty;
+            if (stockLimit !== null && newQty > stockLimit) {
+                const capped = Math.max(0, stockLimit);
+                if (capped <= currentQty) {
+                    notifyStockLimit(prod.name, stockLimit);
+                    return;
+                }
+                newQty = capped;
+                notifyStockLimit(prod.name, stockLimit);
+            }
+            if (cart[prod.id]) {
+                cart[prod.id].qty = newQty;
+            } else {
+                cart[prod.id] = { id: prod.id, name: prod.name, price: prod.price, img: prod.img, folderId: prod.folderId, qty: newQty };
             }
             persistCart();
             updateCartBadge();
             refreshPriceTiersIfVisible();
+            refreshCardPricesIfVisible();
         }
 
         function addToCartFromDetail(id) {
@@ -240,19 +267,36 @@
         }
 
         function changeDetailQty(delta) {
-            detailQtyValue = Math.max(1, detailQtyValue + delta);
+            const prod = allProducts.find(p => p.id === currentDetailProductId);
+            const stockLimit = (prod && typeof prod.stock === 'number') ? prod.stock : null;
+            let next = detailQtyValue + delta;
+            if (stockLimit !== null && next > stockLimit) {
+                next = stockLimit;
+                if (prod) notifyStockLimit(prod.name, stockLimit);
+            }
+            detailQtyValue = Math.max(1, next);
             const el = document.getElementById('detail-qty');
             if (el) el.textContent = detailQtyValue;
+            const plusBtn = document.getElementById('detail-qty-plus');
+            if (plusBtn) plusBtn.disabled = (stockLimit !== null && detailQtyValue >= stockLimit);
         }
 
         function updateCartQty(id, delta) {
             if (!cart[id]) return;
-            cart[id].qty += delta;
+            const prod = allProducts.find(p => p.id === id);
+            const stockLimit = (prod && typeof prod.stock === 'number') ? prod.stock : null;
+            let nextQty = cart[id].qty + delta;
+            if (delta > 0 && stockLimit !== null && nextQty > stockLimit) {
+                nextQty = stockLimit;
+                notifyStockLimit(prod.name, stockLimit);
+            }
+            cart[id].qty = nextQty;
             if (cart[id].qty <= 0) delete cart[id];
             persistCart();
             updateCartBadge();
             renderCart();
             refreshPriceTiersIfVisible();
+            refreshCardPricesIfVisible();
         }
 
         function removeFromCart(id) {
@@ -261,6 +305,7 @@
             updateCartBadge();
             renderCart();
             refreshPriceTiersIfVisible();
+            refreshCardPricesIfVisible();
         }
 
         // Находит категорию/подкатегорию товара по folderId — для лейбла в корзине.
@@ -328,9 +373,10 @@
             const pct = Math.min(100, Math.round((baseSubtotal / BULK_DISCOUNT_THRESHOLD) * 100));
             const progressBox = document.createElement('div');
             progressBox.className = 'discount-progress-box';
+            const savings = baseSubtotal - grandTotal;
             progressBox.innerHTML = `
                 <div class="discount-progress-row">
-                    <span>${discountActive ? 'Скидка 10% на всю корзину активна' : `Ещё ${remaining.toLocaleString()} ₽ до следующей цены`}</span>
+                    <span>${discountActive ? `Скидка 10% на всю корзину активна${savings > 0 ? ` · вы экономите ${savings.toLocaleString()} ₽` : ''}` : `Ещё ${remaining.toLocaleString()} ₽ до следующей цены`}</span>
                     <span class="discount-progress-goal">${discountActive ? '✓ применена' : 'от ' + BULK_DISCOUNT_THRESHOLD.toLocaleString() + ' ₽'}</span>
                 </div>
                 <div class="discount-progress-track"><div class="discount-progress-fill${discountActive ? ' full' : ''}" style="width:${pct}%"></div></div>
@@ -416,6 +462,7 @@
                 persistCart();
                 updateCartBadge();
                 refreshPriceTiersIfVisible();
+                refreshCardPricesIfVisible();
                 document.getElementById('cart-container').innerHTML =
                     `<div class="empty-state">Заказ ${data.orderName ? '№' + data.orderName + ' ' : ''}оформлен!<br>Мы скоро с вами свяжемся.</div>`;
                 updateCartTotal(0);
@@ -611,7 +658,7 @@
                 const isFav = !!favorites[prod.id];
                 const priceOrBadgeHtml = prod.archived
                     ? `<div class="oos-badge">Нет в наличии</div>`
-                    : `<div class="product-price"><span class="price-prefix">от</span>${prod.price.toLocaleString()} ₽</div>`;
+                    : renderCardPriceHtml(prod);
                 const imgHtml = prod.img ? `<img src="${prod.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
                 const newBadgeHtml = prod.isNew ? `<div class="new-badge">NEW</div>` : '';
                 const actionBtnHtml = prod.archived
@@ -667,6 +714,42 @@
             }
         }
 
+        // Компактный блок цены на карточке товара (главная/категория/поиск):
+        // текущая действующая цена + вторая цена (базовая или "от N ₽") и
+        // подсказка сколько ещё нужно докинуть в корзину до скидки 10%.
+        function renderCardPriceHtml(prod) {
+            const discounted = getDiscountedUnitPrice(prod.price);
+            const active = isBulkDiscountActive();
+            const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - getCartSubtotal());
+            const mainPrice = active ? discounted : prod.price;
+            const subLine = active
+                ? `<span class="price-old">${prod.price.toLocaleString()} ₽</span>`
+                : `<span class="price-hint">${discounted.toLocaleString()} ₽ от ${BULK_DISCOUNT_THRESHOLD.toLocaleString()} ₽</span>`;
+            const noteLine = active
+                ? `Скидка −10% уже применена`
+                : `ещё ${remaining.toLocaleString()} ₽ до −10%`;
+            return `
+                <div class="product-price-block" data-pricebox="${prod.id}">
+                    <div class="product-price-row">
+                        <span class="product-price">${mainPrice.toLocaleString()} ₽</span>
+                        ${subLine}
+                    </div>
+                    <div class="product-price-note">${noteLine}</div>
+                </div>
+            `;
+        }
+
+        // Обновляет цену на всех сейчас отрисованных карточках (главная, категория,
+        // поиск) без перерисовки всей сетки — вызывается при любом изменении корзины.
+        function refreshCardPricesIfVisible() {
+            document.querySelectorAll('[data-pricebox]').forEach(el => {
+                const id = el.dataset.pricebox;
+                const prod = allProducts.find(p => p.id === id);
+                if (!prod || prod.archived) return;
+                el.outerHTML = renderCardPriceHtml(prod);
+            });
+        }
+
         // Блок "Базовая цена / цена от 10 000 ₽" + динамическая подсказка —
         // используется на странице товара, обновляется при любом изменении корзины.
         function renderPriceTiersHtml(price) {
@@ -704,6 +787,11 @@
             const detailPage = document.getElementById('page-detail');
             const imgHtml = prod.img ? `<img src="${prod.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
             const isFav = !!favorites[prod.id];
+            const hasStockLimit = typeof prod.stock === 'number';
+            const stockNoteHtml = (hasStockLimit && !prod.archived && prod.stock <= 5)
+                ? `<div class="stock-note">Осталось всего ${prod.stock} шт.</div>`
+                : '';
+            const plusDisabled = (hasStockLimit && detailQtyValue >= prod.stock) ? ' disabled' : '';
             const actionHtml = prod.archived
                 ? `
                     <div class="oos-badge" style="margin-bottom:16px;">Нет в наличии</div>
@@ -713,7 +801,7 @@
                     <div class="qty-stepper">
                         <button onclick="changeDetailQty(-1)">−</button>
                         <span id="detail-qty">1</span>
-                        <button onclick="changeDetailQty(1)">+</button>
+                        <button id="detail-qty-plus" onclick="changeDetailQty(1)"${plusDisabled}>+</button>
                     </div>
                     <button class="add-to-cart-btn" onclick="addToCartFromDetail('${prod.id}')">Добавить в корзину</button>
                 `;
@@ -730,6 +818,7 @@
                     <div class="product-info-box">
                         <div class="detail-title">${prod.name}</div>
                         <div id="price-tiers-wrap">${renderPriceTiersHtml(prod.price)}</div>
+                        ${stockNoteHtml}
                         ${actionHtml}
                         <div class="accordion">Описание <span>▼</span></div>
                         <div class="accordion">Доставка <span>▼</span></div>
@@ -883,8 +972,13 @@
         .oos-badge { display: inline-block; font-size: 12px; font-weight: 600; color: #8e8e93; background: #eef0f2; padding: 6px 12px; border-radius: 20px; margin-bottom: 8px; }
         .new-badge { position: absolute; top: 4px; left: 4px; background: #34c759; color: #fff; font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 6px; z-index: 2; letter-spacing: 0.3px; }
         .product-title { font-size: 14px; height: 34px; overflow: hidden; line-height: 1.2; word-break: break-word; margin-bottom: 10px; }
-        .product-price { font-weight: 700; font-size: 20px; color: #1c1c1e; margin-bottom: 4px; }
+        .product-price-block { margin-bottom: 8px; }
+        .product-price-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+        .product-price { font-weight: 700; font-size: 20px; color: #1c1c1e; }
         .product-price .price-prefix { font-weight: 500; font-size: 13px; color: #8e8e93; margin-right: 3px; }
+        .product-price-note { font-size: 10.5px; color: #8a8a8e; margin-top: 2px; line-height: 1.25; }
+        .price-old { font-size: 12px; color: #9a9a9e; text-decoration: line-through; font-weight: 600; }
+        .price-hint { font-size: 10.5px; color: #2f8f4e; font-weight: 700; }
         .empty-state { text-align: center; color: #8e8e93; padding: 60px 20px; font-size: 14px; grid-column: 1 / -1; }
 
         /* Товар не в наличии: приглушаем карточку серым и даём кнопку "Уведомить" */
@@ -908,6 +1002,8 @@
         /* Qty stepper + add to cart */
         .qty-stepper { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
         .qty-stepper button { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #e5e5ea; background: #fff; font-size: 18px; font-weight: 600; cursor: pointer; }
+        .qty-stepper button:disabled { opacity: 0.35; cursor: not-allowed; }
+        .stock-note { font-size: 12.5px; color: #d9822b; font-weight: 600; margin-bottom: 12px; }
         .qty-stepper span { font-size: 16px; font-weight: 700; min-width: 20px; text-align: center; }
         .qty-stepper.small { gap: 10px; margin: 4px 0 0 0; }
         .qty-stepper.small button { width: 24px; height: 24px; font-size: 14px; }
@@ -1138,7 +1234,8 @@
                 img: prod.img || '',
                 archived: !!prod.outOfStock,
                 folderId: prod.folderId || null,
-                isNew: !!prod.isNew
+                isNew: !!prod.isNew,
+                stock: (typeof prod.stock === 'number') ? prod.stock : null // null = учёт остатков выключен в МойСклад — лимита нет
             }));
             categories = (data.categories || []).filter(c => !REMOVED_CATEGORY_NAMES.includes((c.name || '').trim().toLowerCase()));
             renderScreen(currentScreen());
