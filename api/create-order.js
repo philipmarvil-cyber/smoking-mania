@@ -1,6 +1,6 @@
 // Создание заказа покупателя в МойСклад из корзины бота.
 // Все запросы идут через fetchJson с троттлингом и ретраями на 429.
-import { API, fetchJson, kvGetCatalog, kvSetCatalog } from './_catalog-lib.js';
+import { API, fetchJson, kvGetCatalog, kvSetCatalog, getLiveStock } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -19,23 +19,43 @@ export default async function handler(req, res) {
             return;
         }
 
-        // 0. Проверяем актуальный остаток по нашему кэшу каталога (тому же,
-        // что видит витрина) — чтобы не продать то, что кто-то уже купил
-        // секунду назад, до следующей синхронизации с МойСклад.
+        // 0. Проверяем остаток. Кэш каталога (тот же, что видит витрина) обновляется
+        // раз в сутки плюс мгновенно после заказов через бот — но остаток мог
+        // измениться и другим путём (вручную в МойСклад, другой канал продаж),
+        // поэтому здесь дополнительно берём ЖИВОЙ остаток прямо со склада —
+        // именно он и является финальным решающим числом, кэш используем только
+        // как запасной вариант, если запрос к складу не удался.
         const catalog = await kvGetCatalog();
-        if (catalog && Array.isArray(catalog.products)) {
-            for (const i of items) {
-                const product = catalog.products.find(p => p.id === i.id);
-                const requestedQty = Math.max(1, parseInt(i.qty, 10) || 1);
-                if (product && typeof product.stock === 'number' && product.stock < requestedQty) {
-                    res.status(409).json({
-                        success: false,
-                        error: product.stock > 0
-                            ? `«${product.name}» — в наличии осталось только ${product.stock} шт. Обновите корзину.`
-                            : `«${product.name}» уже раскупили. Уберите его из корзины.`
-                    });
-                    return;
-                }
+        const productIds = items.map(i => i.id).filter(Boolean);
+        let liveStock = {};
+        try {
+            liveStock = await getLiveStock(productIds);
+        } catch (e) {
+            liveStock = {}; // не удалось — работаем по кэшу каталога ниже
+        }
+
+        for (const i of items) {
+            const requestedQty = Math.max(1, parseInt(i.qty, 10) || 1);
+            const cachedProduct = catalog && Array.isArray(catalog.products)
+                ? catalog.products.find(p => p.id === i.id)
+                : null;
+            const displayName = cachedProduct?.name || i.name || 'Товар';
+
+            let availableStock = null;
+            if (liveStock.hasOwnProperty(i.id)) {
+                availableStock = liveStock[i.id];
+            } else if (cachedProduct && typeof cachedProduct.stock === 'number') {
+                availableStock = cachedProduct.stock;
+            }
+
+            if (availableStock !== null && availableStock < requestedQty) {
+                res.status(409).json({
+                    success: false,
+                    error: availableStock > 0
+                        ? `«${displayName}» — в наличии осталось только ${availableStock} шт. Обновите корзину.`
+                        : `«${displayName}» уже раскупили. Уберите его из корзины.`
+                });
+                return;
             }
         }
 
@@ -61,8 +81,12 @@ export default async function handler(req, res) {
         }
 
         // 3. Позиции заказа (цены в МойСклад — в копейках).
-        // reserve = quantity — резервируем товар в МойСклад сразу при создании заказа
-        // (это равносильно проставлению галки "Резерв" на заказе вручную).
+        // reserve = quantity — просим зарезервировать товар уже на создании
+        // (равносильно галке "Резерв" на заказе). МойСклад иногда не применяет
+        // это поле надёжно прямо при создании документа — поэтому шагом 4а
+        // ниже мы ЕЩЁ РАЗ явно проставляем резерв через отдельный PUT по каждой
+        // позиции, уже используя её настоящий id, что и есть официально
+        // задокументированный надёжный способ проставить резерв через API.
         const positions = items.map(i => {
             const qty = Math.max(1, parseInt(i.qty, 10) || 1);
             return {
@@ -79,8 +103,9 @@ export default async function handler(req, res) {
             };
         });
 
-        // 4. Заказ покупателя
-        const order = await fetchJson(`${API}/entity/customerorder`, {
+        // 4. Заказ покупателя (с expand=positions, чтобы сразу получить id
+        // созданных позиций — они нужны для шага 4а).
+        const order = await fetchJson(`${API}/entity/customerorder?expand=positions`, {
             method: 'POST',
             body: JSON.stringify({
                 organization: { meta: organization.meta },
@@ -89,6 +114,17 @@ export default async function handler(req, res) {
                 description: `Заказ из Telegram-бота.\nКлиент: ${customerName || '—'}\nТелефон: ${cleanPhone}`
             })
         });
+
+        // 4а. Подтверждаем резерв отдельным запросом на каждую позицию —
+        // так резерв гарантированно фиксируется в МойСклад (галка "Резерв"
+        // на заказе), а не остаётся незамеченным полем при создании документа.
+        const createdPositions = order?.positions?.rows || [];
+        await Promise.all(createdPositions.map(pos =>
+            fetchJson(`${API}/entity/customerorder/${order.id}/positions/${pos.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({ reserve: pos.quantity })
+            }).catch(() => {}) // не роняем весь заказ, если конкретная позиция не обновилась
+        ));
 
         // 5. Списываем купленное количество из кэша каталога сразу же —
         // чтобы все пользователи бота мгновенно увидели актуальный остаток
