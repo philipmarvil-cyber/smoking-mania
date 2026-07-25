@@ -14,9 +14,10 @@ export default async function handler(req, res) {
             await kvSetCatalog({ ...catalog, syncedAt: Date.now() });
         }
 
-        // Кэш на CDN Vercel: повторные запросы в течение 5 минут
-        // вообще не доходят до функции.
-        res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
+        // Кэш на CDN Vercel: короткий, чтобы после заказа (списание остатка
+        // в create-order.js) все пользователи увидели актуальный остаток
+        // почти мгновенно — а не только через 5 минут/час, как было раньше.
+        res.setHeader('Cache-Control', 'public, s-maxage=10, stale-while-revalidate=30');
         res.status(200).json({
             products: catalog.products || [],
             categories: catalog.categories || []
