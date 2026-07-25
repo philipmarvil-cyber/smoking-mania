@@ -178,7 +178,12 @@ export async function loadCatalogData() {
     const stockById = {};
     stockRows.forEach(row => {
         const id = extractId(row.meta?.href);
-        if (id) stockById[id] = row.stock ?? 0;
+        // "quantity" в отчёте МойСклад — это уже ДОСТУПНОЕ количество
+        // (остаток − резерв + ожидание), а не просто физический остаток.
+        // Именно оно должно определять "нет в наличии" на витрине —
+        // иначе зарезервированный при заказе товар продолжал бы выглядеть
+        // доступным, пока склад физически его не спишет.
+        if (id) stockById[id] = row.quantity ?? row.stock ?? 0;
     });
     const stockReportHasData = stockRows.length > 0;
 
@@ -215,6 +220,7 @@ export async function loadCatalogData() {
             price: (product.salePrices?.[0]?.value || 0) / 100,
             img: hasPhoto ? `/api/product-image?id=${product.id}` : '',
             folderId,
+            stock: stock === null ? null : Math.max(0, stock), // доступное количество; null = учёт остатков выключен в МойСклад
             outOfStock: stock === null ? false : stock <= 0,
             isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS
         };
