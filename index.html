@@ -20,6 +20,7 @@
         let cart = {};          // { productId: { id, name, price, img, qty } }
         let favorites = {};     // { productId: { id, name, price, img } }
         let detailQtyValue = 1;
+        let categoryPageDefaultList = []; // текущий список товаров страницы категории (без учёта поиска) — чтобы возвращаться к нему при очистке поля поиска
 
         // --- Навигация: стек экранов, чтобы системная кнопка "Назад" Telegram
         // всегда возвращала на предыдущий именно экран, а не сразу на главную ---
@@ -87,9 +88,6 @@
             } else if (screen.type === 'category') {
                 document.getElementById('page-category').classList.add('active');
                 renderCategoryScreen(screen.categoryId);
-            } else if (screen.type === 'subcategory-products') {
-                document.getElementById('page-category').classList.add('active');
-                renderSubcategoryProducts(screen.categoryId, screen.subcategoryId);
             } else if (screen.type === 'detail') {
                 document.getElementById('page-detail').classList.add('active');
                 renderProductDetail(screen.productId);
@@ -476,49 +474,63 @@
             renderProductCardsInto(document.getElementById('products-container'), filtered);
         }
 
-        // --- Страница категории / подкатегории ---
-        // Для этих категорий подкатегории не показываем плитками — сразу выводим
-        // все товары категории (включая товары её подкатегорий из МоегоСклада).
-        const FLAT_CATEGORY_NAMES = ['жевательный табак', 'самокруточный табак', 'жидкости'];
-
+        // --- Страница категории ---
+        // Одна страница на категорию: заголовок, поиск (по всему каталогу),
+        // горизонтальная строка подкатегорий (если есть) и товары ниже —
+        // без перехода на отдельный экран подкатегории.
         function renderCategoryScreen(categoryId) {
             const cat = categories.find(c => c.id === categoryId);
             const page = document.getElementById('page-category');
             if (!cat) { page.innerHTML = ''; return; }
 
-            const isFlat = FLAT_CATEGORY_NAMES.includes((cat.name || '').trim().toLowerCase());
+            const subIds = cat.subcategories.map(s => s.id);
+            const allInCat = allProducts.filter(p => p.folderId === cat.id || subIds.includes(p.folderId));
 
-            if (cat.subcategories.length && !isFlat) {
-                page.innerHTML = `
-                    <div class="header" style="margin-top:0;"><span>${cat.name}</span></div>
-                    <div class="category-grid" id="subcat-tiles-container" style="padding:15px 12px;"></div>
-                `;
-                const wrap = document.getElementById('subcat-tiles-container');
-                cat.subcategories.forEach(sub => {
-                    wrap.appendChild(createCategoryTile(sub.name, () => navigateTo({ type: 'subcategory-products', categoryId: cat.id, subcategoryId: sub.id })));
-                });
-            } else {
-                const subIds = cat.subcategories.map(s => s.id);
-                const list = allProducts.filter(p => p.folderId === cat.id || subIds.includes(p.folderId));
-                renderCategoryProductsPage(cat.name, list);
-            }
-        }
-
-        function renderSubcategoryProducts(categoryId, subcategoryId) {
-            const cat = categories.find(c => c.id === categoryId);
-            const sub = cat?.subcategories.find(s => s.id === subcategoryId);
-            const title = sub ? sub.name : (cat ? cat.name : 'Категория');
-            const list = allProducts.filter(p => p.folderId === subcategoryId);
-            renderCategoryProductsPage(title, list);
-        }
-
-        function renderCategoryProductsPage(title, list) {
-            const page = document.getElementById('page-category');
             page.innerHTML = `
-                <div class="header" style="margin-top:0;"><span>${title}</span></div>
+                <div class="header" style="margin-top:0;"><span>${cat.name}</span></div>
+                <div class="search-bar"><input type="text" id="category-search-input" placeholder="Поиск товаров" oninput="handleCategorySearch()"></div>
+                ${cat.subcategories.length ? '<div class="subcat-strip" id="subcat-strip"></div>' : ''}
                 <div class="products-grid" id="category-products-container" style="padding:15px 12px;"></div>
             `;
+
+            if (cat.subcategories.length) {
+                const strip = document.getElementById('subcat-strip');
+                const allChip = document.createElement('div');
+                allChip.className = 'subcat-chip active';
+                allChip.textContent = 'Все';
+                allChip.onclick = () => selectSubcategory(cat, null, allInCat, allChip);
+                strip.appendChild(allChip);
+                cat.subcategories.forEach(sub => {
+                    const chip = document.createElement('div');
+                    chip.className = 'subcat-chip';
+                    chip.textContent = sub.name;
+                    chip.onclick = () => selectSubcategory(cat, sub, allProducts.filter(p => p.folderId === sub.id), chip);
+                    strip.appendChild(chip);
+                });
+            }
+
+            categoryPageDefaultList = allInCat;
+            renderProductCardsInto(document.getElementById('category-products-container'), allInCat);
+        }
+
+        function selectSubcategory(cat, sub, list, chipEl) {
+            document.querySelectorAll('#subcat-strip .subcat-chip').forEach(c => c.classList.remove('active'));
+            chipEl.classList.add('active');
+            categoryPageDefaultList = list;
+            const searchInput = document.getElementById('category-search-input');
+            if (searchInput) searchInput.value = '';
             renderProductCardsInto(document.getElementById('category-products-container'), list);
+        }
+
+        function handleCategorySearch() {
+            const term = (document.getElementById('category-search-input')?.value || '').trim().toLowerCase();
+            const container = document.getElementById('category-products-container');
+            if (!term) {
+                renderProductCardsInto(container, categoryPageDefaultList);
+                return;
+            }
+            const filtered = allProducts.filter(p => p.name.toLowerCase().includes(term));
+            renderProductCardsInto(container, filtered);
         }
 
         // --- Карточки товаров (переиспользуется на главной, в поиске, в категориях) ---
@@ -528,7 +540,9 @@
                 container.innerHTML = '<div class="empty-state">Ничего не найдено</div>';
                 return;
             }
-            list.forEach(prod => {
+            // Сначала товары в наличии, потом те, которых нет в наличии
+            const sortedList = [...list].sort((a, b) => (a.archived === b.archived) ? 0 : (a.archived ? 1 : -1));
+            sortedList.forEach(prod => {
                 const isFav = !!favorites[prod.id];
                 const priceOrBadgeHtml = prod.archived
                     ? `<div class="oos-badge">Нет в наличии</div>`
@@ -742,6 +756,12 @@
         /* Search Bar */
         .search-bar { padding: 0 15px 10px 15px; }
         .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
+
+        /* Горизонтальная строка подкатегорий на странице категории */
+        .subcat-strip { display: flex; gap: 8px; overflow-x: auto; padding: 0 15px 14px 15px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+        .subcat-strip::-webkit-scrollbar { display: none; }
+        .subcat-chip { flex: 0 0 auto; padding: 8px 16px; border-radius: 20px; background: #eaeaed; color: #1c1c1e; font-size: 13.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+        .subcat-chip.active { background: #1c1c1e; color: #fff; }
         
         /* Product Detail */
         .product-detail-content { padding: 15px; }
@@ -991,6 +1011,10 @@
         // потом в фоне обновляем данные с сервера. ---
         const LOCAL_CATALOG_KEY = 'catalog_cache_v2';
 
+        // Эти категории убраны из витрины полностью (по просьбе) — их товары
+        // остаются доступны через поиск и на главной, но плитки категорий нет.
+        const REMOVED_CATEGORY_NAMES = ['жевательный табак', 'самокруточный табак', 'жидкости'];
+
         function applyCatalog(data) {
             allProducts = (data.products || []).map(prod => ({
                 id: prod.id,
@@ -1001,7 +1025,7 @@
                 folderId: prod.folderId || null,
                 isNew: !!prod.isNew
             }));
-            categories = data.categories || [];
+            categories = (data.categories || []).filter(c => !REMOVED_CATEGORY_NAMES.includes((c.name || '').trim().toLowerCase()));
             renderScreen(currentScreen());
         }
 
