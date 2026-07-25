@@ -28,6 +28,10 @@ const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
+export function isKvConfigured() {
+    return !!(KV_URL && KV_TOKEN);
+}
+
 export async function kvGetJson(key) {
     if (!KV_URL || !KV_TOKEN) return null;
     try {
