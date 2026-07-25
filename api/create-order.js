@@ -1,6 +1,6 @@
 // Создание заказа покупателя в МойСклад из корзины бота.
 // Все запросы идут через fetchJson с троттлингом и ретраями на 429.
-import { API, fetchJson } from './_catalog-lib.js';
+import { API, fetchJson, kvGetCatalog, kvSetCatalog } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -17,6 +17,26 @@ export default async function handler(req, res) {
         if (!phone) {
             res.status(400).json({ success: false, error: 'Не указан телефон' });
             return;
+        }
+
+        // 0. Проверяем актуальный остаток по нашему кэшу каталога (тому же,
+        // что видит витрина) — чтобы не продать то, что кто-то уже купил
+        // секунду назад, до следующей синхронизации с МойСклад.
+        const catalog = await kvGetCatalog();
+        if (catalog && Array.isArray(catalog.products)) {
+            for (const i of items) {
+                const product = catalog.products.find(p => p.id === i.id);
+                const requestedQty = Math.max(1, parseInt(i.qty, 10) || 1);
+                if (product && typeof product.stock === 'number' && product.stock < requestedQty) {
+                    res.status(409).json({
+                        success: false,
+                        error: product.stock > 0
+                            ? `«${product.name}» — в наличии осталось только ${product.stock} шт. Обновите корзину.`
+                            : `«${product.name}» уже раскупили. Уберите его из корзины.`
+                    });
+                    return;
+                }
+            }
         }
 
         // 1. Организация (берём первую)
@@ -40,18 +60,24 @@ export default async function handler(req, res) {
             });
         }
 
-        // 3. Позиции заказа (цены в МойСклад — в копейках)
-        const positions = items.map(i => ({
-            quantity: Math.max(1, parseInt(i.qty, 10) || 1),
-            price: Math.round((Number(i.price) || 0) * 100),
-            assortment: {
-                meta: {
-                    href: `${API}/entity/product/${i.id}`,
-                    type: 'product',
-                    mediaType: 'application/json'
+        // 3. Позиции заказа (цены в МойСклад — в копейках).
+        // reserve = quantity — резервируем товар в МойСклад сразу при создании заказа
+        // (это равносильно проставлению галки "Резерв" на заказе вручную).
+        const positions = items.map(i => {
+            const qty = Math.max(1, parseInt(i.qty, 10) || 1);
+            return {
+                quantity: qty,
+                reserve: qty,
+                price: Math.round((Number(i.price) || 0) * 100),
+                assortment: {
+                    meta: {
+                        href: `${API}/entity/product/${i.id}`,
+                        type: 'product',
+                        mediaType: 'application/json'
+                    }
                 }
-            }
-        }));
+            };
+        });
 
         // 4. Заказ покупателя
         const order = await fetchJson(`${API}/entity/customerorder`, {
@@ -63,6 +89,21 @@ export default async function handler(req, res) {
                 description: `Заказ из Telegram-бота.\nКлиент: ${customerName || '—'}\nТелефон: ${cleanPhone}`
             })
         });
+
+        // 5. Списываем купленное количество из кэша каталога сразу же —
+        // чтобы все пользователи бота мгновенно увидели актуальный остаток
+        // и пометку "Нет в наличии", не дожидаясь ночной синхронизации.
+        if (catalog && Array.isArray(catalog.products)) {
+            items.forEach(i => {
+                const product = catalog.products.find(p => p.id === i.id);
+                if (product && typeof product.stock === 'number') {
+                    const qty = Math.max(1, parseInt(i.qty, 10) || 1);
+                    product.stock = Math.max(0, product.stock - qty);
+                    product.outOfStock = product.stock <= 0;
+                }
+            });
+            await kvSetCatalog(catalog);
+        }
 
         res.status(200).json({ success: true, orderName: order.name });
     } catch (e) {
