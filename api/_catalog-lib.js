@@ -232,9 +232,27 @@ export async function loadCatalogData() {
     return { products, categories };
 }
 
-function extractId(href) {
+export function extractId(href) {
     if (!href) return null;
     return href.split('/').pop().split('?')[0];
+}
+
+// Живой (не кэшированный) остаток по конкретным товарам — используется при
+// оформлении заказа, чтобы проверять доступное количество не по вчерашнему
+// кэшу каталога, а по факту на складе прямо сейчас.
+export async function getLiveStock(productIds) {
+    const ids = [...new Set(productIds)].filter(Boolean);
+    if (!ids.length) return {};
+    const params = new URLSearchParams();
+    ids.forEach(id => params.append('filter', `product=${API}/entity/product/${id}`));
+    const data = await fetchJson(`${API}/report/stock/all?${params.toString()}`);
+    const result = {};
+    (data.rows || []).forEach(row => {
+        const id = extractId(row.meta?.href);
+        // "quantity" — уже доступное количество (остаток − резерв + ожидание).
+        if (id) result[id] = row.quantity ?? row.stock ?? 0;
+    });
+    return result;
 }
 
 // Страницы грузим последовательно — скорость дозирует троттлер,
