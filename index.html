@@ -10,9 +10,18 @@
         const tg = window.Telegram.WebApp;
         tg.ready(); tg.expand();
         tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#f2f2f7');
-        // Отключение disableVerticalSwipes() на Android не изменило поведение
-        // скролла (проверено) — значит, дело не в этом, возвращаем как было.
-        if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
+        // ЧИСТЫЙ ТЕСТ: судя по диагностической панели, vSwipes:false стоит
+        // именно из-за нашего же disableVerticalSwipes() — и при этом
+        // html.scrollHeight больше html.clientHeight, то есть с точки зрения
+        // самой страницы всё готово к скроллу. Пробуем прямо ПРИНУДИТЕЛЬНО
+        // включить вертикальные свайпы на Android (а не просто не выключать) —
+        // если на Android этот флаг Telegram блокирует не только жест
+        // закрытия, а вообще любой вертикальный тач, это должно быть заметно.
+        if (tg.platform === 'android' && tg.enableVerticalSwipes) {
+            tg.enableVerticalSwipes();
+        } else if (tg.isVerticalSwipesEnabled) {
+            tg.disableVerticalSwipes();
+        }
         tg.enableClosingConfirmation();
         // ЭКСПЕРИМЕНТ: раньше здесь requestFullscreen() специально пропускался
         // на Android — считалось, что он ломает скролл. Но реальная картина
@@ -41,11 +50,14 @@
                 isScrollable ? '' : 'important'
             );
             // Переподтверждаем на каждой отрисовке экрана (не только один раз
-            // при запуске) — похоже, Android-клиент Telegram решает, кому
-            // достаётся вертикальный тач, ориентируясь на состояние в момент
-            // вызова, и не пересматривает это само по себе, когда контент
-            // (карточки товаров, корзина) дорисовывается позже и меняет высоту.
-            if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
+            // при запуске) — похоже, Android-клиент Telegram может
+            // пересматривать этот флаг сам по себе при изменении контента,
+            // поэтому держим то же значение, что выбрали при старте.
+            if (tg.platform === 'android' && tg.enableVerticalSwipes) {
+                tg.enableVerticalSwipes();
+            } else if (tg.isVerticalSwipesEnabled) {
+                tg.disableVerticalSwipes();
+            }
         }
         function preventScrollCollapse() {
             if (window.scrollY === 0) window.scrollTo(0, 1);
