@@ -26,14 +26,30 @@ export default async function handler(req, res) {
                 w.url === webhookUrl && w.entityType === 'customerorder' && w.action === action
             );
             if (already) {
-                results.push({ action, alreadyExists: true });
+                // enabled:false означает, что МойСклад сам отключил доставку
+                // (обычно после серии неудачных попыток) — подписка формально
+                // существует, но реально ничего не присылает. Пробуем включить
+                // обратно тем же запросом.
+                if (already.enabled === false) {
+                    try {
+                        await fetchJson(`${API}/entity/webhook/${already.id}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({ enabled: true })
+                        });
+                        results.push({ action, alreadyExists: true, wasDisabled: true, reEnabled: true, id: already.id });
+                    } catch (e) {
+                        results.push({ action, alreadyExists: true, wasDisabled: true, reEnabled: false, error: e.message, id: already.id });
+                    }
+                } else {
+                    results.push({ action, alreadyExists: true, enabled: already.enabled, id: already.id });
+                }
                 continue;
             }
             const created = await fetchJson(`${API}/entity/webhook`, {
                 method: 'POST',
                 body: JSON.stringify({ url: webhookUrl, action, entityType: 'customerorder' })
             });
-            results.push({ action, created: true, id: created.id });
+            results.push({ action, created: true, enabled: created.enabled, id: created.id });
         }
 
         res.status(200).json({ success: true, webhookUrl, results });
