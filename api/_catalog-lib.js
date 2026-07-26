@@ -514,15 +514,19 @@ export function buildCategoryTree(allFolders) {
 
     const displayFolders = [...katalogChildren, ...otherTopFolders];
 
-    return displayFolders.map(cat => {
-        // Подкатегории тоже проверяем по имени — скрытая категория могла
-        // быть вложена не только на верхнем уровне, но и как подкатегория
-        // внутри обычного, видимого раздела.
-        const subFolders = allFolders.filter(f => getParentFolderId(f) === cat.id && !isHidden(f));
+    // Рекурсивно строим дерево на ЛЮБУЮ глубину вложенности. Раньше
+    // подкатегории собирались только один уровень вниз (прямые дети),
+    // и товары из под-подкатегорий (3-й уровень и глубже) не попадали
+    // ни в одну категорию/подкатегорию во фронтенде — их folderId не
+    // совпадал ни с cat.id, ни с id прямых подкатегорий.
+    function buildNode(folder) {
+        const children = allFolders.filter(f => getParentFolderId(f) === folder.id && !isHidden(f));
         return {
-            id: cat.id,
-            name: cat.name,
-            subcategories: subFolders.map(sub => ({ id: sub.id, name: sub.name }))
+            id: folder.id,
+            name: folder.name,
+            subcategories: children.map(buildNode)
         };
-    });
+    }
+
+    return displayFolders.map(buildNode);
 }
