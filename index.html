@@ -158,10 +158,20 @@
                 if (items[tabIndex]) items[tabIndex].classList.add('active');
             }
 
-            window.scrollTo(0, screen.scrollY || 0);
-            document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', (screen.scrollY || 0) > 10));
+            // Восстанавливаем позицию скролла в несколько заходов: сразу,
+            // на следующем кадре отрисовки и ещё раз чуть погодя. Один
+            // синхронный scrollTo не всегда достаточен — если высота
+            // страницы досчитывается позже (например, из-за более крупных
+            // подкатегорий/строк грамовок или картинок, которые в некоторых
+            // WebView всё равно чуть сдвигают раскладку), то один точечный
+            // scrollTo может промахнуться, и "назад" визуально бросает не
+            // туда, где пользователь был на самом деле.
+            const targetY = screen.scrollY || 0;
+            window.scrollTo(0, targetY);
+            document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', targetY > 10));
+            requestAnimationFrame(() => window.scrollTo(0, targetY));
             ensureDocumentIsScrollable();
-            setTimeout(ensureDocumentIsScrollable, 400); // картинки товаров дорисовываются чуть позже и меняют высоту страницы
+            setTimeout(() => { ensureDocumentIsScrollable(); window.scrollTo(0, targetY); }, 400); // картинки товаров дорисовываются чуть позже и меняют высоту страницы
 
             if (navStack.length > 1) {
                 tg.BackButton.show();
@@ -464,7 +474,7 @@
                 const unitPrice = discountActive ? getDiscountedUnitPrice(item.price) : item.price;
                 const lineTotal = unitPrice * item.qty;
                 grandTotal += lineTotal;
-                const imgHtml = item.img ? `<img src="${item.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+                const imgHtml = item.img ? `<img src="${item.img}" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
                 const categoryLabel = getCategoryLabelForFolder(item.folderId);
                 const row = document.createElement('div');
                 row.className = 'cart-row';
@@ -627,7 +637,7 @@
             }
             container.innerHTML = '';
             items.forEach(item => {
-                const imgHtml = item.img ? `<img src="${item.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+                const imgHtml = item.img ? `<img src="${item.img}" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
                 const row = document.createElement('div');
                 row.className = 'fav-row';
                 row.innerHTML = `
@@ -730,9 +740,23 @@
             renderProductCardsInto(document.getElementById('products-container'), filtered);
         }
 
+        // Достаёт грамовку из названия товара: "Black Burn 100гр" -> "100г",
+        // "Смесь 25 гр." -> "25г", "жидкость 30 мл" не трогаем (только г/гр).
+        // Возвращает null, если в названии веса нет.
+        function extractWeight(name) {
+            const m = (name || '').match(/(\d+(?:[.,]\d+)?)\s*г(?:р|рамм[а-я]*)?\b/i);
+            if (!m) return null;
+            return `${m[1].replace(',', '.')}г`;
+        }
+
+        // Текущее состояние фильтров на странице категории — нужно, чтобы
+        // подкатегория и грамовка комбинировались, а не сбрасывали друг друга.
+        let categoryFilterState = { cat: null, subFolderIds: null, weight: null };
+
         // --- Страница категории ---
         // Одна страница на категорию: заголовок, поиск (по всему каталогу),
-        // горизонтальная строка подкатегорий (если есть) и товары ниже —
+        // горизонтальная строка подкатегорий (если есть), строка грамовок
+        // (если у товаров категории она встречается) и товары ниже —
         // без перехода на отдельный экран подкатегории.
         function renderCategoryScreen(categoryId) {
             const cat = categories.find(c => c.id === categoryId);
@@ -741,11 +765,16 @@
 
             const allCatFolderIds = collectFolderIds(cat);
             const allInCat = allProducts.filter(p => allCatFolderIds.includes(p.folderId));
+            const weightsInCat = [...new Set(allInCat.map(p => extractWeight(p.name)).filter(Boolean))]
+                .sort((a, b) => parseFloat(a) - parseFloat(b));
+
+            categoryFilterState = { cat, subFolderIds: null, weight: null };
 
             page.innerHTML = `
                 <div class="header" style="margin-top:0;"><span>${cat.name}</span></div>
                 <div class="search-bar"><input type="text" id="category-search-input" placeholder="Поиск товаров" oninput="handleCategorySearch()"></div>
                 ${cat.subcategories.length ? '<div class="subcat-strip" id="subcat-strip"></div>' : ''}
+                ${weightsInCat.length ? '<div class="subcat-strip weight-strip" id="weight-strip"></div>' : ''}
                 <div class="products-grid" id="category-products-container" style="padding:15px 12px;"></div>
             `;
 
@@ -754,14 +783,30 @@
                 const allChip = document.createElement('div');
                 allChip.className = 'subcat-chip active';
                 allChip.textContent = 'Все';
-                allChip.onclick = () => selectSubcategory(cat, null, allInCat, allChip);
+                allChip.onclick = () => { categoryFilterState.subFolderIds = null; applyCategoryFilters(allChip, 'sub'); };
                 strip.appendChild(allChip);
                 cat.subcategories.forEach(sub => {
                     const chip = document.createElement('div');
                     chip.className = 'subcat-chip';
                     chip.textContent = sub.name;
                     const subFolderIds = collectFolderIds(sub);
-                    chip.onclick = () => selectSubcategory(cat, sub, allProducts.filter(p => subFolderIds.includes(p.folderId)), chip);
+                    chip.onclick = () => { categoryFilterState.subFolderIds = subFolderIds; applyCategoryFilters(chip, 'sub'); };
+                    strip.appendChild(chip);
+                });
+            }
+
+            if (weightsInCat.length) {
+                const strip = document.getElementById('weight-strip');
+                const allChip = document.createElement('div');
+                allChip.className = 'subcat-chip active';
+                allChip.textContent = 'Любая г/ка';
+                allChip.onclick = () => { categoryFilterState.weight = null; applyCategoryFilters(allChip, 'weight'); };
+                strip.appendChild(allChip);
+                weightsInCat.forEach(w => {
+                    const chip = document.createElement('div');
+                    chip.className = 'subcat-chip';
+                    chip.textContent = w;
+                    chip.onclick = () => { categoryFilterState.weight = w; applyCategoryFilters(chip, 'weight'); };
                     strip.appendChild(chip);
                 });
             }
@@ -770,24 +815,41 @@
             renderProductCardsInto(document.getElementById('category-products-container'), allInCat);
         }
 
-        function selectSubcategory(cat, sub, list, chipEl) {
-            document.querySelectorAll('#subcat-strip .subcat-chip').forEach(c => c.classList.remove('active'));
+        // Пересчитывает список товаров из текущей комбинации подкатегория+грамовка
+        // и подсвечивает активный чип в соответствующей строке ('sub' или 'weight').
+        function applyCategoryFilters(chipEl, stripKind) {
+            const stripId = stripKind === 'sub' ? '#subcat-strip' : '#weight-strip';
+            document.querySelectorAll(`${stripId} .subcat-chip`).forEach(c => c.classList.remove('active'));
             chipEl.classList.add('active');
+
+            const { cat, subFolderIds, weight } = categoryFilterState;
+            const baseFolderIds = subFolderIds || collectFolderIds(cat);
+            const list = allProducts.filter(p =>
+                baseFolderIds.includes(p.folderId) && (!weight || extractWeight(p.name) === weight)
+            );
+
             categoryPageDefaultList = list;
             const searchInput = document.getElementById('category-search-input');
             if (searchInput) searchInput.value = '';
             renderProductCardsInto(document.getElementById('category-products-container'), list);
         }
 
+        // Поиск внутри категории — с небольшой задержкой (debounce), чтобы не
+        // перестраивать всю сетку карточек на каждое нажатие клавиши подряд:
+        // на больших категориях это и было заметным источником подтормаживаний.
+        let categorySearchDebounce = null;
         function handleCategorySearch() {
-            const term = (document.getElementById('category-search-input')?.value || '').trim().toLowerCase();
-            const container = document.getElementById('category-products-container');
-            if (!term) {
-                renderProductCardsInto(container, categoryPageDefaultList);
-                return;
-            }
-            const filtered = allProducts.filter(p => p.name.toLowerCase().includes(term));
-            renderProductCardsInto(container, filtered);
+            clearTimeout(categorySearchDebounce);
+            categorySearchDebounce = setTimeout(() => {
+                const term = (document.getElementById('category-search-input')?.value || '').trim().toLowerCase();
+                const container = document.getElementById('category-products-container');
+                if (!term) {
+                    renderProductCardsInto(container, categoryPageDefaultList);
+                    return;
+                }
+                const filtered = allProducts.filter(p => p.name.toLowerCase().includes(term));
+                renderProductCardsInto(container, filtered);
+            }, 250);
         }
 
         // --- Карточки товаров (переиспользуется на главной, в поиске, в категориях) ---
@@ -799,12 +861,18 @@
             }
             // Сначала товары в наличии, потом те, которых нет в наличии
             const sortedList = [...list].sort((a, b) => (a.archived === b.archived) ? 0 : (a.archived ? 1 : -1));
+            // Карточки сначала собираем в offscreen-фрагмент и вставляем в DOM
+            // одним разом — вместо appendChild на каждый товар по отдельности.
+            // На категориях с большим числом товаров (особенно после того как
+            // в них стали попадать товары из глубоко вложенных подкатегорий)
+            // это заметно снижает число рефлоу/перерисовок при открытии.
+            const fragment = document.createDocumentFragment();
             sortedList.forEach(prod => {
                 const isFav = !!favorites[prod.id];
                 const priceOrBadgeHtml = prod.archived
                     ? `<div class="oos-badge">Нет в наличии</div>`
                     : renderCardPriceHtml(prod);
-                const imgHtml = prod.img ? `<img src="${prod.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+                const imgHtml = prod.img ? `<img src="${prod.img}" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
                 const newBadgeHtml = prod.isNew ? `<div class="new-badge">NEW</div>` : '';
                 const actionBtnHtml = prod.archived
                     ? `<button class="notify-btn" data-id="${prod.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M9.7 21a2 2 0 0 0 4.6 0"/></svg>Уведомить</button>`
@@ -842,8 +910,9 @@
                         notifyWhenAvailable(prod);
                     });
                 }
-                container.appendChild(card);
+                fragment.appendChild(card);
             });
+            container.appendChild(fragment);
         }
 
         // Кнопка "Уведомить" на карточке товара не в наличии — подписывает
@@ -936,7 +1005,7 @@
             currentDetailProductId = id;
             detailQtyValue = 1;
             const detailPage = document.getElementById('page-detail');
-            const imgHtml = prod.img ? `<img src="${prod.img}">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+            const imgHtml = prod.img ? `<img src="${prod.img}" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
             const isFav = !!favorites[prod.id];
             const hasStockLimit = typeof prod.stock === 'number';
             const stockNoteHtml = (hasStockLimit && !prod.archived && prod.stock <= 5)
@@ -1100,6 +1169,9 @@
         .subcat-strip::-webkit-scrollbar { display: none; }
         .subcat-chip { flex: 0 0 auto; padding: 8px 16px; border-radius: 20px; background: #eaeaed; color: #1c1c1e; font-size: 13.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
         .subcat-chip.active { background: #1c1c1e; color: #fff; }
+        .weight-strip { padding-top: 0; padding-bottom: 12px; }
+        .weight-strip .subcat-chip { padding: 6px 14px; font-size: 12.5px; background: #f2f2f4; }
+        .weight-strip .subcat-chip.active { background: #1c1c1e; color: #fff; }
         
         /* Product Detail */
         .product-detail-content { padding: 15px; }
