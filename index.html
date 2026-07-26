@@ -109,6 +109,19 @@
         }
 
         function goBack() {
+            // Если сейчас открыт экран категории и мы спустились в drill-down
+            // (pathIds не пустой) — "назад" сперва поднимает на один уровень
+            // вложенности внутри ТОГО ЖЕ экрана категории, а не уводит на
+            // предыдущий экран в стеке навигации. Экран категории убирается
+            // из стека только когда мы уже на самом верхнем её уровне —
+            // дальше кнопка работает как обычно.
+            const top = currentScreen();
+            if (top.type === 'category' && top.pathIds && top.pathIds.length) {
+                top.pathIds = top.pathIds.slice(0, -1);
+                top.subFolderIds = null;
+                renderCategoryScreen(top);
+                return;
+            }
             if (navStack.length <= 1) return;
             navStack.pop();
             renderScreen(currentScreen());
@@ -740,29 +753,14 @@
             renderProductCardsInto(document.getElementById('products-container'), filtered);
         }
 
-        // Достаёт грамовку из названия товара: "Black Burn 100гр" -> "100г",
-        // "Смесь 25 гр." -> "25г", "жидкость 30 мл" не трогаем (только г/гр).
-        // Возвращает null, если в названии веса нет.
-        // ВАЖНО: тут нарочно НЕ используется \b после кириллицы — в JS \b
-        // считает границей слова только [A-Za-z0-9_], поэтому "80гр" перед
-        // пробелом \b вообще не находил (оба соседних символа — "не слово"
-        // с точки зрения \b), и вес не извлекался ни из одного товара.
-        // Вместо этого — negative lookahead, чтобы не задеть более длинное
-        // слово вроде "программа".
-        function extractWeight(name) {
-            const m = (name || '').match(/(\d+(?:[.,]\d+)?)\s*г(?:р|рамм[а-я]*)?(?![a-zа-яё])/i);
-            if (!m) return null;
-            return `${m[1].replace(',', '.')}г`;
-        }
-
         // Текущее состояние страницы категории. pathIds — путь узлов от корневой
         // категории вниз (id каждого уровня drill-down), subFolderIds — выбранный
-        // ЛИСТОВОЙ чип на текущем уровне (без своих детей), weight — грамовка.
+        // ЛИСТОВОЙ чип на текущем уровне (без своих детей).
         // Всё это хранится не только здесь, но и прямо на объекте экрана в
-        // navStack (screen.pathIds / screen.subFolderIds / screen.weight),
-        // иначе при возврате "назад" (когда renderCategoryScreen вызывается
-        // заново с тем же экраном) выбор откатывался на "Все".
-        let categoryFilterState = { cat: null, pathIds: [], subFolderIds: null, weight: null };
+        // navStack (screen.pathIds / screen.subFolderIds), иначе при возврате
+        // "назад" (когда renderCategoryScreen вызывается заново с тем же
+        // экраном) выбор откатывался на "Все".
+        let categoryFilterState = { cat: null, pathIds: [], subFolderIds: null };
 
         // Спускается по дереву категорий от rootNode согласно pathIds и
         // возвращает весь путь узлов [rootNode, ..., currentNode]. Если id
@@ -780,12 +778,37 @@
             return path;
         }
 
+        // Хлебная крошка — переход сразу на несколько уровней вверх. Если
+        // соответствующие уровни есть в navStack (они туда попадают по мере
+        // спуска через navigateTo) — просто отрезаем всё лишнее сверху стека,
+        // чтобы "назад" продолжал вести себя предсказуемо. Если в стеке
+        // почему-то нет промежуточных уровней (например, после перезагрузки
+        // страницы) — просто перерисовываем текущий экран на месте.
+        function goUpToCategoryDepth(screen, depth) {
+            while (navStack.length > 1) {
+                const top = navStack[navStack.length - 1];
+                if (top.type === 'category' && top.categoryId === screen.categoryId && (top.pathIds || []).length > depth) {
+                    navStack.pop();
+                } else {
+                    break;
+                }
+            }
+            const top = navStack[navStack.length - 1];
+            if (top.type === 'category' && top.categoryId === screen.categoryId && (top.pathIds || []).length === depth) {
+                renderScreen(top);
+            } else {
+                screen.pathIds = (screen.pathIds || []).slice(0, depth);
+                screen.subFolderIds = null;
+                renderCategoryScreen(screen);
+            }
+        }
+
         // --- Страница категории ---
         // Заголовок (имя корневой категории), хлебные крошки (если спустились
         // глубже одного уровня), поиск по всему каталогу, строка подкатегорий
         // ТЕКУЩЕГО узла дерева (клик по разделу со своими детьми — спускается
         // на уровень ниже и подменяет саму строку чипов; клик по листу —
-        // просто фильтрует товары), строка грамовок и товары.
+        // просто фильтрует товары) и товары.
         function renderCategoryScreen(screen) {
             const cat = categories.find(c => c.id === screen.categoryId);
             const page = document.getElementById('page-category');
@@ -795,15 +818,11 @@
             const currentNode = path[path.length - 1];
 
             const nodeFolderIds = collectFolderIds(currentNode);
-            const nodeProducts = allProducts.filter(p => nodeFolderIds.includes(p.folderId));
-            const weightsInNode = [...new Set(nodeProducts.map(p => extractWeight(p.name)).filter(Boolean))]
-                .sort((a, b) => parseFloat(a) - parseFloat(b));
 
             categoryFilterState = {
                 cat,
                 pathIds: screen.pathIds || [],
-                subFolderIds: screen.subFolderIds || null,
-                weight: screen.weight || null
+                subFolderIds: screen.subFolderIds || null
             };
 
             const breadcrumbHtml = path.length > 1
@@ -820,17 +839,13 @@
                 <div class="search-bar"><input type="text" id="category-search-input" placeholder="Поиск товаров" oninput="handleCategorySearch()"></div>
                 ${breadcrumbHtml}
                 ${currentNode.subcategories.length ? '<div class="filter-label">Подкатегория</div><div class="subcat-strip" id="subcat-strip"></div>' : ''}
-                ${weightsInNode.length ? '<div class="filter-label">Грамовка</div><div class="subcat-strip weight-strip" id="weight-strip"></div>' : ''}
                 <div class="products-grid" id="category-products-container" style="padding:15px 12px;"></div>
             `;
 
             page.querySelectorAll('.breadcrumb-link').forEach(el => {
                 el.onclick = () => {
                     const depth = parseInt(el.dataset.depth, 10);
-                    screen.pathIds = (screen.pathIds || []).slice(0, depth);
-                    screen.subFolderIds = null;
-                    screen.weight = null;
-                    renderCategoryScreen(screen);
+                    goUpToCategoryDepth(screen, depth);
                 };
             });
 
@@ -839,7 +854,7 @@
                 const allChip = document.createElement('div');
                 allChip.className = 'subcat-chip' + (categoryFilterState.subFolderIds ? '' : ' active');
                 allChip.textContent = 'Все';
-                allChip.onclick = () => { categoryFilterState.subFolderIds = null; screen.subFolderIds = null; applyCategoryFilters(allChip, 'sub'); };
+                allChip.onclick = () => { categoryFilterState.subFolderIds = null; screen.subFolderIds = null; applyCategoryFilters(allChip); };
                 strip.appendChild(allChip);
                 currentNode.subcategories.forEach(sub => {
                     const chip = document.createElement('div');
@@ -850,61 +865,46 @@
                     chip.className = 'subcat-chip' + (isActive ? ' active' : '');
                     chip.textContent = sub.name + (sub.subcategories.length ? ' ›' : '');
                     if (sub.subcategories.length) {
-                        // У раздела есть свои подразделы — клик спускается на
-                        // уровень ниже и перестраивает всю страницу заново
-                        // (новая строка чипов для детей sub, свежие грамовки).
+                        // У раздела есть свои подразделы — спуск на уровень
+                        // ниже теперь отдельный шаг в navStack (через
+                        // navigateTo), а не перерисовка на месте. Так
+                        // телеграмовская кнопка "назад" после захода внутрь
+                        // товара (или после нескольких спусков подряд)
+                        // возвращает на ОДИН уровень вверх по дереву, а не
+                        // сразу выкидывает из категории целиком.
                         chip.onclick = () => {
-                            screen.pathIds = [...(screen.pathIds || []), sub.id];
-                            screen.subFolderIds = null;
-                            screen.weight = null;
-                            renderCategoryScreen(screen);
+                            navigateTo({
+                                type: 'category',
+                                categoryId: screen.categoryId,
+                                pathIds: [...(screen.pathIds || []), sub.id],
+                                subFolderIds: null
+                            });
                         };
                     } else {
-                        // Лист — просто фильтруем товары на месте, без спуска.
-                        chip.onclick = () => { categoryFilterState.subFolderIds = subFolderIds; screen.subFolderIds = subFolderIds; applyCategoryFilters(chip, 'sub'); };
+                        // Лист — просто фильтруем товары на месте, без спуска
+                        // и без нового шага в истории "назад".
+                        chip.onclick = () => { categoryFilterState.subFolderIds = subFolderIds; screen.subFolderIds = subFolderIds; applyCategoryFilters(chip); };
                     }
                     strip.appendChild(chip);
                 });
             }
 
-            if (weightsInNode.length) {
-                const strip = document.getElementById('weight-strip');
-                const allChip = document.createElement('div');
-                allChip.className = 'subcat-chip' + (categoryFilterState.weight ? '' : ' active');
-                allChip.textContent = 'Любая г/ка';
-                allChip.onclick = () => { categoryFilterState.weight = null; screen.weight = null; applyCategoryFilters(allChip, 'weight'); };
-                strip.appendChild(allChip);
-                weightsInNode.forEach(w => {
-                    const chip = document.createElement('div');
-                    chip.className = 'subcat-chip' + (categoryFilterState.weight === w ? ' active' : '');
-                    chip.textContent = w;
-                    chip.onclick = () => { categoryFilterState.weight = w; screen.weight = w; applyCategoryFilters(chip, 'weight'); };
-                    strip.appendChild(chip);
-                });
-            }
-
             const baseFolderIds = categoryFilterState.subFolderIds || nodeFolderIds;
-            const initialList = allProducts.filter(p =>
-                baseFolderIds.includes(p.folderId) && (!categoryFilterState.weight || extractWeight(p.name) === categoryFilterState.weight)
-            );
+            const initialList = allProducts.filter(p => baseFolderIds.includes(p.folderId));
             categoryPageDefaultList = initialList;
             renderProductCardsInto(document.getElementById('category-products-container'), initialList);
         }
 
-        // Пересчитывает список товаров из текущей комбинации подкатегория+грамовка
-        // (в рамках текущего узла drill-down) и подсвечивает активный чип в
-        // соответствующей строке ('sub' или 'weight').
-        function applyCategoryFilters(chipEl, stripKind) {
-            const stripId = stripKind === 'sub' ? '#subcat-strip' : '#weight-strip';
-            document.querySelectorAll(`${stripId} .subcat-chip`).forEach(c => c.classList.remove('active'));
+        // Пересчитывает список товаров из выбранной подкатегории (в рамках
+        // текущего узла drill-down) и подсвечивает активный чип.
+        function applyCategoryFilters(chipEl) {
+            document.querySelectorAll('#subcat-strip .subcat-chip').forEach(c => c.classList.remove('active'));
             chipEl.classList.add('active');
 
-            const { cat, pathIds, subFolderIds, weight } = categoryFilterState;
+            const { cat, pathIds, subFolderIds } = categoryFilterState;
             const currentNode = resolveCategoryPath(cat, pathIds).pop();
             const baseFolderIds = subFolderIds || collectFolderIds(currentNode);
-            const list = allProducts.filter(p =>
-                baseFolderIds.includes(p.folderId) && (!weight || extractWeight(p.name) === weight)
-            );
+            const list = allProducts.filter(p => baseFolderIds.includes(p.folderId));
 
             categoryPageDefaultList = list;
             const searchInput = document.getElementById('category-search-input');
@@ -931,7 +931,14 @@
         }
 
         // --- Карточки товаров (переиспользуется на главной, в поиске, в категориях) ---
+        // Уникальный токен текущего рендера — если пока идёт порционная
+        // отрисовка большого списка пользователь успел уйти на другой экран
+        // или переключить фильтр, оставшиеся порции старого рендера должны
+        // молча остановиться, а не дописываться поверх нового контейнера.
+        let productRenderToken = 0;
+
         function renderProductCardsInto(container, list) {
+            const myToken = ++productRenderToken;
             container.innerHTML = '';
             if (!list.length) {
                 container.innerHTML = '<div class="empty-state">Ничего не найдено</div>';
@@ -939,13 +946,8 @@
             }
             // Сначала товары в наличии, потом те, которых нет в наличии
             const sortedList = [...list].sort((a, b) => (a.archived === b.archived) ? 0 : (a.archived ? 1 : -1));
-            // Карточки сначала собираем в offscreen-фрагмент и вставляем в DOM
-            // одним разом — вместо appendChild на каждый товар по отдельности.
-            // На категориях с большим числом товаров (особенно после того как
-            // в них стали попадать товары из глубоко вложенных подкатегорий)
-            // это заметно снижает число рефлоу/перерисовок при открытии.
-            const fragment = document.createDocumentFragment();
-            sortedList.forEach(prod => {
+
+            function buildCard(prod) {
                 const isFav = !!favorites[prod.id];
                 const priceOrBadgeHtml = prod.archived
                     ? `<div class="oos-badge">Нет в наличии</div>`
@@ -988,9 +990,31 @@
                         notifyWhenAvailable(prod);
                     });
                 }
-                fragment.appendChild(card);
-            });
-            container.appendChild(fragment);
+                return card;
+            }
+
+            // Первая порция (то, что и так поместится на экране) строится и
+            // вставляется сразу — открытие категории не ждёт всех товаров.
+            // Остальное дорисовывается порциями по requestAnimationFrame —
+            // раньше весь список (в т.ч. огромные категории вроде "Кальянные
+            // смеси" со всеми вложенными подкатегориями) строился одним
+            // синхронным циклом и на секунду-две "вешал" интерфейс при
+            // открытии.
+            const CHUNK_SIZE = 24;
+            let index = 0;
+            function renderNextChunk() {
+                if (myToken !== productRenderToken) return; // отменено более новым рендером
+                const fragment = document.createDocumentFragment();
+                const end = Math.min(index + CHUNK_SIZE, sortedList.length);
+                for (; index < end; index++) {
+                    fragment.appendChild(buildCard(sortedList[index]));
+                }
+                container.appendChild(fragment);
+                if (index < sortedList.length) {
+                    requestAnimationFrame(renderNextChunk);
+                }
+            }
+            renderNextChunk();
         }
 
         // Кнопка "Уведомить" на карточке товара не в наличии — подписывает
@@ -1247,9 +1271,6 @@
         .subcat-strip::-webkit-scrollbar { display: none; }
         .subcat-chip { flex: 0 0 auto; padding: 8px 16px; border-radius: 20px; background: #eaeaed; color: #1c1c1e; font-size: 13.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
         .subcat-chip.active { background: #1c1c1e; color: #fff; }
-        .weight-strip { padding-top: 0; padding-bottom: 12px; }
-        .weight-strip .subcat-chip { padding: 6px 14px; font-size: 12.5px; background: #f2f2f4; }
-        .weight-strip .subcat-chip.active { background: #1c1c1e; color: #fff; }
         .filter-label { padding: 0 15px 6px 15px; font-size: 12px; font-weight: 700; color: #9a9a9e; text-transform: uppercase; letter-spacing: 0.03em; }
         .breadcrumb-strip { padding: 0 15px 12px 15px; font-size: 13px; color: #8a8a8e; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
         .breadcrumb-link { cursor: pointer; color: #007aff; font-weight: 600; }
