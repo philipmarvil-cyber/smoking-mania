@@ -954,6 +954,7 @@
             margin: 0;
             height: 100%;
             overflow-x: hidden;
+            touch-action: pan-y; /* явно разрешаем вертикальный тач-скролл — на некоторых Android WebView это иначе остаётся неоднозначным и браузер его не запускает */
         }
         /* Основные стили */
         body { 
@@ -966,6 +967,7 @@
             box-sizing: border-box; 
             overflow-x: hidden;
             width: 100%;
+            touch-action: pan-y;
         }
         
         /* Стили для шапки: увеличенный отступ сверху и центрирование */
@@ -1188,7 +1190,7 @@
         .nav-icon-wrap { position: relative; display: block; width: 24px; margin: 0 auto 2px; }
         .nav-icon-wrap svg { margin: 0; display: block; }
         .cart-badge { position: absolute; top: -4px; right: -9px; background: #e0245e; color: #fff; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: none; align-items: center; justify-content: center; padding: 0 4px; }
-        .page { display: none; }
+        .page { display: none; touch-action: pan-y; }
         .page.active { display: block; }
 
         /* Age verification overlay */
