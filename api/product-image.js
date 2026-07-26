@@ -3,7 +3,17 @@
 // подставить его в <img src>, поэтому раньше вместо фото показывались "битые картинки"
 // (те самые кубики). Этот эндпоинт сам ходит в МойСклад с токеном, забирает байты
 // и отдаёт их браузеру уже как обычный файл, без всякой авторизации с его стороны.
-import { API, fetchJson, fetchBinary, kvGetJson, kvSetJson } from './_catalog-lib.js';
+//
+// ВАЖНО: раньше ссылка на файл (если её не было в персональном 7-дневном кэше)
+// добывалась отдельным живым запросом GET /entity/product/{id}/images на КАЖДЫЙ
+// показ картинки нового/непрокэшированного товара. При одновременной загрузке
+// каталога у многих пользователей это давало всплеск таких запросов — именно
+// он и привёл к ограничению доступа к API со стороны МойСклад. Теперь ссылки на
+// картинки ВСЕХ товаров собираются разом при полной синхронизации (см.
+// loadCatalogData) и лежат одной картой в KV — сюда идём в первую очередь, и
+// живой запрос к МойСклад делаем только для товаров, которых в этой карте
+// почему-то ещё нет (например, совсем новый товар между синхронизациями).
+import { API, fetchJson, fetchBinary, kvGetJson, kvSetJson, getImageHrefsMap } from './_catalog-lib.js';
 
 const HREF_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 дней — сама ссылка на файл в МойСклад стабильна
 
@@ -15,14 +25,21 @@ export default async function handler(req, res) {
     }
 
     try {
-        const cacheKey = `imghref:${id}`;
-        const cached = await kvGetJson(cacheKey);
-        let href = cached && (Date.now() - cached.at) < HREF_TTL_MS ? cached.href : null;
+        const hrefMap = await getImageHrefsMap();
+        let href = hrefMap.hasOwnProperty(id) ? hrefMap[id] : null;
 
         if (href === null) {
-            const data = await fetchJson(`${API}/entity/product/${id}/images?limit=1`);
-            href = data?.rows?.[0]?.miniature?.downloadHref || '';
-            await kvSetJson(cacheKey, { href, at: Date.now() });
+            // Товара нет в карте — редкий случай, идём в МойСклад напрямую,
+            // и на всякий случай тоже кэшируем результат на 7 дней.
+            const cacheKey = `imghref:${id}`;
+            const cached = await kvGetJson(cacheKey);
+            href = cached && (Date.now() - cached.at) < HREF_TTL_MS ? cached.href : undefined;
+
+            if (href === undefined) {
+                const data = await fetchJson(`${API}/entity/product/${id}/images?limit=1`);
+                href = data?.rows?.[0]?.miniature?.downloadHref || '';
+                await kvSetJson(cacheKey, { href, at: Date.now() });
+            }
         }
 
         if (!href) {
