@@ -10,16 +10,11 @@
         const tg = window.Telegram.WebApp;
         tg.ready(); tg.expand();
         tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#f2f2f7');
-        // На Android оставляем вертикальные свайпы включёнными (свайп вниз
-        // сможет свернуть мини-аппу у самого верха экрана — штатное
-        // поведение Telegram); на iOS/десктопе отключаем как обычно.
-        // Настоящей причиной поломки скролла оказался overscroll-behavior
-        // на body (см. ниже), это лишь сохранившийся из отладки выбор.
-        if (tg.platform === 'android' && tg.enableVerticalSwipes) {
-            tg.enableVerticalSwipes();
-        } else if (tg.isVerticalSwipesEnabled) {
-            tg.disableVerticalSwipes();
-        }
+        // Отключаем свайп-закрытие мини-аппы на всех платформах — настоящей
+        // причиной поломки скролла на Android был overscroll-behavior (уже
+        // исправлено), а не этот флаг, так что можно спокойно вернуть его
+        // как было изначально.
+        if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
         tg.enableClosingConfirmation();
         // ЭКСПЕРИМЕНТ: раньше здесь requestFullscreen() специально пропускался
         // на Android — считалось, что он ломает скролл. Но реальная картина
@@ -48,14 +43,9 @@
                 isScrollable ? '' : 'important'
             );
             // Переподтверждаем на каждой отрисовке экрана (не только один раз
-            // при запуске) — похоже, Android-клиент Telegram может
-            // пересматривать этот флаг сам по себе при изменении контента,
-            // поэтому держим то же значение, что выбрали при старте.
-            if (tg.platform === 'android' && tg.enableVerticalSwipes) {
-                tg.enableVerticalSwipes();
-            } else if (tg.isVerticalSwipesEnabled) {
-                tg.disableVerticalSwipes();
-            }
+            // при запуске) на случай, если Telegram сам пересматривает флаг
+            // при изменении контента.
+            if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
         }
         function preventScrollCollapse() {
             if (window.scrollY === 0) window.scrollTo(0, 1);
