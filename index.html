@@ -1003,7 +1003,7 @@
             background: transparent; 
             font-weight: 700; 
             font-size: 18px; 
-            position: relative; /* Было position: sticky — убрали во время поиска причины бага со скроллом на Android. Подтверждённая причина оказалась в overscroll-behavior (см. ниже), так что прилипание шапки при скролле, возможно, можно будет вернуть — не проверяли отдельно. */
+            position: sticky; /* Возвращено обратно — настоящей причиной бага со скроллом на Android был overscroll-behavior (см. ниже), не это свойство. */
             top: 0;
             z-index: 1000;
             border-bottom: 1px solid transparent;
