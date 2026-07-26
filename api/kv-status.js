@@ -2,7 +2,7 @@
 // https://ваш-домен.vercel.app/api/kv-status), чтобы проверить,
 // действительно ли настроено и работает хранилище KV, а не только
 // заданы переменные окружения.
-import { isKvConfigured, kvGetJson, kvSetJson, kvGetCatalog } from './_catalog-lib.js';
+import { isKvConfigured, kvGetJson, kvSetJson, kvGetCatalog, isTelegramConfigured } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     const envConfigured = isKvConfigured();
@@ -36,6 +36,7 @@ export default async function handler(req, res) {
         envVarsPresent: envConfigured, // заданы ли KV_REST_API_URL/TOKEN (или UPSTASH_* аналоги) в Vercel
         readWriteWorks,               // реально ли получилось записать и прочитать тестовое значение
         readWriteError,
-        cachedCatalog: catalogInfo     // что сейчас лежит в кэше каталога, и когда он последний раз синхронизировался
+        cachedCatalog: catalogInfo,    // что сейчас лежит в кэше каталога, и когда он последний раз синхронизировался
+        telegramBotTokenPresent: isTelegramConfigured() // нужен для уведомлений о статусе заказа и о поступлении товара
     });
 }
