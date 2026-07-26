@@ -143,7 +143,7 @@
                 renderAccount();
             } else if (screen.type === 'category') {
                 document.getElementById('page-category').classList.add('active');
-                renderCategoryScreen(screen.categoryId);
+                renderCategoryScreen(screen);
             } else if (screen.type === 'detail') {
                 document.getElementById('page-detail').classList.add('active');
                 renderProductDetail(screen.productId);
@@ -751,6 +751,11 @@
 
         // Текущее состояние фильтров на странице категории — нужно, чтобы
         // подкатегория и грамовка комбинировались, а не сбрасывали друг друга.
+        // Хранится не только здесь, но и прямо на объекте экрана в navStack
+        // (screen.subFolderIds / screen.weight), иначе при возврате "назад"
+        // (когда renderCategoryScreen вызывается заново с тем же экраном)
+        // выбор откатывался на "Все" — сам факт, что это уже посещённый экран,
+        // а не новый заход в категорию, терялся.
         let categoryFilterState = { cat: null, subFolderIds: null, weight: null };
 
         // --- Страница категории ---
@@ -758,8 +763,8 @@
         // горизонтальная строка подкатегорий (если есть), строка грамовок
         // (если у товаров категории она встречается) и товары ниже —
         // без перехода на отдельный экран подкатегории.
-        function renderCategoryScreen(categoryId) {
-            const cat = categories.find(c => c.id === categoryId);
+        function renderCategoryScreen(screen) {
+            const cat = categories.find(c => c.id === screen.categoryId);
             const page = document.getElementById('page-category');
             if (!cat) { page.innerHTML = ''; return; }
 
@@ -768,29 +773,39 @@
             const weightsInCat = [...new Set(allInCat.map(p => extractWeight(p.name)).filter(Boolean))]
                 .sort((a, b) => parseFloat(a) - parseFloat(b));
 
-            categoryFilterState = { cat, subFolderIds: null, weight: null };
+            // Если на этот экран уже заходили и что-то выбирали (subFolderIds/weight
+            // сохранены на screen из прошлого раза) — продолжаем с того же места,
+            // а не сбрасываем на "Все".
+            categoryFilterState = {
+                cat,
+                subFolderIds: screen.subFolderIds || null,
+                weight: screen.weight || null
+            };
 
             page.innerHTML = `
                 <div class="header" style="margin-top:0;"><span>${cat.name}</span></div>
                 <div class="search-bar"><input type="text" id="category-search-input" placeholder="Поиск товаров" oninput="handleCategorySearch()"></div>
-                ${cat.subcategories.length ? '<div class="subcat-strip" id="subcat-strip"></div>' : ''}
-                ${weightsInCat.length ? '<div class="subcat-strip weight-strip" id="weight-strip"></div>' : ''}
+                ${cat.subcategories.length ? '<div class="filter-label">Подкатегория</div><div class="subcat-strip" id="subcat-strip"></div>' : ''}
+                ${weightsInCat.length ? '<div class="filter-label">Грамовка</div><div class="subcat-strip weight-strip" id="weight-strip"></div>' : ''}
                 <div class="products-grid" id="category-products-container" style="padding:15px 12px;"></div>
             `;
 
             if (cat.subcategories.length) {
                 const strip = document.getElementById('subcat-strip');
                 const allChip = document.createElement('div');
-                allChip.className = 'subcat-chip active';
+                allChip.className = 'subcat-chip' + (categoryFilterState.subFolderIds ? '' : ' active');
                 allChip.textContent = 'Все';
-                allChip.onclick = () => { categoryFilterState.subFolderIds = null; applyCategoryFilters(allChip, 'sub'); };
+                allChip.onclick = () => { categoryFilterState.subFolderIds = null; screen.subFolderIds = null; applyCategoryFilters(allChip, 'sub'); };
                 strip.appendChild(allChip);
                 cat.subcategories.forEach(sub => {
                     const chip = document.createElement('div');
-                    chip.className = 'subcat-chip';
-                    chip.textContent = sub.name;
                     const subFolderIds = collectFolderIds(sub);
-                    chip.onclick = () => { categoryFilterState.subFolderIds = subFolderIds; applyCategoryFilters(chip, 'sub'); };
+                    const isActive = categoryFilterState.subFolderIds &&
+                        categoryFilterState.subFolderIds.length === subFolderIds.length &&
+                        categoryFilterState.subFolderIds.every(id => subFolderIds.includes(id));
+                    chip.className = 'subcat-chip' + (isActive ? ' active' : '');
+                    chip.textContent = sub.name;
+                    chip.onclick = () => { categoryFilterState.subFolderIds = subFolderIds; screen.subFolderIds = subFolderIds; applyCategoryFilters(chip, 'sub'); };
                     strip.appendChild(chip);
                 });
             }
@@ -798,21 +813,25 @@
             if (weightsInCat.length) {
                 const strip = document.getElementById('weight-strip');
                 const allChip = document.createElement('div');
-                allChip.className = 'subcat-chip active';
+                allChip.className = 'subcat-chip' + (categoryFilterState.weight ? '' : ' active');
                 allChip.textContent = 'Любая г/ка';
-                allChip.onclick = () => { categoryFilterState.weight = null; applyCategoryFilters(allChip, 'weight'); };
+                allChip.onclick = () => { categoryFilterState.weight = null; screen.weight = null; applyCategoryFilters(allChip, 'weight'); };
                 strip.appendChild(allChip);
                 weightsInCat.forEach(w => {
                     const chip = document.createElement('div');
-                    chip.className = 'subcat-chip';
+                    chip.className = 'subcat-chip' + (categoryFilterState.weight === w ? ' active' : '');
                     chip.textContent = w;
-                    chip.onclick = () => { categoryFilterState.weight = w; applyCategoryFilters(chip, 'weight'); };
+                    chip.onclick = () => { categoryFilterState.weight = w; screen.weight = w; applyCategoryFilters(chip, 'weight'); };
                     strip.appendChild(chip);
                 });
             }
 
-            categoryPageDefaultList = allInCat;
-            renderProductCardsInto(document.getElementById('category-products-container'), allInCat);
+            const baseFolderIds = categoryFilterState.subFolderIds || allCatFolderIds;
+            const initialList = allProducts.filter(p =>
+                baseFolderIds.includes(p.folderId) && (!categoryFilterState.weight || extractWeight(p.name) === categoryFilterState.weight)
+            );
+            categoryPageDefaultList = initialList;
+            renderProductCardsInto(document.getElementById('category-products-container'), initialList);
         }
 
         // Пересчитывает список товаров из текущей комбинации подкатегория+грамовка
@@ -1172,6 +1191,7 @@
         .weight-strip { padding-top: 0; padding-bottom: 12px; }
         .weight-strip .subcat-chip { padding: 6px 14px; font-size: 12.5px; background: #f2f2f4; }
         .weight-strip .subcat-chip.active { background: #1c1c1e; color: #fff; }
+        .filter-label { padding: 0 15px 6px 15px; font-size: 12px; font-weight: 700; color: #9a9a9e; text-transform: uppercase; letter-spacing: 0.03em; }
         
         /* Product Detail */
         .product-detail-content { padding: 15px; }
