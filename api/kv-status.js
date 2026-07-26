@@ -32,11 +32,28 @@ export default async function handler(req, res) {
         catalogInfo = { error: e.message };
     }
 
+    let webhookInfo = null;
+    try {
+        const lastEvent = await kvGetJson('last-webhook-event');
+        const lastRefresh = await kvGetJson('last-stock-refresh');
+        webhookInfo = {
+            lastWebhookEvent: lastEvent ? { ...lastEvent, at: new Date(lastEvent.at).toISOString() } : null,
+            lastStockRefresh: lastRefresh ? { ...lastRefresh, at: new Date(lastRefresh.at).toISOString() } : null
+        };
+    } catch (e) {
+        webhookInfo = { error: e.message };
+    }
+
     res.status(200).json({
         envVarsPresent: envConfigured, // заданы ли KV_REST_API_URL/TOKEN (или UPSTASH_* аналоги) в Vercel
         readWriteWorks,               // реально ли получилось записать и прочитать тестовое значение
         readWriteError,
         cachedCatalog: catalogInfo,    // что сейчас лежит в кэше каталога, и когда он последний раз синхронизировался
-        telegramBotTokenPresent: isTelegramConfigured() // нужен для уведомлений о статусе заказа и о поступлении товара
+        telegramBotTokenPresent: isTelegramConfigured(), // нужен для уведомлений о статусе заказа и о поступлении товара
+        // lastWebhookEvent — дошло ли вообще от МойСклад последнее событие по заказу,
+        // и что в нём было (тип/действие). lastStockRefresh — чем закончилась попытка
+        // обновить остатки после этого события (result:false = сработал кулдаун 3 минуты
+        // или отчёт не удалось получить; result:true = остатки обновлены).
+        ...webhookInfo
     });
 }
