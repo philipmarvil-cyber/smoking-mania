@@ -12,7 +12,35 @@
         tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#f2f2f7');
         if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
         tg.enableClosingConfirmation();
-        try { tg.requestFullscreen(); } catch (e) {}
+        // requestFullscreen() на Android-клиенте Telegram (в ряде версий) ломает
+        // тач-скролл внутри WebView — каталог перестаёт листаться пальцем,
+        // хотя на iOS всё нормально. Включаем полноэкранный режим только там,
+        // где он не ломает скролл.
+        if (tg.platform !== 'android') {
+            try { tg.requestFullscreen(); } catch (e) {}
+        }
+        const telegramUserId = tg.initDataUnsafe?.user?.id || null;
+
+        // --- Фикс "коллапса" мини-аппы при скролле на Android ---
+        // Известная особенность Telegram Mini Apps: если документ по высоте
+        // равен вьюпорту (нечего скроллить) или scrollY ровно 0, свайп вниз
+        // Telegram интерпретирует как жест сворачивания приложения, а не как
+        // скролл контента — палец "не листает" каталог. disableVerticalSwipes()
+        // выше не всегда полностью снимает эту особенность на Android
+        // (зависит от версии клиента), поэтому добавляем ещё и эту защиту.
+        function ensureDocumentIsScrollable() {
+            const isScrollable = document.documentElement.scrollHeight > window.innerHeight;
+            document.documentElement.style.setProperty(
+                'height',
+                isScrollable ? '' : 'calc(100vh + 1px)',
+                isScrollable ? '' : 'important'
+            );
+        }
+        function preventScrollCollapse() {
+            if (window.scrollY === 0) window.scrollTo(0, 1);
+        }
+        window.addEventListener('load', ensureDocumentIsScrollable);
+        document.addEventListener('touchstart', preventScrollCollapse, { passive: true });
 
         // --- Состояние магазина ---
         let allProducts = [];   // все товары, полученные со склада
@@ -106,6 +134,9 @@
             } else if (screen.type === 'detail') {
                 document.getElementById('page-detail').classList.add('active');
                 renderProductDetail(screen.productId);
+            } else if (screen.type === 'orders') {
+                document.getElementById('page-orders').classList.add('active');
+                renderOrdersPage();
             }
 
             const tabIndex = NAV_TAB_INDEX[screen.type];
@@ -116,6 +147,7 @@
 
             window.scrollTo(0, screen.scrollY || 0);
             document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', (screen.scrollY || 0) > 10));
+            ensureDocumentIsScrollable();
 
             if (navStack.length > 1) {
                 tg.BackButton.show();
@@ -183,6 +215,67 @@
         }
         function persistFavorites() {
             if (tg.CloudStorage) tg.CloudStorage.setItem('favorites_v1', JSON.stringify(favorites), () => {});
+        }
+
+        // --- Мои заказы: список последних заказов клиента, хранится на
+        // устройстве через CloudStorage (сами статусы всегда подгружаются
+        // свежими с сервера при открытии страницы, тут только id/название). ---
+        function saveOrderLocally(orderId, orderName) {
+            if (!tg.CloudStorage || !orderId) return;
+            tg.CloudStorage.getItem('my_orders_v1', (err, value) => {
+                let list = [];
+                if (!err && value) { try { list = JSON.parse(value); } catch (e) {} }
+                list = [{ id: orderId, name: orderName }, ...list.filter(o => o.id !== orderId)].slice(0, 20);
+                tg.CloudStorage.setItem('my_orders_v1', JSON.stringify(list), () => {});
+            });
+        }
+
+        function renderOrdersPage() {
+            const container = document.getElementById('orders-content');
+            container.innerHTML = '<div class="empty-state">Загружаем заказы…</div>';
+
+            if (!tg.CloudStorage) {
+                container.innerHTML = '<div class="empty-state">Список заказов недоступен</div>';
+                return;
+            }
+
+            tg.CloudStorage.getItem('my_orders_v1', async (err, value) => {
+                let localOrders = [];
+                if (!err && value) { try { localOrders = JSON.parse(value); } catch (e) {} }
+
+                const ids = localOrders.map(o => o.id);
+                if (!ids.length && !telegramUserId) {
+                    container.innerHTML = '<div class="empty-state">Заказов пока нет</div>';
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/my-orders', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids, telegramUserId })
+                    });
+                    const data = await response.json();
+                    if (!response.ok || !data.success || !data.orders.length) {
+                        container.innerHTML = '<div class="empty-state">Заказов пока нет</div>';
+                        return;
+                    }
+                    container.innerHTML = data.orders.map(o => `
+                        <div class="order-card">
+                            <div class="order-card-top">
+                                <span class="order-card-name">Заказ №${o.name}</span>
+                                <span class="order-card-status"${o.stateColor ? ` style="background:${o.stateColor}22;color:${o.stateColor}"` : ''}>${o.stateName}</span>
+                            </div>
+                            <div class="order-card-bottom">
+                                <span>${new Date(o.moment).toLocaleDateString('ru-RU')}</span>
+                                <span>${o.sum.toLocaleString()} ₽</span>
+                            </div>
+                        </div>
+                    `).join('');
+                } catch (e) {
+                    container.innerHTML = '<div class="empty-state">Не удалось загрузить заказы</div>';
+                }
+            });
         }
         function loadCartAndFavorites(callback) {
             if (!tg.CloudStorage) { callback && callback(); return; }
@@ -451,7 +544,8 @@
                             qty: i.qty
                         })),
                         customerName,
-                        phone
+                        phone,
+                        telegramUserId
                     })
                 });
                 const data = await response.json();
@@ -461,6 +555,7 @@
                 cart = {};
                 persistCart();
                 updateCartBadge();
+                saveOrderLocally(data.orderId, data.orderName);
 
                 // Клиент грузит каталог только один раз при запуске мини-аппы и
                 // больше не перезапрашивает его в течение сессии — поэтому без
@@ -715,9 +810,9 @@
             });
         }
 
-        // Кнопка "Уведомить" на карточке товара не в наличии.
-        // Пока это просто подтверждение пользователю — самой рассылки уведомлений
-        // при поступлении товара в системе ещё нет, это отдельная задача на бэкенд.
+        // Кнопка "Уведомить" на карточке товара не в наличии — подписывает
+        // пользователя на разовое сообщение в Telegram, когда sync-catalog
+        // в следующий раз увидит, что товар снова есть в наличии.
         function notifyWhenAvailable(prod) {
             tg.HapticFeedback?.notificationOccurred('success');
             const message = `Сообщим, когда «${prod.name}» появится в наличии.`;
@@ -726,6 +821,12 @@
             } else {
                 alert(message);
             }
+            if (!telegramUserId) return; // без Telegram id подписку не на что оформлять
+            fetch('/api/notify-restock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ productId: prod.id, telegramUserId })
+            }).catch(() => {});
         }
 
         // Компактный блок цены на карточке товара (главная/категория/поиск):
@@ -1068,6 +1169,12 @@
         .account-link-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-top: 1px solid #f0f0f0; font-size: 14px; cursor: pointer; }
         .account-link-row:first-child { border-top: none; }
         .account-link-row .count { color: #8e8e93; }
+        .orders-content { padding: 15px; }
+        .order-card { background: #fff; border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; }
+        .order-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
+        .order-card-name { font-weight: 700; font-size: 14.5px; }
+        .order-card-status { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px; background: #f2f2f7; color: #636366; white-space: nowrap; }
+        .order-card-bottom { display: flex; justify-content: space-between; font-size: 13px; color: #8e8e93; }
         
         .nav-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 65px; background: #fff; display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #e5e5ea; z-index: 1000; padding-bottom: env(safe-area-inset-bottom); }
         .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
@@ -1195,6 +1302,10 @@
                 <button class="account-phone-btn" id="account-phone-btn" onclick="requestPhone()">Подтвердить номер через Telegram</button>
             </div>
             <div class="account-card" style="text-align:left;">
+                <div class="account-link-row" onclick="navigateTo({type:'orders'})">
+                    <span>Мои заказы</span>
+                    <span class="count">→</span>
+                </div>
                 <div class="account-link-row" onclick="switchTab('favorites')">
                     <span>Избранное</span>
                     <span class="count" id="account-fav-count">0</span>
@@ -1209,6 +1320,11 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <div id="page-orders" class="page">
+        <div class="header"><span>Мои заказы</span></div>
+        <div class="orders-content" id="orders-content"></div>
     </div>
 
     <!-- Навигация -->
