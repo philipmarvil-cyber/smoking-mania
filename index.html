@@ -1388,37 +1388,25 @@
 
         // Эти категории убраны из витрины полностью (по просьбе) — их товары
         // остаются доступны через поиск и на главной, но плитки категорий нет.
-        const REMOVED_CATEGORY_NAMES = ['жевательный табак', 'самокруточный табак', 'жидкости'];
-
+        // Скрытые категории (и товары в них, на любой глубине вложенности)
+        // теперь полностью исключаются на сервере (см. HIDDEN_CATEGORY_NAMES
+        // в api/_catalog-lib.js) — сервер просто не присылает их вообще, ни
+        // в products, ни в categories. Раньше это же пытались делать здесь,
+        // на фронте, но по неполному списку и только для прямых подкатегорий,
+        // из-за чего товары более глубоко вложенных или забытых в списке
+        // категорий всё равно просачивались в поиск.
         function applyCatalog(data) {
-            const rawCategories = data.categories || [];
-            // Товары скрытых категорий раньше всё равно попадали в поиск —
-            // сама категория была скрыта из списка для просмотра, но товары
-            // внутри нее не исключались из allProducts (а именно оттуда
-            // ищет поиск), поэтому находились через поиск как ни в чём не
-            // бывало. Теперь исключаем такие товары целиком, вместе с их
-            // подкатегориями.
-            const removedFolderIds = new Set();
-            rawCategories.forEach(c => {
-                if (REMOVED_CATEGORY_NAMES.includes((c.name || '').trim().toLowerCase())) {
-                    removedFolderIds.add(c.id);
-                    (c.subcategories || []).forEach(sub => removedFolderIds.add(sub.id));
-                }
-            });
-
-            allProducts = (data.products || [])
-                .filter(prod => !removedFolderIds.has(prod.folderId || null))
-                .map(prod => ({
-                    id: prod.id,
-                    name: prod.name,
-                    price: prod.price || 0,
-                    img: prod.img || '',
-                    archived: !!prod.outOfStock,
-                    folderId: prod.folderId || null,
-                    isNew: !!prod.isNew,
-                    stock: (typeof prod.stock === 'number') ? prod.stock : null // null = учёт остатков выключен в МойСклад — лимита нет
-                }));
-            categories = rawCategories.filter(c => !REMOVED_CATEGORY_NAMES.includes((c.name || '').trim().toLowerCase()));
+            allProducts = (data.products || []).map(prod => ({
+                id: prod.id,
+                name: prod.name,
+                price: prod.price || 0,
+                img: prod.img || '',
+                archived: !!prod.outOfStock,
+                folderId: prod.folderId || null,
+                isNew: !!prod.isNew,
+                stock: (typeof prod.stock === 'number') ? prod.stock : null // null = учёт остатков выключен в МойСклад — лимита нет
+            }));
+            categories = data.categories || [];
             renderScreen(currentScreen());
         }
 
