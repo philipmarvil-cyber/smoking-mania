@@ -172,6 +172,32 @@ export async function fetchBinary(url) {
     };
 }
 
+// Сравнивает старое/новое состояние остатков и рассылает уведомления тем,
+// кто нажимал "Уведомить о поступлении" для товара, который был "нет в
+// наличии", а теперь снова доступен. Общая логика для sync-catalog.js
+// (полная синхронизация) И refreshAllStock (лёгкое обновление по вебхуку/
+// при обычной загрузке каталога) — раньше это умела делать только полная
+// синхронизация, и уведомления не приходили, если остаток обновлялся
+// только "лёгким" путём.
+export async function notifyRestockedProducts(oldById, newProducts) {
+    let notified = 0;
+    const restocked = newProducts.filter(p => {
+        const before = oldById[p.id];
+        return before && before.outOfStock && !p.outOfStock;
+    });
+    for (const product of restocked) {
+        const key = `restock:${product.id}`;
+        const subscribers = await kvGetJson(key);
+        if (!subscribers || !subscribers.length) continue;
+        await Promise.all(subscribers.map(chatId =>
+            sendTelegramMessage(chatId, `✅ «${product.name}» снова в наличии!`)
+        ));
+        notified += subscribers.length;
+        await kvSetJson(key, []);
+    }
+    return { restockedCount: restocked.length, notified };
+}
+
 // =====================================================================
 // Лёгкое обновление ТОЛЬКО остатков в уже закэшированном каталоге — без
 // картинок, папок и т.п. Не ждём ночную полную синхронизацию: дёргаем
@@ -207,6 +233,11 @@ export async function refreshAllStock() {
     });
     const stockReportHasData = stockRows.length > 0;
 
+    // Снимок "было" — до перезаписи — нужен, чтобы понять, какие товары
+    // именно СЕЙЧАС появились в наличии (а не просто были в наличии всегда).
+    const beforeById = {};
+    catalog.products.forEach(p => { beforeById[p.id] = { outOfStock: p.outOfStock }; });
+
     catalog.products.forEach(product => {
         const stock = stockById.hasOwnProperty(product.id)
             ? stockById[product.id]
@@ -215,7 +246,13 @@ export async function refreshAllStock() {
         product.outOfStock = stock === null ? false : stock <= 0;
     });
 
-    return kvSetCatalog(catalog);
+    const saved = await kvSetCatalog(catalog);
+    // Уведомляем подписавшихся на "Уведомить о поступлении" — раньше это
+    // делала только ночная полная синхронизация, и уведомления не приходили,
+    // если остаток обновлялся этим "лёгким" путём (через вебхук или при
+    // обычной загрузке каталога).
+    await notifyRestockedProducts(beforeById, catalog.products).catch(() => {});
+    return saved;
 }
 
 // =====================================================================
