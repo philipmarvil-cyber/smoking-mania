@@ -18,6 +18,7 @@ const CATALOG_KEY = 'catalog:v2'; // v2 — формат стал компакт
 // При самом первом запуске все существующие товары получают метку BASELINE (0)
 // и не считаются новинками. Новинки — только то, что появилось после.
 const FIRST_SEEN_KEY = 'product-first-seen:v1';
+const IMAGE_HREFS_KEY = 'image-hrefs:v1';
 const BASELINE = 0;
 
 const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
@@ -247,6 +248,7 @@ export async function loadCatalogData() {
     const isFirstRun = !firstSeenStored;
     const firstSeen = firstSeenStored || {};
     const updatedFirstSeen = {};
+    const imageHrefs = {};
 
     // Компактный формат: только те поля, которые реально использует фронтенд.
     // Полные объекты МойСклад весят в ~20 раз больше и тормозят загрузку.
@@ -268,7 +270,9 @@ export async function loadCatalogData() {
         // не может подставить его в <img src>, поэтому раньше вместо фото показывались
         // "битые картинки" (кубики). Отдаём фронту не сам downloadHref, а свой прокси-урл:
         // /api/product-image сам сходит в МойСклад с токеном и отдаст готовый файл.
-        const hasPhoto = !!product.images?.rows?.[0];
+        const imageRow = product.images?.rows?.[0];
+        const hasPhoto = !!imageRow;
+        if (hasPhoto) imageHrefs[product.id] = imageRow.miniature?.downloadHref || '';
 
         return {
             id: product.id,
@@ -283,6 +287,12 @@ export async function loadCatalogData() {
     });
 
     await kvSetJson(FIRST_SEEN_KEY, updatedFirstSeen);
+    // Ссылки на картинки уже пришли вместе с товарами (expand=images) — сохраняем
+    // их все ОДНИМ запросом в KV. Это значит, что /api/product-image почти никогда
+    // не должен сам ходить в МойСклад за ссылкой — только доставать готовую отсюда.
+    // Раньше он делал это поштучно "по требованию" для каждого товара, и именно
+    // всплеск таких запросов (GET .../images) привёл к ограничению доступа к API.
+    await kvSetJson(IMAGE_HREFS_KEY, imageHrefs);
 
     const categories = buildCategoryTree(folderRows);
     return { products, categories };
@@ -291,6 +301,13 @@ export async function loadCatalogData() {
 export function extractId(href) {
     if (!href) return null;
     return href.split('/').pop().split('?')[0];
+}
+
+// Карта id товара → готовая ссылка на картинку, собранная разом во время
+// полной синхронизации (см. loadCatalogData). Позволяет /api/product-image
+// почти никогда не ходить в МойСклад за ссылкой поштучно.
+export async function getImageHrefsMap() {
+    return (await kvGetJson(IMAGE_HREFS_KEY)) || {};
 }
 
 // =====================================================================
