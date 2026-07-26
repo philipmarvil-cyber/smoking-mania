@@ -80,12 +80,17 @@
                 const body = document.body;
                 const csHtml = getComputedStyle(html);
                 const csBody = getComputedStyle(body);
+                const tile = document.querySelector('.category-tile');
+                const tileSvg = document.querySelector('.category-tile-icon svg');
+                const tileTA = tile ? getComputedStyle(tile).touchAction : 'нет плашки';
+                const svgTA = tileSvg ? getComputedStyle(tileSvg).touchAction : 'нет svg';
                 hud.textContent =
                     `innerHeight:${window.innerHeight} scrollY:${window.scrollY}\n` +
                     `html.scrollHeight:${html.scrollHeight} html.clientHeight:${html.clientHeight}\n` +
                     `body.scrollHeight:${body.scrollHeight} body.clientHeight:${body.clientHeight}\n` +
                     `html: h=${csHtml.height} minH=${csHtml.minHeight} overflowY=${csHtml.overflowY} touchAction=${csHtml.touchAction}\n` +
                     `body: h=${csBody.height} overflowY=${csBody.overflowY} touchAction=${csBody.touchAction} overscroll=${csBody.overscrollBehaviorY}\n` +
+                    `tile touchAction=${tileTA}  svg touchAction=${svgTA}\n` +
                     `platform:${tg.platform} vSwipes:${tg.isVerticalSwipesEnabled} fullscreen:${tg.isFullscreen}\n` +
                     `UA:${navigator.userAgent}`;
             }
@@ -1114,7 +1119,8 @@
         .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
 
         /* Горизонтальная строка подкатегорий на странице категории */
-        .subcat-strip { display: flex; gap: 8px; overflow-x: auto; padding: 0 15px 14px 15px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+        .subcat-strip { display: flex; gap: 8px; overflow-x: auto; padding: 0 15px 14px 15px; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
+        .subcat-strip * { touch-action: pan-x; }
         .subcat-strip::-webkit-scrollbar { display: none; }
         .subcat-chip { flex: 0 0 auto; padding: 8px 16px; border-radius: 20px; background: #eaeaed; color: #1c1c1e; font-size: 13.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
         .subcat-chip.active { background: #1c1c1e; color: #fff; }
@@ -1241,6 +1247,13 @@
         .nav-icon-wrap svg { margin: 0; display: block; }
         .cart-badge { position: absolute; top: -4px; right: -9px; background: #e0245e; color: #fff; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: none; align-items: center; justify-content: center; padding: 0 4px; }
         .page { display: none; touch-action: pan-y; }
+        /* На всякий случай явно на КАЖДОМ элементе, а не только на
+           html/body/.page — на некоторых Android-браузерах touch-action
+           не всегда корректно "просачивается" через дерево предков,
+           особенно для SVG-иконок (сердечко избранного, иконки категорий) —
+           именно они есть в плашках категорий и карточках товаров, но их
+           нет в ещё пустом контейнере "Новинки", что и объясняло разницу. */
+        * { touch-action: pan-y; }
         .page.active { display: block; }
 
         /* Age verification overlay */
