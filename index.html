@@ -132,6 +132,8 @@
             const gate = document.getElementById('age-gate');
             if (isAdult) {
                 if (gate) gate.style.display = 'none';
+                ensureDocumentIsScrollable();
+                setTimeout(ensureDocumentIsScrollable, 300);
             } else {
                 if (tg.close) {
                     tg.close();
