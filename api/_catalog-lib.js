@@ -170,6 +170,37 @@ export async function fetchBinary(url) {
 }
 
 // =====================================================================
+// Лёгкое обновление ТОЛЬКО остатков в уже закэшированном каталоге — без
+// картинок, папок и т.п. Не ждём ночную полную синхронизацию: дёргаем
+// это при любом изменении заказа (создание/смена статуса/удаление) через
+// вебхук, чтобы остаток был актуален почти сразу, даже если заказ
+// поменяли/удалили прямо в МойСклад, а не через бота.
+export async function refreshAllStock() {
+    const catalog = await kvGetCatalog();
+    if (!catalog || !Array.isArray(catalog.products) || !catalog.products.length) return false;
+
+    const stockRows = await fetchAllRows(`${API}/report/stock/all?limit=1000`).catch(() => null);
+    if (!stockRows) return false; // не удалось получить отчёт — кэш не трогаем
+
+    const stockById = {};
+    stockRows.forEach(row => {
+        const id = extractId(row.meta?.href);
+        if (id) stockById[id] = row.quantity ?? row.stock ?? 0;
+    });
+    const stockReportHasData = stockRows.length > 0;
+
+    catalog.products.forEach(product => {
+        const stock = stockById.hasOwnProperty(product.id)
+            ? stockById[product.id]
+            : (stockReportHasData ? 0 : null);
+        product.stock = stock === null ? null : Math.max(0, stock);
+        product.outOfStock = stock === null ? false : stock <= 0;
+    });
+
+    return kvSetCatalog(catalog);
+}
+
+// =====================================================================
 // Тяжёлая загрузка каталога из МойСклад. Вызывается из /api/sync-catalog.
 // Товары грузим с expand=images (лимит при expand — 100 на страницу),
 // чтобы ссылки на фото попали в каталог сразу и фронту не нужны были
@@ -243,6 +274,30 @@ export async function loadCatalogData() {
 export function extractId(href) {
     if (!href) return null;
     return href.split('/').pop().split('?')[0];
+}
+
+// =====================================================================
+// Отправка сообщений клиенту в Telegram (уведомления о статусе заказа
+// и о появлении товара в наличии) через Bot API.
+// =====================================================================
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+export function isTelegramConfigured() {
+    return !!TELEGRAM_BOT_TOKEN;
+}
+
+export async function sendTelegramMessage(chatId, text) {
+    if (!TELEGRAM_BOT_TOKEN || !chatId) return false;
+    try {
+        const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' })
+        });
+        return response.ok;
+    } catch (e) {
+        return false;
+    }
 }
 
 // Живой (не кэшированный) остаток по конкретным товарам — используется при
