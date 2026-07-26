@@ -40,6 +40,12 @@
                 isScrollable ? '' : 'calc(100vh + 1px)',
                 isScrollable ? '' : 'important'
             );
+            // Переподтверждаем на каждой отрисовке экрана (не только один раз
+            // при запуске) — похоже, Android-клиент Telegram решает, кому
+            // достаётся вертикальный тач, ориентируясь на состояние в момент
+            // вызова, и не пересматривает это само по себе, когда контент
+            // (карточки товаров, корзина) дорисовывается позже и меняет высоту.
+            if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
         }
         function preventScrollCollapse() {
             if (window.scrollY === 0) window.scrollTo(0, 1);
@@ -153,6 +159,7 @@
             window.scrollTo(0, screen.scrollY || 0);
             document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', (screen.scrollY || 0) > 10));
             ensureDocumentIsScrollable();
+            setTimeout(ensureDocumentIsScrollable, 400); // картинки товаров дорисовываются чуть позже и меняют высоту страницы
 
             if (navStack.length > 1) {
                 tg.BackButton.show();
