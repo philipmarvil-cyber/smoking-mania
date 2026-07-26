@@ -19,14 +19,29 @@ export default async function handler(req, res) {
     // повторными вызовами; сама обработка при этом продолжает идти в фоне.
     res.status(200).json({ success: true });
 
+    // Диагностика: что вебхук вообще получил — можно посмотреть через
+    // /api/kv-status (поле lastWebhookEvent), чтобы убедиться, что МойСклад
+    // реально дёргает этот адрес, и как выглядит присланное событие.
+    try {
+        const events = (req.body && req.body.events) || [];
+        await kvSetJson('last-webhook-event', {
+            at: Date.now(),
+            count: events.length,
+            events: events.map(e => ({ type: e?.meta?.type, action: e?.action }))
+        }).catch(() => {});
+    } catch (e) {}
+
     try {
         const events = (req.body && req.body.events) || [];
         const orderEvents = events.filter(e => e?.meta?.type === 'customerorder');
 
         if (orderEvents.length) {
-            // Остатки могли измениться из-за ЛЮБОГО из этих событий —
-            // обновляем сразу, не дожидаясь ночной синхронизации.
-            refreshAllStock().catch(() => {});
+            // ВАЖНО: обязательно ждём (await) — без этого функция могла
+            // завершиться (а вместе с ней и весь процесс на Vercel) раньше,
+            // чем запрос к складу реально успевал доехать и примениться,
+            // особенно на событии удаления, где ниже почти нечего ждать.
+            const refreshed = await refreshAllStock().catch(err => ({ error: err.message }));
+            await kvSetJson('last-stock-refresh', { at: Date.now(), result: refreshed }).catch(() => {});
         }
 
         for (const event of orderEvents) {
