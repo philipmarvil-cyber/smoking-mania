@@ -23,6 +23,25 @@ const BASELINE = 0;
 
 const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
 
+// Единый список полностью скрытых категорий — не показываются в каталоге
+// И не должны находиться через поиск. Раньше это исключение делалось в
+// двух разных, несогласованных местах (одно для списка категорий, другое
+// клиентское — для поиска), из-за чего товары скрытых разделов всё равно
+// просачивались в поиск. Теперь один список, и товары фильтруются здесь же,
+// на сервере, вместе с ЛЮБОЙ вложенностью подкатегорий — не только прямые
+// подкатегории, а вообще все уровни вниз.
+// "katalog" сюда не входит — это не скрытая категория, а служебная папка-
+// обёртка, её содержимое, наоборот, поднимается на видимый верхний уровень
+// (см. buildCategoryTree ниже).
+const HIDDEN_CATEGORY_NAMES = [
+    'sale (распродажа)',
+    'электронки',
+    'жевательный табак',
+    'самокруточный табак',
+    'жидкости',
+    'оэсдн'
+];
+
 // =====================================================================
 // Vercel KV (Upstash) через REST API напрямую, без доп. npm-пакетов.
 // =====================================================================
@@ -269,6 +288,15 @@ export async function loadCatalogData() {
         kvGetJson(FIRST_SEEN_KEY)
     ]);
 
+    // Товары скрытых категорий (HIDDEN_CATEGORY_NAMES, любая глубина
+    // вложенности) исключаем целиком, ещё до всего остального — чтобы они
+    // не попадали ни в каталог, ни в поиск, откуда бы он ни читал allProducts.
+    const hiddenFolderIds = getHiddenFolderIds(folderRows);
+    const visibleProductRows = productRows.filter(p => {
+        const folderId = extractId(p.productFolder?.meta?.href);
+        return !hiddenFolderIds.has(folderId);
+    });
+
     const stockById = {};
     stockRows.forEach(row => {
         const id = extractId(row.meta?.href);
@@ -289,7 +317,7 @@ export async function loadCatalogData() {
 
     // Компактный формат: только те поля, которые реально использует фронтенд.
     // Полные объекты МойСклад весят в ~20 раз больше и тормозят загрузку.
-    const products = productRows.map(product => {
+    const products = visibleProductRows.map(product => {
         const folderId = extractId(product.productFolder?.meta?.href);
         const stock = stockById.hasOwnProperty(product.id)
             ? stockById[product.id]
@@ -443,8 +471,31 @@ function normalizeName(name) {
     return (name || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+// Находит id всех скрытых категорий (HIDDEN_CATEGORY_NAMES) и ЛЮБЫХ их
+// потомков, на любую глубину вложенности — не только прямые подкатегории.
+function getHiddenFolderIds(allFolders) {
+    const hiddenIds = new Set();
+    allFolders.forEach(f => {
+        if (HIDDEN_CATEGORY_NAMES.includes(normalizeName(f.name))) hiddenIds.add(f.id);
+    });
+    // Несколько проходов вниз по дереву, пока не перестанут находиться новые
+    // потомки — так собираются все уровни вложенности, а не только первый.
+    let changed = true;
+    while (changed) {
+        changed = false;
+        allFolders.forEach(f => {
+            const parentId = getParentFolderId(f);
+            if (parentId && hiddenIds.has(parentId) && !hiddenIds.has(f.id)) {
+                hiddenIds.add(f.id);
+                changed = true;
+            }
+        });
+    }
+    return hiddenIds;
+}
+
 export function buildCategoryTree(allFolders) {
-    const EXCLUDED_NAMES = ['katalog', 'sale (распродажа)', 'электронки'];
+    const EXCLUDED_NAMES = ['katalog', ...HIDDEN_CATEGORY_NAMES];
 
     const katalogFolder = allFolders.find(f => normalizeName(f.name) === 'katalog');
 
