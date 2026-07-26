@@ -496,20 +496,29 @@ function getHiddenFolderIds(allFolders) {
 
 export function buildCategoryTree(allFolders) {
     const EXCLUDED_NAMES = ['katalog', ...HIDDEN_CATEGORY_NAMES];
+    const isHidden = f => EXCLUDED_NAMES.includes(normalizeName(f.name));
 
     const katalogFolder = allFolders.find(f => normalizeName(f.name) === 'katalog');
 
+    // ВАЖНО: раньше здесь фильтровались по имени только "прочие" корневые
+    // папки (otherTopFolders) — а дети служебной папки "katalog" (именно
+    // они обычно и есть видимые верхние категории каталога) не проверялись
+    // вообще. Если скрытая категория лежала именно там — она проходила
+    // насквозь, что и было причиной "скрытые категории всё равно видны".
     const katalogChildren = katalogFolder
-        ? allFolders.filter(f => getParentFolderId(f) === katalogFolder.id)
+        ? allFolders.filter(f => getParentFolderId(f) === katalogFolder.id && !isHidden(f))
         : [];
 
     const rootFolders = allFolders.filter(f => getParentFolderId(f) === null);
-    const otherTopFolders = rootFolders.filter(f => !EXCLUDED_NAMES.includes(normalizeName(f.name)));
+    const otherTopFolders = rootFolders.filter(f => !isHidden(f));
 
     const displayFolders = [...katalogChildren, ...otherTopFolders];
 
     return displayFolders.map(cat => {
-        const subFolders = allFolders.filter(f => getParentFolderId(f) === cat.id);
+        // Подкатегории тоже проверяем по имени — скрытая категория могла
+        // быть вложена не только на верхнем уровне, но и как подкатегория
+        // внутри обычного, видимого раздела.
+        const subFolders = allFolders.filter(f => getParentFolderId(f) === cat.id && !isHidden(f));
         return {
             id: cat.id,
             name: cat.name,
