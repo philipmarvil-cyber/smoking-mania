@@ -415,12 +415,33 @@
             refreshCardPricesIfVisible();
         }
 
+        // Собирает id узла категории/подкатегории и ВСЕХ его потомков на
+        // любую глубину вложенности. Нужно, чтобы товары из под-подкатегорий
+        // (3-й уровень и глубже) тоже засчитывались в раздел, а не терялись.
+        function collectFolderIds(node) {
+            let ids = [node.id];
+            (node.subcategories || []).forEach(sub => {
+                ids = ids.concat(collectFolderIds(sub));
+            });
+            return ids;
+        }
+
+        // Ищет узел (категорию/подкатегорию любой глубины) по folderId в дереве.
+        function findCategoryNode(nodes, folderId) {
+            for (const node of nodes) {
+                if (node.id === folderId) return node;
+                const found = findCategoryNode(node.subcategories || [], folderId);
+                if (found) return found;
+            }
+            return null;
+        }
+
         // Находит категорию/подкатегорию товара по folderId — для лейбла в корзине.
         function getCategoryLabelForFolder(folderId) {
             if (!folderId) return '';
             for (const cat of categories) {
                 if (cat.id === folderId) return cat.name;
-                const sub = cat.subcategories.find(s => s.id === folderId);
+                const sub = findCategoryNode(cat.subcategories, folderId);
                 if (sub) return `${cat.name} · ${sub.name}`;
             }
             return '';
@@ -718,8 +739,8 @@
             const page = document.getElementById('page-category');
             if (!cat) { page.innerHTML = ''; return; }
 
-            const subIds = cat.subcategories.map(s => s.id);
-            const allInCat = allProducts.filter(p => p.folderId === cat.id || subIds.includes(p.folderId));
+            const allCatFolderIds = collectFolderIds(cat);
+            const allInCat = allProducts.filter(p => allCatFolderIds.includes(p.folderId));
 
             page.innerHTML = `
                 <div class="header" style="margin-top:0;"><span>${cat.name}</span></div>
@@ -739,7 +760,8 @@
                     const chip = document.createElement('div');
                     chip.className = 'subcat-chip';
                     chip.textContent = sub.name;
-                    chip.onclick = () => selectSubcategory(cat, sub, allProducts.filter(p => p.folderId === sub.id), chip);
+                    const subFolderIds = collectFolderIds(sub);
+                    chip.onclick = () => selectSubcategory(cat, sub, allProducts.filter(p => subFolderIds.includes(p.folderId)), chip);
                     strip.appendChild(chip);
                 });
             }
