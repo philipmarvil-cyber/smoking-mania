@@ -87,7 +87,7 @@
                     `html: h=${csHtml.height} minH=${csHtml.minHeight} overflowY=${csHtml.overflowY} touchAction=${csHtml.touchAction}\n` +
                     `body: h=${csBody.height} overflowY=${csBody.overflowY} touchAction=${csBody.touchAction} overscroll=${csBody.overscrollBehaviorY}\n` +
                     `platform:${tg.platform} vSwipes:${tg.isVerticalSwipesEnabled} fullscreen:${tg.isFullscreen}\n` +
-                    `UA:${navigator.userAgent.slice(0,60)}`;
+                    `UA:${navigator.userAgent}`;
             }
             update();
             setInterval(update, 500);
