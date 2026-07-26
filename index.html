@@ -10,15 +10,20 @@
         const tg = window.Telegram.WebApp;
         tg.ready(); tg.expand();
         tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#f2f2f7');
+        // Отключение disableVerticalSwipes() на Android не изменило поведение
+        // скролла (проверено) — значит, дело не в этом, возвращаем как было.
         if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
         tg.enableClosingConfirmation();
-        // requestFullscreen() на Android-клиенте Telegram (в ряде версий) ломает
-        // тач-скролл внутри WebView — каталог перестаёт листаться пальцем,
-        // хотя на iOS всё нормально. Включаем полноэкранный режим только там,
-        // где он не ломает скролл.
-        if (tg.platform !== 'android') {
-            try { tg.requestFullscreen(); } catch (e) {}
-        }
+        // ЭКСПЕРИМЕНТ: раньше здесь requestFullscreen() специально пропускался
+        // на Android — считалось, что он ломает скролл. Но реальная картина
+        // (скролл работает только над зафиксированной нижней панелью навигации,
+        // и именно в НЕполноэкранном режиме на Android виден нативный "хедер"
+        // Telegram с ручкой для свайпа-закрытия) говорит, что дело, возможно,
+        // ровно в обратном: это нативный хедер Telegram перехватывает
+        // вертикальный тач по всей высоте экрана на Android, когда мини-аппа
+        // НЕ в полноэкранном режиме. Пробуем включить fullscreen и на Android
+        // тоже — уберёт этот хедер, и тач должен полностью достаться странице.
+        try { tg.requestFullscreen(); } catch (e) {}
         const telegramUserId = tg.initDataUnsafe?.user?.id || null;
 
         // --- Фикс "коллапса" мини-аппы при скролле на Android ---
