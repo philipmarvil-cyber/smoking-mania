@@ -1039,7 +1039,7 @@
             background: transparent; 
             font-weight: 700; 
             font-size: 18px; 
-            position: sticky; 
+            position: relative; /* ТЕСТ: было position: sticky — временно убрали (relative вместо static, чтобы не сломать позиционирование кнопки поддержки внутри шапки), проверяем, не sticky ли ломает скролл на Android */
             top: 0;
             z-index: 1000;
             border-bottom: 1px solid transparent;
