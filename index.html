@@ -837,6 +837,9 @@
             cup: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16l-1.5 8a3 3 0 0 1-3 2.5h-7A3 3 0 0 1 5.5 17L4 9z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/></svg>',
             shirt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4 4 7l2 3 2-1v10h8V9l2 1 2-3-4-3-2 2h-4z"/></svg>',
             hookah: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1 3H8l1-3z"/><path d="M12 7v9"/><ellipse cx="12" cy="19" rx="5.5" ry="2.5"/><path d="M15 9c2.2 0 4 1.3 4 3s-1.6 2.8-3.6 3"/></svg>',
+            petal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c5.5 3 5.5 15 0 18-5.5-3-5.5-15 0-18z"/><path d="M12 5v14"/></svg>',
+            flask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3h4"/><path d="M11 3v6.5l-4.3 7.6A2.7 2.7 0 0 0 9.1 21h5.8a2.7 2.7 0 0 0 2.4-3.9L13 9.5V3"/></svg>',
+            coal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2.5"/><circle cx="9.5" cy="9.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="14.5" cy="9.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="9.5" cy="14.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="14.5" cy="14.5" r="0.9" fill="currentColor" stroke="none"/></svg>',
             mouthpiece: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h11"/><path d="M14 8h4a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3h-4z"/><path d="M3 9v6"/></svg>',
             tongs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3c0 6 2 9 2 13"/><path d="M17 3c0 6-2 9-2 13"/><path d="M6 3h3M15 3h3"/><path d="M8 16l1 5M16 16l-1 5"/></svg>',
             foil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M4 14h16M9 4v16M14 4v16"/></svg>',
@@ -845,16 +848,17 @@
 
         function getCategoryIcon(name) {
             const n = (name || '').toLowerCase();
+            if (n.includes('смес')) return CATEGORY_ICONS.petal;
             if (n.includes('кальян')) return CATEGORY_ICONS.hookah;
-            if (n.includes('смес')) return CATEGORY_ICONS.leaf;
             if (n.includes('табак')) return CATEGORY_ICONS.leaf;
             if (n.includes('жидкост')) return CATEGORY_ICONS.droplet;
             if (n.includes('мундштук')) return CATEGORY_ICONS.mouthpiece;
             if (n.includes('щипц')) return CATEGORY_ICONS.tongs;
             if (n.includes('фольг') || n.includes('калауд')) return CATEGORY_ICONS.foil;
             if (n.includes('аксессуар')) return CATEGORY_ICONS.star;
-            if (n.includes('уголь') || n.includes('угол')) return CATEGORY_ICONS.flame;
-            if (n.includes('чаш') || n.includes('колб')) return CATEGORY_ICONS.cup;
+            if (n.includes('уголь') || n.includes('угол')) return CATEGORY_ICONS.coal;
+            if (n.includes('колб')) return CATEGORY_ICONS.flask;
+            if (n.includes('чаш')) return CATEGORY_ICONS.cup;
             if (n.includes('мерч')) return CATEGORY_ICONS.shirt;
             return CATEGORY_ICONS.box;
         }
@@ -1475,8 +1479,7 @@
         .section-title-row { display: flex; align-items: center; justify-content: space-between; margin: 15px 15px 10px 15px; }
         .section-title-all-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 20px; cursor: pointer; }
         .section-title-all-btn:active { opacity: 0.75; }
-        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
-        .products-strip * { touch-action: pan-x; }
+        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
         .products-strip::-webkit-scrollbar { display: none; }
         .products-strip .product-card { flex: 0 0 150px; width: 150px; }
         .products-strip .grid-load-sentinel { flex: 0 0 1px; }
@@ -1535,7 +1538,7 @@
         .accordion-body { padding: 0 0 15px 0; font-size: 13.5px; line-height: 1.5; color: #4a4a4e; }
         
         /* Shop Page */
-        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; margin: 15px 10px; padding: 20px; border-radius: 16px; }
+        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; margin: 15px 6px; padding: 20px; border-radius: 16px; }
         .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 12px; box-sizing: border-box; }
         .grid-load-sentinel { grid-column: 1 / -1; height: 1px; }
         .product-card { content-visibility: auto; contain-intrinsic-size: 280px; }
