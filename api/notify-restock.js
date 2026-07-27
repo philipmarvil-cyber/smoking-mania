@@ -55,6 +55,21 @@ export default async function handler(req, res) {
         if (log.length > MAX_LOG_ENTRIES) log.length = MAX_LOG_ENTRIES;
         await kvSetJson(LOG_KEY, log);
 
+        // Собственно подписка на "товар снова в наличии" — именно этот ключ
+        // читает notifyRestockedProducts() в _catalog-lib.js (вызывается при
+        // каждом обновлении остатков) и рассылает по нему сообщения. Раньше
+        // этот шаг просто отсутствовал: заявка сохранялась в лог для админки,
+        // но подписчика в restock:{productId} никто не добавлял — поэтому
+        // сам факт восстановления остатка никогда никого не уведомлял.
+        if (telegramUserId) {
+            const restockKey = `restock:${productId}`;
+            const subs = (await kvGetJson(restockKey)) || [];
+            if (!subs.includes(telegramUserId)) {
+                subs.push(telegramUserId);
+                await kvSetJson(restockKey, subs);
+            }
+        }
+
         const adminChatId = await kvGetJson(ADMIN_CHAT_ID_KEY);
         if (adminChatId) {
             const whoParts = [];
