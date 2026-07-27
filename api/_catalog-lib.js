@@ -342,7 +342,14 @@ export async function loadCatalogData() {
         // /api/product-image сам сходит в МойСклад с токеном и отдаст готовый файл.
         const imageRow = product.images?.rows?.[0];
         const hasPhoto = !!imageRow;
-        if (hasPhoto) imageHrefs[product.id] = imageRow.miniature?.downloadHref || '';
+        // Раньше сохранялась только ссылка на миниатюру (её же грузили и в
+        // сетке товаров, и на странице товара) — на странице товара, где
+        // картинка крупная, миниатюра выглядела размытой. Теперь храним
+        // отдельно оригинал (для страницы товара) и миниатюру (для сетки).
+        if (hasPhoto) imageHrefs[product.id] = {
+            mini: imageRow.miniature?.downloadHref || '',
+            full: imageRow.downloadHref || imageRow.miniature?.downloadHref || ''
+        };
 
         return {
             id: product.id,
@@ -535,7 +542,9 @@ export function buildCategoryTree(allFolders) {
     // ни в одну категорию/подкатегорию во фронтенде — их folderId не
     // совпадал ни с cat.id, ни с id прямых подкатегорий.
     function buildNode(folder) {
-        const children = allFolders.filter(f => getParentFolderId(f) === folder.id && !isHidden(f));
+        const children = allFolders
+            .filter(f => getParentFolderId(f) === folder.id && !isHidden(f))
+            .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru'));
         return {
             id: folder.id,
             name: folder.name,
