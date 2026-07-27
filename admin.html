@@ -157,7 +157,7 @@
 
     async function loadBanners() {
         try {
-            const res = await fetch('/api/get-banners');
+            const res = await fetch('/api/banners');
             const data = await res.json();
             banners = (data.success && Array.isArray(data.banners)) ? data.banners : [];
         } catch (e) {
@@ -232,7 +232,7 @@
         statusEl.textContent = 'Сохраняем…';
         statusEl.style.color = '#8a8a8e';
         try {
-            const res = await fetch(`/api/save-banners?key=${encodeURIComponent(adminKey)}`, {
+            const res = await fetch(`/api/banners?key=${encodeURIComponent(adminKey)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ banners })
