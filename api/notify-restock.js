@@ -15,6 +15,12 @@ export default async function handler(req, res) {
         return;
     }
 
+    // Диагностика: запоминаем КАЖДЫЙ входящий запрос как есть, ДО всех
+    // проверок ниже — иначе если запрос вообще не доходит с клиента (сеть,
+    // WebView) или приходит без productId, в /api/kv-status и подавно не
+    // видно, что вообще происходит.
+    kvSetJson('last-notify-attempt', { at: Date.now(), body: req.body || null }).catch(() => {});
+
     try {
         const { productId, telegramUserId, name, username } = req.body || {};
         if (!productId) {
@@ -50,12 +56,15 @@ export default async function handler(req, res) {
             if (entry.username) whoParts.push(`@${entry.username}`);
             if (entry.telegramUserId) whoParts.push(`id ${entry.telegramUserId}`);
             const who = whoParts.length ? whoParts.join(' · ') : 'Неизвестный пользователь';
-            await sendTelegramMessage(
+            const sent = await sendTelegramMessage(
                 adminChatId,
                 `🔔 Хотят узнать о поступлении\n\n<b>${productName}</b>\n${who}`
-            ).catch(() => {});
+            ).catch((e) => { throw e; });
+            await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatId, sent: !!sent }).catch(() => {});
+        } else {
+            await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatId: null, sent: false, reason: 'нет сохранённого chat_id админа' }).catch(() => {});
         }
     } catch (e) {
-        // Ответ покупателю уже ушёл — здесь просто не даём процессу упасть.
+        await kvSetJson('last-notify-error', { at: Date.now(), message: e.message }).catch(() => {});
     }
 }
