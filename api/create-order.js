@@ -121,9 +121,9 @@ export default async function handler(req, res) {
             'Заказ из Telegram-бота.',
             `Клиент: ${customerName || '—'}`,
             `Телефон: ${cleanPhone}`,
-            `Доставка: ${deliveryMethod || '—'}`,
-            `Адрес: ${address || '—'}`
+            `Доставка: ${deliveryMethod || '—'}`
         ];
+        if (address) descriptionLines.push(`Адрес: ${address}`);
         if (promoCode) descriptionLines.push(`Промокод: ${promoCode}`);
         if (comment) descriptionLines.push(`Комментарий клиента: ${comment}`);
 
