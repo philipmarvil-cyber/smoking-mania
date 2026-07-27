@@ -476,9 +476,11 @@
 
         function renderCart() {
             const container = document.getElementById('cart-container');
+            const progressBar = document.getElementById('discount-progress-bar');
             const items = Object.values(cart);
             if (!items.length) {
                 container.innerHTML = '<div class="empty-state">Корзина пуста</div>';
+                if (progressBar) progressBar.innerHTML = '';
                 updateCartTotal(0);
                 return;
             }
@@ -523,20 +525,24 @@
                 container.appendChild(row);
             });
 
-            // Прогресс до скидки за объём корзины
-            const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - baseSubtotal);
-            const pct = Math.min(100, Math.round((baseSubtotal / BULK_DISCOUNT_THRESHOLD) * 100));
-            const progressBox = document.createElement('div');
-            progressBox.className = 'discount-progress-box';
-            const savings = baseSubtotal - grandTotal;
-            progressBox.innerHTML = `
-                <div class="discount-progress-row">
-                    <span>${discountActive ? `Скидка 10% на всю корзину активна${savings > 0 ? ` · вы экономите ${savings.toLocaleString()} ₽` : ''}` : `Ещё ${remaining.toLocaleString()} ₽ до следующей цены`}</span>
-                    <span class="discount-progress-goal">${discountActive ? '✓ применена' : 'от ' + BULK_DISCOUNT_THRESHOLD.toLocaleString() + ' ₽'}</span>
-                </div>
-                <div class="discount-progress-track"><div class="discount-progress-fill${discountActive ? ' full' : ''}" style="width:${pct}%"></div></div>
-            `;
-            container.appendChild(progressBox);
+            // Прогресс до скидки за объём корзины — раньше рисовался последней
+            // карточкой внутри списка и уезжал вниз при большом количестве
+            // товаров. Теперь это отдельный элемент, прилипающий сразу под
+            // шапкой ("Доставка"), и виден постоянно, независимо от скролла.
+            if (progressBar) {
+                const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - baseSubtotal);
+                const pct = Math.min(100, Math.round((baseSubtotal / BULK_DISCOUNT_THRESHOLD) * 100));
+                const savings = baseSubtotal - grandTotal;
+                progressBar.innerHTML = `
+                    <div class="discount-progress-box">
+                        <div class="discount-progress-row">
+                            <span>${discountActive ? `Скидка 10% на всю корзину активна${savings > 0 ? ` · вы экономите ${savings.toLocaleString()} ₽` : ''}` : `Ещё ${remaining.toLocaleString()} ₽ до следующей цены`}</span>
+                            <span class="discount-progress-goal">${discountActive ? '✓ применена' : 'от ' + BULK_DISCOUNT_THRESHOLD.toLocaleString() + ' ₽'}</span>
+                        </div>
+                        <div class="discount-progress-track"><div class="discount-progress-fill${discountActive ? ' full' : ''}" style="width:${pct}%"></div></div>
+                    </div>
+                `;
+            }
 
             updateCartTotal(grandTotal);
         }
@@ -611,7 +617,10 @@
                         <div class="checkout-card">
                             <div class="payment-option disabled">
                                 <div class="payment-radio checked"></div>
-                                <span>Самовывоз</span>
+                                <div class="payment-option-text">
+                                    <span>Самовывоз</span>
+                                    <div class="payment-option-subtext">г. Москва, Шипиловская улица, дом 50, корпус 1</div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -641,14 +650,22 @@
                     </div>
 
                     <div class="checkout-section">
-                        <div class="promo-row">
-                            <input class="checkout-input" id="co-promo" placeholder="Промокод" value="${esc(checkoutFormState.promo)}">
-                            <button class="promo-apply-btn" onclick="applyPromoCode()">Применить</button>
+                        <div class="checkout-card">
+                            <div class="checkout-field">
+                                <div class="promo-row">
+                                    <input class="checkout-input" id="co-promo" placeholder="Промокод" value="${esc(checkoutFormState.promo)}">
+                                    <button class="promo-apply-btn" onclick="applyPromoCode()">Применить</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
                     <div class="checkout-section">
-                        <textarea class="checkout-textarea" id="co-comment" placeholder="Комментарий к заказу" rows="2">${checkoutFormState.comment || ''}</textarea>
+                        <div class="checkout-card">
+                            <div class="checkout-field">
+                                <textarea class="checkout-textarea" id="co-comment" placeholder="Комментарий к заказу" rows="2">${checkoutFormState.comment || ''}</textarea>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="cart-footer">
@@ -1254,7 +1271,7 @@
             currentDetailProductId = id;
             detailQtyValue = 1;
             const detailPage = document.getElementById('page-detail');
-            const imgHtml = prod.img ? `<img src="${prod.img}" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+            const imgHtml = prod.img ? `<img src="${prod.img}&size=full" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
             const isFav = !!favorites[prod.id];
             const hasStockLimit = typeof prod.stock === 'number';
             const stockNoteHtml = (hasStockLimit && !prod.archived && prod.stock <= 5)
@@ -1508,6 +1525,8 @@
         .cart-row-unit { font-size: 11.5px; color: #9a9a9e; margin-top: 1px; }
 
         .discount-progress-box { background: #fff; border-radius: 14px; padding: 14px 16px; margin-top: 4px; }
+        .discount-progress-sticky { position: sticky; top: calc(135px + env(safe-area-inset-top)); z-index: 850; background: #f2f2f7; padding: 0 15px; }
+        .discount-progress-sticky:empty { padding: 0; }
         .discount-progress-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
         .discount-progress-goal { color: #2f8f4e; font-weight: 700; }
         .discount-progress-track { height: 6px; border-radius: 3px; background: #ececef; overflow: hidden; }
@@ -1547,6 +1566,8 @@
         .checkout-secondary-btn:active { opacity: 0.75; }
 
         .payment-option { display: flex; align-items: center; gap: 12px; padding: 14px 0; font-size: 15px; font-weight: 600; cursor: pointer; }
+        .payment-option-text { display: flex; flex-direction: column; gap: 3px; }
+        .payment-option-subtext { font-size: 12.5px; font-weight: 500; color: #9a9a9e; }
         .payment-option + .payment-option { border-top: 1px solid #f0f0f2; }
         .payment-radio { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; border: 2px solid #d1d1d6; box-sizing: border-box; position: relative; }
         .payment-radio.checked { border-color: #1c1c1e; }
@@ -1693,6 +1714,7 @@
     </div>
     <div id="page-cart" class="page">
         <div class="header"><span>Корзина</span></div>
+        <div class="discount-progress-sticky" id="discount-progress-bar"></div>
         <div class="cart-content" id="cart-container"><div class="empty-state">Загрузка...</div></div>
         <div class="cart-footer">
             <div class="cart-total-row"><span>Сумма заказа</span><span id="cart-total">0 ₽</span></div>
@@ -1827,6 +1849,18 @@
 
         loadCartAndFavorites(() => {
             loadShopData();
+        });
+
+        // Тап куда угодно вне поля ввода убирает фокус с текущего инпута —
+        // раньше ничего не вызывало blur(), и клавиатура оставалась открытой,
+        // даже когда человек явно закончил вводить текст и тапал по пустому
+        // месту экрана.
+        document.addEventListener('click', (e) => {
+            const active = document.activeElement;
+            const isTextField = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+            if (isTextField && !e.target.closest('input, textarea')) {
+                active.blur();
+            }
         });
 
         window.addEventListener('scroll', () => {
