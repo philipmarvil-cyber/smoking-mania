@@ -26,34 +26,47 @@ export default async function handler(req, res) {
     const wantFull = req.query.size === 'full';
 
     try {
-        const hrefMap = await getImageHrefsMap();
-        const entry = hrefMap.hasOwnProperty(id) ? hrefMap[id] : null;
-        // entry может быть либо новым объектом { mini, full }, либо (в старом,
-        // ещё не пересинхронизированном кэше) просто строкой — тогда доступна
-        // только миниатюра, оригинала пока нет.
         let href = null;
-        if (entry && typeof entry === 'object') {
-            href = (wantFull ? entry.full : entry.mini) || entry.mini || null;
-        } else if (typeof entry === 'string') {
-            href = entry || null;
-        }
 
-        if (href === null) {
-            // Товара нет в карте — редкий случай, идём в МойСклад напрямую,
-            // и на всякий случай тоже кэшируем результат на 7 дней.
-            const cacheKey = `imghref:${id}`;
+        if (wantFull) {
+            // ВАЖНО: при массовой синхронизации (expand=images на списке
+            // товаров) МойСклад отдаёт по картинке только miniature — поля
+            // оригинала там нет, даже если исходное фото весит 1080×1080 и
+            // больше. Раньше "full" бралось именно из этого массового ответа
+            // и по факту оказывалось той же миниатюрой. Теперь оригинал
+            // всегда добывается отдельным точечным запросом по конкретному
+            // товару (там это поле есть надёжно) — с кэшем на 7 дней, чтобы
+            // не дёргать МойСклад повторно при каждом открытии карточки.
+            const cacheKey = `imgfull:${id}`;
             const cached = await kvGetJson(cacheKey);
-            const cachedEntry = cached && (Date.now() - cached.at) < HREF_TTL_MS ? cached : undefined;
-
-            if (cachedEntry) {
-                href = (wantFull ? cachedEntry.full : cachedEntry.mini) || cachedEntry.mini || '';
+            if (cached && (Date.now() - cached.at) < HREF_TTL_MS) {
+                href = cached.href || null;
             } else {
                 const data = await fetchJson(`${API}/entity/product/${id}/images?limit=1`);
                 const row = data?.rows?.[0];
-                const mini = row?.miniature?.downloadHref || '';
-                const full = row?.downloadHref || mini;
-                await kvSetJson(cacheKey, { mini, full, at: Date.now() });
-                href = wantFull ? full : mini;
+                href = row?.downloadHref || row?.miniature?.downloadHref || null;
+                await kvSetJson(cacheKey, { href: href || '', at: Date.now() });
+            }
+        } else {
+            const hrefMap = await getImageHrefsMap();
+            const entry = hrefMap.hasOwnProperty(id) ? hrefMap[id] : null;
+            if (entry && typeof entry === 'object') href = entry.mini || null;
+            else if (typeof entry === 'string') href = entry || null;
+
+            if (href === null) {
+                // Товара нет в карте — редкий случай (совсем новый товар
+                // между синхронизациями). Идём в МойСклад напрямую, кэшируем
+                // на 7 дней.
+                const cacheKey = `imghref:${id}`;
+                const cached = await kvGetJson(cacheKey);
+                if (cached && (Date.now() - cached.at) < HREF_TTL_MS) {
+                    href = cached.mini || null;
+                } else {
+                    const data = await fetchJson(`${API}/entity/product/${id}/images?limit=1`);
+                    const mini = data?.rows?.[0]?.miniature?.downloadHref || '';
+                    await kvSetJson(cacheKey, { mini, at: Date.now() });
+                    href = mini || null;
+                }
             }
         }
 
@@ -67,6 +80,8 @@ export default async function handler(req, res) {
         // Кэш на CDN Vercel — повторные запросы этой же картинки от любых пользователей
         // не будут повторно ходить в МойСклад целую неделю.
         res.setHeader('Cache-Control', 'public, s-maxage=604800, stale-while-revalidate=2592000');
+        res.setHeader('X-Ms-Image-Variant', wantFull ? 'full' : 'mini');
+        res.setHeader('X-Ms-Image-Bytes', String(buffer.length));
         res.status(200).send(buffer);
     } catch (e) {
         res.status(500).send('Не удалось получить фото');
