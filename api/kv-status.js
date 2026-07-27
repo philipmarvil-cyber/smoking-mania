@@ -57,6 +57,20 @@ export default async function handler(req, res) {
         telegramAdminInfo = { error: e.message };
     }
 
+    let notifyDebugInfo = null;
+    try {
+        const lastAttempt = await kvGetJson('last-notify-attempt');
+        const lastSend = await kvGetJson('last-notify-telegram-send');
+        const lastError = await kvGetJson('last-notify-error');
+        notifyDebugInfo = {
+            lastAttempt: lastAttempt ? { ...lastAttempt, at: new Date(lastAttempt.at).toISOString() } : null, // null = запрос от клиента вообще не дошёл до /api/notify-restock
+            lastTelegramSend: lastSend ? { ...lastSend, at: new Date(lastSend.at).toISOString() } : null,     // sent:false + reason — chat_id админа ещё не известен
+            lastError: lastError ? { ...lastError, at: new Date(lastError.at).toISOString() } : null           // если тут что-то есть — упало где-то на середине обработки
+        };
+    } catch (e) {
+        notifyDebugInfo = { error: e.message };
+    }
+
     res.status(200).json({
         envVarsPresent: envConfigured, // заданы ли KV_REST_API_URL/TOKEN (или UPSTASH_* аналоги) в Vercel
         readWriteWorks,               // реально ли получилось записать и прочитать тестовое значение
@@ -64,6 +78,7 @@ export default async function handler(req, res) {
         cachedCatalog: catalogInfo,    // что сейчас лежит в кэше каталога, и когда он последний раз синхронизировался
         telegramBotTokenPresent: isTelegramConfigured(), // нужен для уведомлений о статусе заказа и о поступлении товара
         telegramAdmin: telegramAdminInfo,
+        notifyDebug: notifyDebugInfo,
         // lastWebhookEvent — дошло ли вообще от МойСклад последнее событие по заказу,
         // и что в нём было (тип/действие). lastStockRefresh — чем закончилась попытка
         // обновить остатки после этого события (result:false = сработал кулдаун 3 минуты
