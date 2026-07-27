@@ -355,14 +355,11 @@ export async function loadCatalogData() {
         // /api/product-image сам сходит в МойСклад с токеном и отдаст готовый файл.
         const imageRow = product.images?.rows?.[0];
         const hasPhoto = !!imageRow;
-        // Раньше сохранялась только ссылка на миниатюру (её же грузили и в
-        // сетке товаров, и на странице товара) — на странице товара, где
-        // картинка крупная, миниатюра выглядела размытой. Теперь храним
-        // отдельно оригинал (для страницы товара) и миниатюру (для сетки).
-        if (hasPhoto) imageHrefs[product.id] = {
-            mini: imageRow.miniature?.downloadHref || '',
-            full: imageRow.downloadHref || imageRow.miniature?.downloadHref || ''
-        };
+        // Оригинал сюда больше не кладём: при массовой синхронизации
+        // (expand=images) МойСклад его в этом ответе не отдаёт — только
+        // миниатюру. Полноразмерное фото для страницы товара теперь всегда
+        // добывается отдельно, точечным запросом (см. api/product-image.js).
+        if (hasPhoto) imageHrefs[product.id] = imageRow.miniature?.downloadHref || '';
 
         return {
             id: product.id,
