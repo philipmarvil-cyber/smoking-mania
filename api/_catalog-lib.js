@@ -391,6 +391,14 @@ export function extractId(href) {
     return href.split('/').pop().split('?')[0];
 }
 
+// МойСклад хранит цвет статуса заказа как целое число (decimal RGB) —
+// фронту нужен обычный CSS-цвет вида "#rrggbb". Общий хелпер (раньше был
+// продублирован в my-orders.js).
+export function colorToHex(color) {
+    if (typeof color !== 'number') return null;
+    return '#' + (color >>> 0).toString(16).padStart(6, '0').slice(-6);
+}
+
 // Карта id товара → готовая ссылка на картинку, собранная разом во время
 // полной синхронизации (см. loadCatalogData). Позволяет /api/product-image
 // почти никогда не ходить в МойСклад за ссылкой поштучно.
