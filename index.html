@@ -1271,7 +1271,7 @@
             currentDetailProductId = id;
             detailQtyValue = 1;
             const detailPage = document.getElementById('page-detail');
-            const imgHtml = prod.img ? `<img src="${prod.img}&size=full" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+            const imgHtml = prod.img ? `<img src="${prod.img}&size=full&v=2" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
             const isFav = !!favorites[prod.id];
             const hasStockLimit = typeof prod.stock === 'number';
             const stockNoteHtml = (hasStockLimit && !prod.archived && prod.stock <= 5)
