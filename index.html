@@ -1029,10 +1029,17 @@
                 alert(message);
             }
             if (!telegramUserId) return; // без Telegram id подписку не на что оформлять
+            const tgUser = tg.initDataUnsafe?.user;
+            const fullName = tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : null;
             fetch('/api/notify-restock', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ productId: prod.id, telegramUserId })
+                body: JSON.stringify({
+                    productId: prod.id,
+                    telegramUserId,
+                    name: fullName,
+                    username: tgUser?.username || null
+                })
             }).catch(() => {});
         }
 
