@@ -23,22 +23,37 @@ export default async function handler(req, res) {
         res.status(400).send('Не указан id товара');
         return;
     }
+    const wantFull = req.query.size === 'full';
 
     try {
         const hrefMap = await getImageHrefsMap();
-        let href = hrefMap.hasOwnProperty(id) ? hrefMap[id] : null;
+        const entry = hrefMap.hasOwnProperty(id) ? hrefMap[id] : null;
+        // entry может быть либо новым объектом { mini, full }, либо (в старом,
+        // ещё не пересинхронизированном кэше) просто строкой — тогда доступна
+        // только миниатюра, оригинала пока нет.
+        let href = null;
+        if (entry && typeof entry === 'object') {
+            href = (wantFull ? entry.full : entry.mini) || entry.mini || null;
+        } else if (typeof entry === 'string') {
+            href = entry || null;
+        }
 
         if (href === null) {
             // Товара нет в карте — редкий случай, идём в МойСклад напрямую,
             // и на всякий случай тоже кэшируем результат на 7 дней.
             const cacheKey = `imghref:${id}`;
             const cached = await kvGetJson(cacheKey);
-            href = cached && (Date.now() - cached.at) < HREF_TTL_MS ? cached.href : undefined;
+            const cachedEntry = cached && (Date.now() - cached.at) < HREF_TTL_MS ? cached : undefined;
 
-            if (href === undefined) {
+            if (cachedEntry) {
+                href = (wantFull ? cachedEntry.full : cachedEntry.mini) || cachedEntry.mini || '';
+            } else {
                 const data = await fetchJson(`${API}/entity/product/${id}/images?limit=1`);
-                href = data?.rows?.[0]?.miniature?.downloadHref || '';
-                await kvSetJson(cacheKey, { href, at: Date.now() });
+                const row = data?.rows?.[0];
+                const mini = row?.miniature?.downloadHref || '';
+                const full = row?.downloadHref || mini;
+                await kvSetJson(cacheKey, { mini, full, at: Date.now() });
+                href = wantFull ? full : mini;
             }
         }
 
