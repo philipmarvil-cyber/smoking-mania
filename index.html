@@ -58,6 +58,7 @@
         let categories = [];    // категории (первый уровень) + их подкатегории
         let cart = {};          // { productId: { id, name, price, img, folderId, qty } }
         let favorites = {};     // { productId: { id, name, price, img } }
+        let checkoutFormState = {}; // сохранённые значения полей формы оформления заказа (fullName, phone, delivery, address, apt, floor, promo, comment)
         let detailQtyValue = 1;
         let categoryPageDefaultList = []; // текущий список товаров страницы категории (без учёта поиска) — чтобы возвращаться к нему при очистке поля поиска
         let currentDetailProductId = null; // id товара, открытого на странице "Товар" — нужно для обновления цены при изменении корзины
@@ -163,6 +164,9 @@
             } else if (screen.type === 'orders') {
                 document.getElementById('page-orders').classList.add('active');
                 renderOrdersPage();
+            } else if (screen.type === 'checkout') {
+                document.getElementById('page-checkout').classList.add('active');
+                renderCheckoutScreen();
             }
 
             const tabIndex = NAV_TAB_INDEX[screen.type];
@@ -553,41 +557,223 @@
             });
         }
 
-        async function checkout() {
-            const items = Object.values(cart);
-            if (!items.length) return;
-
-            const phone = await getSavedPhone();
-            if (!phone) {
-                requestPhoneForCheckout();
-                return;
-            }
-            submitOrder(items, phone);
+        function goToCheckout() {
+            if (!Object.keys(cart).length) return;
+            navigateTo({ type: 'checkout' });
         }
 
-        function requestPhoneForCheckout() {
-            if (!tg.requestContact) {
-                alert('Чтобы оформить заказ, подтвердите номер телефона в разделе "Аккаунт".');
+        // --- Экран оформления заказа: полноформатная страница (ФИО, телефон,
+        // способ доставки, адрес, оплата, промокод, комментарий) — раньше тут
+        // просто всплывал нативный запрос телефона Telegram и заказ уходил
+        // сразу же, без адреса и уточнений. ---
+        async function renderCheckoutScreen() {
+            const page = document.getElementById('page-checkout');
+            const items = Object.values(cart);
+            if (!items.length) {
+                page.innerHTML = `
+                    <div class="header"><span>Оформление заказа</span></div>
+                    <div class="checkout-content"><div class="empty-state">Корзина пуста</div></div>
+                `;
                 return;
             }
-            tg.requestContact((shared, response) => {
-                const contact = response?.responseUnsafe?.contact;
-                if (shared && contact?.phone_number) {
-                    showConfirmedPhone(contact.phone_number);
-                    if (tg.CloudStorage) tg.CloudStorage.setItem('phone_number', contact.phone_number, () => {});
-                    submitOrder(Object.values(cart), contact.phone_number);
-                }
+
+            const discountActive = isBulkDiscountActive();
+            const grandTotal = items.reduce((sum, i) => sum + (discountActive ? getDiscountedUnitPrice(i.price) : i.price) * i.qty, 0);
+
+            const user = tg.initDataUnsafe?.user;
+            if (checkoutFormState.fullName === undefined) {
+                checkoutFormState.fullName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : '';
+            }
+            if (checkoutFormState.phone === undefined) {
+                checkoutFormState.phone = (await getSavedPhone()) || '';
+            }
+            if (!checkoutFormState.delivery) checkoutFormState.delivery = 'courier';
+
+            const firstItem = items[0];
+            const itemImgHtml = firstItem.img
+                ? `<img src="${firstItem.img}" decoding="async">`
+                : `<span class="no-photo">Фото</span>`;
+            const itemsCountLabel = items.length === 1 ? '1 товар'
+                : (items.length >= 2 && items.length <= 4) ? `${items.length} товара` : `${items.length} товаров`;
+
+            const esc = (v) => (v || '').replace(/"/g, '&quot;');
+
+            const addressPlaceholderHint = checkoutFormState.address
+                ? ''
+                : `<div class="checkout-field-hint">Начните с города — например, «Новосибирск, ул. Ленина, 5»</div>`;
+
+            page.innerHTML = `
+                <div class="header"><span>Оформление заказа</span></div>
+                <div class="checkout-content">
+                    <div class="checkout-section checkout-item-summary" id="co-items-summary">
+                        <div class="cart-row-img">${itemImgHtml}</div>
+                        <div class="checkout-items-label">${itemsCountLabel}</div>
+                        <div class="checkout-items-arrow">→</div>
+                    </div>
+
+                    <div class="checkout-section">
+                        <div class="checkout-label">Доставка</div>
+                        <div class="delivery-tabs">
+                            <div class="delivery-tab${checkoutFormState.delivery === 'courier' ? ' active' : ''}" data-val="courier">Курьер</div>
+                            <div class="delivery-tab${checkoutFormState.delivery === 'cdek' ? ' active' : ''}" data-val="cdek">СДЭК</div>
+                        </div>
+                        <div class="checkout-card">
+                            <div class="checkout-field">
+                                <label class="checkout-field-label">Адрес <span class="req">*</span></label>
+                                <input class="checkout-input" id="co-address" placeholder="Город, улица, дом" value="${esc(checkoutFormState.address)}">
+                                ${addressPlaceholderHint}
+                            </div>
+                            <div class="checkout-row-2">
+                                <div class="checkout-field">
+                                    <label class="checkout-field-label">Квартира</label>
+                                    <input class="checkout-input" id="co-apt" placeholder="—" value="${esc(checkoutFormState.apt)}">
+                                </div>
+                                <div class="checkout-field">
+                                    <label class="checkout-field-label">Этаж</label>
+                                    <input class="checkout-input" id="co-floor" placeholder="—" value="${esc(checkoutFormState.floor)}">
+                                </div>
+                            </div>
+                            <div class="checkout-field">
+                                <label class="checkout-field-label">Название адреса <span class="req">*</span></label>
+                                <input class="checkout-input" id="co-address-label" placeholder='Например, "Дом"' value="${esc(checkoutFormState.addressLabel)}">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="checkout-section">
+                        <div class="checkout-label">Получатель</div>
+                        <div class="checkout-card">
+                            <div class="checkout-field">
+                                <label class="checkout-field-label">ФИО <span class="req">*</span></label>
+                                <input class="checkout-input" id="co-name" placeholder="Имя Фамилия" value="${esc(checkoutFormState.fullName)}">
+                            </div>
+                            <div class="checkout-field">
+                                <label class="checkout-field-label">Телефон <span class="req">*</span></label>
+                                <input class="checkout-input" id="co-phone" placeholder="+7" value="${esc(checkoutFormState.phone) || '+7'}">
+                            </div>
+                        </div>
+                        <button class="checkout-secondary-btn" id="co-save-address-btn" onclick="saveCheckoutAddress()">Сохранить адрес</button>
+                    </div>
+
+                    <div class="checkout-section">
+                        <div class="checkout-label">Оплата</div>
+                        <div class="checkout-card">
+                            <div class="payment-option">
+                                <div class="payment-radio checked"></div>
+                                <span>Наличными или картой при получении</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="checkout-section">
+                        <div class="promo-row">
+                            <input class="checkout-input" id="co-promo" placeholder="Промокод" value="${esc(checkoutFormState.promo)}">
+                            <button class="promo-apply-btn" onclick="applyPromoCode()">Применить</button>
+                        </div>
+                    </div>
+
+                    <div class="checkout-section">
+                        <textarea class="checkout-textarea" id="co-comment" placeholder="Комментарий к заказу" rows="2">${checkoutFormState.comment || ''}</textarea>
+                    </div>
+                </div>
+                <div class="cart-footer">
+                    <div class="cart-total-row"><span>Сумма заказа</span><span>${grandTotal.toLocaleString()} ₽</span></div>
+                    <div class="cart-total-row checkout-delivery-row"><span>Доставка</span><span>Уточнит менеджер</span></div>
+                    <div class="cart-total-row checkout-grand-total"><span>Итого</span><span>${grandTotal.toLocaleString()} ₽</span></div>
+                    <button class="checkout-btn" id="checkout-submit-btn" onclick="submitCheckoutOrder()">Подтвердить заказ</button>
+                </div>
+            `;
+
+            page.querySelector('#co-items-summary').onclick = () => navigateTo({ type: 'cart' });
+            page.querySelectorAll('.delivery-tab').forEach(tab => {
+                tab.onclick = () => {
+                    checkoutFormState.delivery = tab.dataset.val;
+                    captureCheckoutFormState();
+                    renderCheckoutScreen();
+                };
+            });
+            // Скрываем подсказку с примером адреса, как только человек начал печатать —
+            // не перерисовываем весь экран ради этого (сбило бы фокус с поля).
+            const addressInput = page.querySelector('#co-address');
+            if (addressInput) {
+                addressInput.addEventListener('input', () => {
+                    const hint = page.querySelector('.checkout-field-hint');
+                    if (hint) hint.style.display = addressInput.value.trim() ? 'none' : '';
+                });
+            }
+        }
+
+        // Забирает текущие значения полей формы в checkoutFormState — чтобы не
+        // терять введённое при переключении вкладки доставки (там страница
+        // перерисовывается) и перед отправкой заказа.
+        function captureCheckoutFormState() {
+            const get = id => document.getElementById(id)?.value ?? '';
+            checkoutFormState.fullName = get('co-name') || checkoutFormState.fullName;
+            checkoutFormState.phone = get('co-phone') || checkoutFormState.phone;
+            checkoutFormState.address = get('co-address') || checkoutFormState.address;
+            checkoutFormState.apt = get('co-apt') || checkoutFormState.apt;
+            checkoutFormState.floor = get('co-floor') || checkoutFormState.floor;
+            checkoutFormState.addressLabel = get('co-address-label') || checkoutFormState.addressLabel;
+            checkoutFormState.promo = get('co-promo') || checkoutFormState.promo;
+            checkoutFormState.comment = get('co-comment') || checkoutFormState.comment;
+        }
+
+        // Сохраняет текущий адрес (город/улица/дом, квартира, этаж, название)
+        // в Telegram CloudStorage, чтобы в следующий раз он подставлялся
+        // автоматически — как уже сделано с телефоном.
+        function saveCheckoutAddress() {
+            captureCheckoutFormState();
+            const address = (checkoutFormState.address || '').trim();
+            const label = (checkoutFormState.addressLabel || '').trim();
+            if (!address) { alert('Сначала укажите адрес'); return; }
+            if (!label) { alert('Дайте адресу название, например «Дом»'); return; }
+            if (!tg.CloudStorage) return;
+            const entry = {
+                label,
+                address,
+                apt: (checkoutFormState.apt || '').trim(),
+                floor: (checkoutFormState.floor || '').trim()
+            };
+            tg.CloudStorage.getItem('saved_addresses_v1', (err, value) => {
+                let list = [];
+                if (!err && value) { try { list = JSON.parse(value); } catch (e) {} }
+                list = [entry, ...list.filter(a => a.label !== label)].slice(0, 10);
+                tg.CloudStorage.setItem('saved_addresses_v1', JSON.stringify(list), () => {
+                    alert('Адрес «' + label + '» сохранён');
+                });
             });
         }
 
-        async function submitOrder(items, phone) {
-            const btn = document.getElementById('checkout-btn');
+        function applyPromoCode() {
+            const value = document.getElementById('co-promo')?.value.trim();
+            if (!value) return;
+            alert('Промокод «' + value + '» передадим менеджеру — он проверит и применит скидку, если условия подходят.');
+        }
+
+        async function submitCheckoutOrder() {
+            const items = Object.values(cart);
+            if (!items.length) return;
+
+            captureCheckoutFormState();
+            const fullName = (checkoutFormState.fullName || '').trim();
+            const phone = (checkoutFormState.phone || '').trim();
+            const address = (checkoutFormState.address || '').trim();
+            const apt = (checkoutFormState.apt || '').trim();
+            const floor = (checkoutFormState.floor || '').trim();
+            const promo = (checkoutFormState.promo || '').trim();
+            const comment = (checkoutFormState.comment || '').trim();
+            const deliveryLabel = checkoutFormState.delivery === 'cdek' ? 'СДЭК' : 'Курьер';
+
+            if (!fullName) { alert('Укажите ФИО получателя'); return; }
+            if (!phone || phone.replace(/\D/g, '').length < 10) { alert('Укажите корректный номер телефона'); return; }
+            if (!address) { alert('Укажите адрес доставки'); return; }
+
+            const fullAddress = [address, apt && `кв. ${apt}`, floor && `этаж ${floor}`].filter(Boolean).join(', ');
+
+            const btn = document.getElementById('checkout-submit-btn');
             const originalText = btn.textContent;
             btn.disabled = true;
             btn.textContent = 'Оформляем...';
-
-            const user = tg.initDataUnsafe?.user;
-            const customerName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : 'Клиент Telegram';
 
             try {
                 const discountActive = isBulkDiscountActive();
@@ -601,15 +787,21 @@
                             price: discountActive ? getDiscountedUnitPrice(i.price) : i.price,
                             qty: i.qty
                         })),
-                        customerName,
+                        customerName: fullName,
                         phone,
-                        telegramUserId
+                        telegramUserId,
+                        deliveryMethod: deliveryLabel,
+                        address: fullAddress,
+                        promoCode: promo || null,
+                        comment: comment || null
                     })
                 });
                 const data = await response.json();
                 if (!response.ok || !data.success) {
                     throw new Error(data.error || 'Не удалось оформить заказ');
                 }
+
+                if (tg.CloudStorage) tg.CloudStorage.setItem('phone_number', phone, () => {});
                 cart = {};
                 persistCart();
                 updateCartBadge();
@@ -630,12 +822,15 @@
 
                 refreshPriceTiersIfVisible();
                 refreshCardPricesIfVisible();
-                document.getElementById('cart-container').innerHTML =
-                    `<div class="empty-state">Заказ ${data.orderName ? '№' + data.orderName + ' ' : ''}оформлен!<br>Мы скоро с вами свяжемся.</div>`;
+                checkoutFormState = {};
+
+                document.getElementById('page-checkout').innerHTML = `
+                    <div class="header"><span>Оформление заказа</span></div>
+                    <div class="checkout-content"><div class="empty-state">Заказ ${data.orderName ? '№' + data.orderName + ' ' : ''}оформлен!<br>Мы скоро с вами свяжемся.</div></div>
+                `;
                 updateCartTotal(0);
             } catch (e) {
                 alert('Не получилось оформить заказ: ' + e.message + '\n\nПопробуйте ещё раз или напишите в поддержку.');
-            } finally {
                 btn.disabled = false;
                 btn.textContent = originalText;
             }
@@ -1378,9 +1573,53 @@
 
         .cart-footer { position: fixed; left: 0; right: 0; bottom: 65px; background: #fff; border-top: 1px solid #e5e5ea; padding: 14px 15px calc(14px + env(safe-area-inset-bottom)) 15px; z-index: 900; }
         .cart-total-row { display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+        .cart-total-row.checkout-delivery-row { font-weight: 500; color: #8e8e93; }
+        .cart-total-row.checkout-grand-total { font-size: 17px; padding-top: 10px; border-top: 1px solid #ececef; }
         .checkout-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; }
         .checkout-btn:active { opacity: 0.8; }
         .checkout-btn:disabled { opacity: 0.6; }
+
+        /* Оформление заказа */
+        .checkout-content { padding: 15px; padding-bottom: 260px; }
+        .checkout-section { margin-bottom: 20px; }
+        .checkout-label { font-size: 15px; font-weight: 700; margin: 0 2px 10px 2px; }
+        .checkout-item-summary { background: #fff; border-radius: 16px; padding: 10px 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+        .checkout-items-label { flex: 1; font-size: 14px; font-weight: 700; }
+        .checkout-items-arrow { color: #c7c7cc; font-size: 18px; }
+
+        .checkout-card { background: #fff; border-radius: 16px; padding: 2px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+        .checkout-field { padding: 12px 0; }
+        .checkout-field + .checkout-field { border-top: 1px solid #f0f0f2; }
+        .checkout-field-label { display: block; font-size: 12.5px; color: #9a9a9e; margin-bottom: 4px; }
+        .checkout-field-label .req { color: #ff3b30; }
+        .checkout-field-hint { font-size: 12px; color: #9a9a9e; line-height: 1.35; margin-top: 5px; }
+        .checkout-row-2 { display: flex; gap: 16px; padding: 12px 0; }
+        .checkout-row-2 + .checkout-field, .checkout-field + .checkout-row-2 { border-top: 1px solid #f0f0f2; }
+        .checkout-row-2 .checkout-field { flex: 1; padding: 0; border: none !important; }
+        .checkout-input, .checkout-textarea { width: 100%; border: none; outline: none; background: transparent; font-family: inherit; font-size: 16px; font-weight: 600; color: #1c1c1e; padding: 0; box-sizing: border-box; }
+        .checkout-input::placeholder, .checkout-textarea::placeholder { color: #c7c7cc; font-weight: 500; }
+        .checkout-textarea { resize: none; }
+
+        .checkout-secondary-btn { width: 100%; border: none; background: #eaeaed; color: #6b6b70; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; margin-top: 10px; }
+        .checkout-secondary-btn:active { opacity: 0.75; }
+
+        .delivery-tabs { display: flex; gap: 3px; background: #eaeaed; border-radius: 12px; padding: 3px; margin-bottom: 12px; }
+        .delivery-tab { flex: 1; text-align: center; padding: 10px 0; font-size: 14px; font-weight: 600; color: #6b6b70; border-radius: 10px; cursor: pointer; }
+        .delivery-tab.active { background: #fff; color: #1c1c1e; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+
+        .payment-option { display: flex; align-items: center; gap: 12px; padding: 14px 0; font-size: 15px; font-weight: 600; cursor: pointer; }
+        .payment-option + .payment-option { border-top: 1px solid #f0f0f2; }
+        .payment-radio { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; border: 2px solid #d1d1d6; box-sizing: border-box; position: relative; }
+        .payment-radio.checked { border-color: #1c1c1e; }
+        .payment-radio.checked::after { content: ''; position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: #1c1c1e; }
+        .payment-add-icon { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: #eaeaed; color: #6b6b70; display: flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; }
+        .payment-option.disabled { color: #c7c7cc; cursor: default; }
+        .payment-option.disabled .payment-add-icon { opacity: 0.6; }
+
+        .promo-row { display: flex; gap: 10px; align-items: center; }
+        .promo-row .checkout-input { flex: 1; }
+        .promo-apply-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 14px; font-weight: 700; padding: 0 18px; height: 40px; border-radius: 12px; cursor: pointer; white-space: nowrap; }
+        .promo-apply-btn:active { opacity: 0.75; }
 
         /* Account Page */
         .account-content { padding: 15px; }
@@ -1518,9 +1757,10 @@
         <div class="cart-content" id="cart-container"><div class="empty-state">Загрузка...</div></div>
         <div class="cart-footer">
             <div class="cart-total-row"><span>Сумма заказа</span><span id="cart-total">0 ₽</span></div>
-            <button class="checkout-btn" id="checkout-btn" onclick="checkout()" style="display:none;">Оформить заказ</button>
+            <button class="checkout-btn" id="checkout-btn" onclick="goToCheckout()" style="display:none;">Оформить заказ</button>
         </div>
     </div>
+    <div id="page-checkout" class="page"></div>
     <div id="page-account" class="page">
         <div class="header"><span>Аккаунт</span></div>
         <div class="account-content">
