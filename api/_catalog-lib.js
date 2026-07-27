@@ -157,6 +157,19 @@ export async function fetchJson(url, options = {}, attempt = 1) {
         return fetchJson(url, options, attempt + 1);
     }
 
+    // 502/503/504 — временная недоступность самого МойСклад (перегрузка,
+    // технические работы и т.п.), не наша ошибка запроса. Раньше это сразу
+    // валило всю синхронизацию (в т.ч. на 200-й же странице из тысяч), хотя
+    // повторный запрос через пару секунд обычно проходит нормально —
+    // ретраим так же, как и 429, просто с фиксированной паузой.
+    if ([502, 503, 504].includes(response.status)) {
+        if (attempt > 5) {
+            throw new Error(`Склад отвечает статусом ${response.status} даже после нескольких повторов — похоже, МойСклад сейчас недоступен`);
+        }
+        await sleep(3000 * attempt);
+        return fetchJson(url, options, attempt + 1);
+    }
+
     if (!response.ok) {
         let detail = '';
         try {
