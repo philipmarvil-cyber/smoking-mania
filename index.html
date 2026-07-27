@@ -54,6 +54,12 @@
         document.addEventListener('touchstart', preventScrollCollapse, { passive: true });
 
         // --- Состояние магазина ---
+        function escapeHtml(str) {
+            return (str || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
         let allProducts = [];   // все товары, полученные со склада
         let categories = [];    // категории (первый уровень) + их подкатегории
         let cart = {};          // { productId: { id, name, price, img, folderId, qty } }
@@ -830,13 +836,22 @@
             flame: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1 3-3 4-3 8a4 4 0 0 0 8 0c0-1-1-2-2-2 1 3-1 5-3 5a4 4 0 0 1-4-4c0-4 4-5 4-7z"/></svg>',
             cup: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16l-1.5 8a3 3 0 0 1-3 2.5h-7A3 3 0 0 1 5.5 17L4 9z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/></svg>',
             shirt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4 4 7l2 3 2-1v10h8V9l2 1 2-3-4-3-2 2h-4z"/></svg>',
+            hookah: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l1 3H8l1-3z"/><path d="M12 7v9"/><ellipse cx="12" cy="19" rx="5.5" ry="2.5"/><path d="M15 9c2.2 0 4 1.3 4 3s-1.6 2.8-3.6 3"/></svg>',
+            mouthpiece: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h11"/><path d="M14 8h4a3 3 0 0 1 3 3v2a3 3 0 0 1-3 3h-4z"/><path d="M3 9v6"/></svg>',
+            tongs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3c0 6 2 9 2 13"/><path d="M17 3c0 6-2 9-2 13"/><path d="M6 3h3M15 3h3"/><path d="M8 16l1 5M16 16l-1 5"/></svg>',
+            foil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M4 14h16M9 4v16M14 4v16"/></svg>',
             box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l8-4 8 4-8 4-8-4z"/><path d="M3 7v10l8 4 8-4V7"/><path d="M11 11v10"/></svg>'
         };
 
         function getCategoryIcon(name) {
             const n = (name || '').toLowerCase();
+            if (n.includes('кальян')) return CATEGORY_ICONS.hookah;
+            if (n.includes('смес')) return CATEGORY_ICONS.leaf;
             if (n.includes('табак')) return CATEGORY_ICONS.leaf;
             if (n.includes('жидкост')) return CATEGORY_ICONS.droplet;
+            if (n.includes('мундштук')) return CATEGORY_ICONS.mouthpiece;
+            if (n.includes('щипц')) return CATEGORY_ICONS.tongs;
+            if (n.includes('фольг') || n.includes('калауд')) return CATEGORY_ICONS.foil;
             if (n.includes('аксессуар')) return CATEGORY_ICONS.star;
             if (n.includes('уголь') || n.includes('угол')) return CATEGORY_ICONS.flame;
             if (n.includes('чаш') || n.includes('колб')) return CATEGORY_ICONS.cup;
@@ -1336,12 +1351,20 @@
                         <div id="price-tiers-wrap">${renderPriceTiersHtml(prod.price)}</div>
                         ${stockNoteHtml}
                         ${actionHtml}
-                        <div class="accordion">Описание <span>▼</span></div>
-                        <div class="accordion">Доставка <span>▼</span></div>
+                        <div class="accordion" id="description-accordion-toggle">Описание <span>▼</span></div>
+                        <div class="accordion-body" id="description-accordion-body" style="display:none;">${prod.description ? escapeHtml(prod.description).replace(/\n/g, '<br>') : 'Описание пока не добавлено.'}</div>
                     </div>
                 </div>
             `;
             detailPage.querySelector('.fav-toggle').addEventListener('click', () => toggleFavorite(prod));
+
+            const descToggle = detailPage.querySelector('#description-accordion-toggle');
+            const descBody = detailPage.querySelector('#description-accordion-body');
+            descToggle.addEventListener('click', () => {
+                const isOpen = descBody.style.display !== 'none';
+                descBody.style.display = isOpen ? 'none' : 'block';
+                descToggle.classList.toggle('open', !isOpen);
+            });
 
             const mainImgEl = detailPage.querySelector('#detail-main-img');
             const fullUrl = mainImgEl?.dataset.fullSrc;
@@ -1506,14 +1529,17 @@
         .price-tier-value.struck { text-decoration: line-through; color: #9a9a9e; font-weight: 600; font-size: 15px; }
         .price-tier-value.active { color: #2f8f4e; }
         .price-tier-note { font-size: 12.5px; color: #8a8a8e; padding: 0 2px; margin-bottom: 16px; line-height: 1.4; }
-        .accordion { border-top: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; font-weight: 500; font-size: 14px;}
+        .accordion { border-top: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; font-weight: 500; font-size: 14px; cursor: pointer; }
+        .accordion span { transition: transform 0.2s ease; }
+        .accordion.open span { transform: rotate(180deg); }
+        .accordion-body { padding: 0 0 15px 0; font-size: 13.5px; line-height: 1.5; color: #4a4a4e; }
         
         /* Shop Page */
-        .banner { background: #6b2d38; color: #fff; margin: 15px; padding: 20px; border-radius: 16px; }
+        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; margin: 15px 10px; padding: 20px; border-radius: 16px; }
         .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 12px; box-sizing: border-box; }
         .grid-load-sentinel { grid-column: 1 / -1; height: 1px; }
         .product-card { content-visibility: auto; contain-intrinsic-size: 280px; }
-        .product-card { background: #fff; border-radius: 20px; padding: 14px 14px 16px 14px; cursor: pointer; min-width: 0; overflow: hidden; box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+        .product-card { background: #fff; border-radius: 20px; padding: 14px 14px 16px 14px; cursor: pointer; min-width: 0; overflow: hidden; box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,0.04); display: flex; flex-direction: column; }
         .product-image-container { aspect-ratio: 1 / 1; height: auto; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; position: relative; }
         .product-card img { max-width: 100%; max-height: 100%; object-fit: contain; }
         .no-photo { color: #c7c7cc; font-size: 11px; text-align: center; padding: 6px; line-height: 1.25; }
@@ -1532,10 +1558,10 @@
         /* Товар не в наличии: приглушаем карточку серым и даём кнопку "Уведомить" */
         .product-card.out-of-stock { background: #f7f7f8; }
         .product-card.out-of-stock .product-title { color: #9a9a9e; }
-        .notify-btn { width: 100%; border: none; background: #eef0f2; color: #6b6f76; font-size: 14px; font-weight: 600; padding: 12px 0; border-radius: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+        .notify-btn { width: 100%; border: none; background: #eef0f2; color: #6b6f76; font-size: 14px; font-weight: 600; padding: 12px 0; border-radius: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: auto; }
         .notify-btn:active { opacity: 0.75; }
         .notify-btn svg { width: 15px; height: 15px; }
-        .add-to-cart-card-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14px; font-weight: 600; padding: 12px 0; border-radius: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+        .add-to-cart-card-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14px; font-weight: 600; padding: 12px 0; border-radius: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: auto; }
         .add-to-cart-card-btn:active { opacity: 0.8; }
         .add-to-cart-card-btn svg { width: 15px; height: 15px; }
         .product-main-img.out-of-stock { background: #e9e9ec; }
@@ -1642,6 +1668,7 @@
         .account-phone-label { font-size: 13px; color: #8e8e93; text-align: left; }
         .account-phone-value { font-size: 16px; font-weight: 600; text-align: left; margin: 6px 0 16px 0; }
         .account-phone-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 14px; font-weight: 600; padding: 13px; border-radius: 12px; cursor: pointer; }
+        .account-credit { text-align: center; font-size: 10px; color: #d4d4d8; margin-top: 18px; cursor: pointer; }
         .account-phone-btn:active { opacity: 0.8; }
         .account-link-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-top: 1px solid #f0f0f0; font-size: 14px; cursor: pointer; }
         .account-link-row:first-child { border-top: none; }
@@ -1812,6 +1839,7 @@
                     <span class="count">→</span>
                 </div>
             </div>
+            <div class="account-credit" onclick="window.open('https://t.me/Kiriyan6','_blank')">Бот создан пользователем @Kiriyan6</div>
         </div>
     </div>
 
