@@ -587,7 +587,6 @@
             if (checkoutFormState.phone === undefined) {
                 checkoutFormState.phone = (await getSavedPhone()) || '';
             }
-            if (!checkoutFormState.delivery) checkoutFormState.delivery = 'courier';
 
             const firstItem = items[0];
             const itemImgHtml = firstItem.img
@@ -597,10 +596,6 @@
                 : (items.length >= 2 && items.length <= 4) ? `${items.length} товара` : `${items.length} товаров`;
 
             const esc = (v) => (v || '').replace(/"/g, '&quot;');
-
-            const addressPlaceholderHint = checkoutFormState.address
-                ? ''
-                : `<div class="checkout-field-hint">Начните с города — например, «Новосибирск, ул. Ленина, 5»</div>`;
 
             page.innerHTML = `
                 <div class="header"><span>Оформление заказа</span></div>
@@ -613,29 +608,10 @@
 
                     <div class="checkout-section">
                         <div class="checkout-label">Доставка</div>
-                        <div class="delivery-tabs">
-                            <div class="delivery-tab${checkoutFormState.delivery === 'courier' ? ' active' : ''}" data-val="courier">Курьер</div>
-                            <div class="delivery-tab${checkoutFormState.delivery === 'cdek' ? ' active' : ''}" data-val="cdek">СДЭК</div>
-                        </div>
                         <div class="checkout-card">
-                            <div class="checkout-field">
-                                <label class="checkout-field-label">Адрес <span class="req">*</span></label>
-                                <input class="checkout-input" id="co-address" placeholder="Город, улица, дом" value="${esc(checkoutFormState.address)}">
-                                ${addressPlaceholderHint}
-                            </div>
-                            <div class="checkout-row-2">
-                                <div class="checkout-field">
-                                    <label class="checkout-field-label">Квартира</label>
-                                    <input class="checkout-input" id="co-apt" placeholder="—" value="${esc(checkoutFormState.apt)}">
-                                </div>
-                                <div class="checkout-field">
-                                    <label class="checkout-field-label">Этаж</label>
-                                    <input class="checkout-input" id="co-floor" placeholder="—" value="${esc(checkoutFormState.floor)}">
-                                </div>
-                            </div>
-                            <div class="checkout-field">
-                                <label class="checkout-field-label">Название адреса <span class="req">*</span></label>
-                                <input class="checkout-input" id="co-address-label" placeholder='Например, "Дом"' value="${esc(checkoutFormState.addressLabel)}">
+                            <div class="payment-option disabled">
+                                <div class="payment-radio checked"></div>
+                                <span>Самовывоз</span>
                             </div>
                         </div>
                     </div>
@@ -652,7 +628,6 @@
                                 <input class="checkout-input" id="co-phone" placeholder="+7" value="${esc(checkoutFormState.phone) || '+7'}">
                             </div>
                         </div>
-                        <button class="checkout-secondary-btn" id="co-save-address-btn" onclick="saveCheckoutAddress()">Сохранить адрес</button>
                     </div>
 
                     <div class="checkout-section">
@@ -678,70 +653,23 @@
                 </div>
                 <div class="cart-footer">
                     <div class="cart-total-row"><span>Сумма заказа</span><span>${grandTotal.toLocaleString()} ₽</span></div>
-                    <div class="cart-total-row checkout-delivery-row"><span>Доставка</span><span>Уточнит менеджер</span></div>
+                    <div class="cart-total-row checkout-delivery-row"><span>Доставка</span><span>Самовывоз</span></div>
                     <div class="cart-total-row checkout-grand-total"><span>Итого</span><span>${grandTotal.toLocaleString()} ₽</span></div>
                     <button class="checkout-btn" id="checkout-submit-btn" onclick="submitCheckoutOrder()">Подтвердить заказ</button>
                 </div>
             `;
 
             page.querySelector('#co-items-summary').onclick = () => navigateTo({ type: 'cart' });
-            page.querySelectorAll('.delivery-tab').forEach(tab => {
-                tab.onclick = () => {
-                    checkoutFormState.delivery = tab.dataset.val;
-                    captureCheckoutFormState();
-                    renderCheckoutScreen();
-                };
-            });
-            // Скрываем подсказку с примером адреса, как только человек начал печатать —
-            // не перерисовываем весь экран ради этого (сбило бы фокус с поля).
-            const addressInput = page.querySelector('#co-address');
-            if (addressInput) {
-                addressInput.addEventListener('input', () => {
-                    const hint = page.querySelector('.checkout-field-hint');
-                    if (hint) hint.style.display = addressInput.value.trim() ? 'none' : '';
-                });
-            }
         }
 
         // Забирает текущие значения полей формы в checkoutFormState — чтобы не
-        // терять введённое при переключении вкладки доставки (там страница
-        // перерисовывается) и перед отправкой заказа.
+        // терять введённое перед отправкой заказа.
         function captureCheckoutFormState() {
             const get = id => document.getElementById(id)?.value ?? '';
             checkoutFormState.fullName = get('co-name') || checkoutFormState.fullName;
             checkoutFormState.phone = get('co-phone') || checkoutFormState.phone;
-            checkoutFormState.address = get('co-address') || checkoutFormState.address;
-            checkoutFormState.apt = get('co-apt') || checkoutFormState.apt;
-            checkoutFormState.floor = get('co-floor') || checkoutFormState.floor;
-            checkoutFormState.addressLabel = get('co-address-label') || checkoutFormState.addressLabel;
             checkoutFormState.promo = get('co-promo') || checkoutFormState.promo;
             checkoutFormState.comment = get('co-comment') || checkoutFormState.comment;
-        }
-
-        // Сохраняет текущий адрес (город/улица/дом, квартира, этаж, название)
-        // в Telegram CloudStorage, чтобы в следующий раз он подставлялся
-        // автоматически — как уже сделано с телефоном.
-        function saveCheckoutAddress() {
-            captureCheckoutFormState();
-            const address = (checkoutFormState.address || '').trim();
-            const label = (checkoutFormState.addressLabel || '').trim();
-            if (!address) { alert('Сначала укажите адрес'); return; }
-            if (!label) { alert('Дайте адресу название, например «Дом»'); return; }
-            if (!tg.CloudStorage) return;
-            const entry = {
-                label,
-                address,
-                apt: (checkoutFormState.apt || '').trim(),
-                floor: (checkoutFormState.floor || '').trim()
-            };
-            tg.CloudStorage.getItem('saved_addresses_v1', (err, value) => {
-                let list = [];
-                if (!err && value) { try { list = JSON.parse(value); } catch (e) {} }
-                list = [entry, ...list.filter(a => a.label !== label)].slice(0, 10);
-                tg.CloudStorage.setItem('saved_addresses_v1', JSON.stringify(list), () => {
-                    alert('Адрес «' + label + '» сохранён');
-                });
-            });
         }
 
         function applyPromoCode() {
@@ -757,18 +685,12 @@
             captureCheckoutFormState();
             const fullName = (checkoutFormState.fullName || '').trim();
             const phone = (checkoutFormState.phone || '').trim();
-            const address = (checkoutFormState.address || '').trim();
-            const apt = (checkoutFormState.apt || '').trim();
-            const floor = (checkoutFormState.floor || '').trim();
             const promo = (checkoutFormState.promo || '').trim();
             const comment = (checkoutFormState.comment || '').trim();
-            const deliveryLabel = checkoutFormState.delivery === 'cdek' ? 'СДЭК' : 'Курьер';
+            const deliveryLabel = 'Самовывоз';
 
             if (!fullName) { alert('Укажите ФИО получателя'); return; }
             if (!phone || phone.replace(/\D/g, '').length < 10) { alert('Укажите корректный номер телефона'); return; }
-            if (!address) { alert('Укажите адрес доставки'); return; }
-
-            const fullAddress = [address, apt && `кв. ${apt}`, floor && `этаж ${floor}`].filter(Boolean).join(', ');
 
             const btn = document.getElementById('checkout-submit-btn');
             const originalText = btn.textContent;
@@ -791,7 +713,7 @@
                         phone,
                         telegramUserId,
                         deliveryMethod: deliveryLabel,
-                        address: fullAddress,
+                        address: null,
                         promoCode: promo || null,
                         comment: comment || null
                     })
@@ -1623,10 +1545,6 @@
 
         .checkout-secondary-btn { width: 100%; border: none; background: #eaeaed; color: #6b6b70; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; margin-top: 10px; }
         .checkout-secondary-btn:active { opacity: 0.75; }
-
-        .delivery-tabs { display: flex; gap: 3px; background: #eaeaed; border-radius: 12px; padding: 3px; margin-bottom: 12px; }
-        .delivery-tab { flex: 1; text-align: center; padding: 10px 0; font-size: 14px; font-weight: 600; color: #6b6b70; border-radius: 10px; cursor: pointer; }
-        .delivery-tab.active { background: #fff; color: #1c1c1e; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
 
         .payment-option { display: flex; align-items: center; gap: 12px; padding: 14px 0; font-size: 15px; font-weight: 600; cursor: pointer; }
         .payment-option + .payment-option { border-top: 1px solid #f0f0f2; }
