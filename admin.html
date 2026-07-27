@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Личный кабинет — Уведомления о поступлении</title>
+<style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f4f6; color: #1c1c1e; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px 16px; }
+    h1 { font-size: 20px; margin: 0 0 4px 0; }
+    .sub { color: #8a8a8e; font-size: 13.5px; margin: 0 0 24px 0; }
+
+    .gate { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .gate input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #e2e2e6; font-size: 15px; margin-bottom: 12px; }
+    .gate button, .refresh-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14.5px; font-weight: 600; padding: 12px; border-radius: 10px; cursor: pointer; }
+    .error { color: #d9482b; font-size: 13.5px; margin-top: 10px; }
+
+    .status-banner { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 12px; font-size: 13.5px; margin-bottom: 16px; }
+    .status-banner.ok { background: #e7f7ee; color: #1f7a4d; }
+    .status-banner.warn { background: #fdf1e2; color: #9a5b0a; }
+
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .refresh-btn { width: auto; padding: 9px 16px; font-size: 13.5px; }
+
+    .entry { background: #fff; border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .entry-product { font-weight: 700; font-size: 14.5px; margin-bottom: 4px; }
+    .entry-who { font-size: 13px; color: #4a4a4e; margin-bottom: 4px; }
+    .entry-time { font-size: 11.5px; color: #9a9a9e; }
+    .empty { text-align: center; color: #9a9a9e; padding: 40px 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <h1>Уведомления о поступлении</h1>
+    <p class="sub">Кто и о каком товаре просил сообщить, когда он снова появится в наличии</p>
+
+    <div id="gate-screen" class="gate">
+        <input type="password" id="key-input" placeholder="Ключ доступа">
+        <button onclick="tryLoad()">Войти</button>
+        <div class="error" id="gate-error" style="display:none;"></div>
+    </div>
+
+    <div id="content-screen" style="display:none;">
+        <div id="status-banner"></div>
+        <div class="toolbar">
+            <span class="sub" style="margin:0;" id="count-label"></span>
+            <button class="refresh-btn" onclick="loadEntries()">Обновить</button>
+        </div>
+        <div id="entries-list"></div>
+    </div>
+</div>
+
+<script>
+    // Ключ хранится только в sessionStorage — переживает обновление страницы,
+    // но не сохраняется постоянно на устройстве.
+    let adminKey = sessionStorage.getItem('admin-panel-key') || '';
+
+    function fmtTime(ts) {
+        return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function tryLoad() {
+        adminKey = document.getElementById('key-input').value.trim();
+        if (!adminKey) return;
+        sessionStorage.setItem('admin-panel-key', adminKey);
+        loadEntries();
+    }
+
+    async function loadEntries() {
+        const errEl = document.getElementById('gate-error');
+        errEl.style.display = 'none';
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`);
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                sessionStorage.removeItem('admin-panel-key');
+                document.getElementById('gate-screen').style.display = '';
+                document.getElementById('content-screen').style.display = 'none';
+                errEl.textContent = data.error || 'Не удалось загрузить данные';
+                errEl.style.display = '';
+                return;
+            }
+
+            document.getElementById('gate-screen').style.display = 'none';
+            document.getElementById('content-screen').style.display = '';
+
+            const banner = document.getElementById('status-banner');
+            if (data.adminConnected) {
+                banner.className = 'status-banner ok';
+                banner.textContent = '✅ Telegram-уведомления подключены — новые заявки будут приходить вам в бот';
+            } else {
+                banner.className = 'status-banner warn';
+                banner.textContent = '⚠️ Telegram-уведомления пока не подключены — напишите боту любое сообщение один раз, чтобы начать их получать';
+            }
+
+            const list = document.getElementById('entries-list');
+            const countLabel = document.getElementById('count-label');
+            countLabel.textContent = data.entries.length ? `Всего заявок: ${data.entries.length}` : '';
+
+            if (!data.entries.length) {
+                list.innerHTML = '<div class="empty">Пока никто не нажимал «Уведомить»</div>';
+                return;
+            }
+
+            list.innerHTML = data.entries.map(e => {
+                const whoParts = [];
+                if (e.name) whoParts.push(e.name);
+                if (e.username) whoParts.push(`@${e.username}`);
+                if (e.telegramUserId) whoParts.push(`id ${e.telegramUserId}`);
+                const who = whoParts.length ? whoParts.join(' · ') : 'Неизвестный пользователь';
+                return `
+                    <div class="entry">
+                        <div class="entry-product">${e.productName}</div>
+                        <div class="entry-who">${who}</div>
+                        <div class="entry-time">${fmtTime(e.at)}</div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            errEl.textContent = 'Ошибка сети';
+            errEl.style.display = '';
+        }
+    }
+
+    if (adminKey) loadEntries();
+</script>
+</body>
+</html>
