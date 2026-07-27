@@ -1271,7 +1271,14 @@
             currentDetailProductId = id;
             detailQtyValue = 1;
             const detailPage = document.getElementById('page-detail');
-            const imgHtml = prod.img ? `<img src="${prod.img}&size=full&v=3" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+            // Миниатюра почти всегда уже в кэше браузера (человек только что видел
+            // её в сетке товаров) — показываем её сразу же, не дожидаясь оригинала.
+            // Оригинал (крупнее и потому медленнее) догружается в фоне и подменяет
+            // картинку, как только будет готов — без видимого "пустого" ожидания.
+            const fullImgUrl = prod.img ? `${prod.img}&size=full&v=3` : '';
+            const imgHtml = prod.img
+                ? `<img src="${prod.img}" data-full-src="${fullImgUrl}" id="detail-main-img" decoding="async">`
+                : `<span class="no-photo">Тут скоро будет фото</span>`;
             const isFav = !!favorites[prod.id];
             const hasStockLimit = typeof prod.stock === 'number';
             const stockNoteHtml = (hasStockLimit && !prod.archived && prod.stock <= 5)
@@ -1312,6 +1319,20 @@
                 </div>
             `;
             detailPage.querySelector('.fav-toggle').addEventListener('click', () => toggleFavorite(prod));
+
+            const mainImgEl = detailPage.querySelector('#detail-main-img');
+            const fullUrl = mainImgEl?.dataset.fullSrc;
+            if (mainImgEl && fullUrl) {
+                const preload = new Image();
+                preload.onload = () => {
+                    // Если пока грузился оригинал человек уже ушёл с этой страницы
+                    // товара (открыл другой товар/экран) — подменять src незачем.
+                    if (currentDetailProductId !== id) return;
+                    mainImgEl.src = fullUrl;
+                    mainImgEl.classList.add('img-upgraded');
+                };
+                preload.src = fullUrl;
+            }
         }
     </script>
     <style>
