@@ -2,7 +2,7 @@
 // https://ваш-домен.vercel.app/api/kv-status), чтобы проверить,
 // действительно ли настроено и работает хранилище KV, а не только
 // заданы переменные окружения.
-import { isKvConfigured, kvGetJson, kvSetJson, kvGetCatalog, isTelegramConfigured } from './_catalog-lib.js';
+import { isKvConfigured, kvGetJson, kvSetJson, kvGetCatalog, isTelegramConfigured, ADMIN_TELEGRAM_USERNAME, ADMIN_CHAT_ID_KEY } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     const envConfigured = isKvConfigured();
@@ -44,12 +44,26 @@ export default async function handler(req, res) {
         webhookInfo = { error: e.message };
     }
 
+    let telegramAdminInfo = null;
+    try {
+        const lastUpdate = await kvGetJson('last-telegram-update');
+        const adminChatId = await kvGetJson(ADMIN_CHAT_ID_KEY);
+        telegramAdminInfo = {
+            expectedAdminUsername: ADMIN_TELEGRAM_USERNAME, // с кем сверяется юзернейм пришедшего сообщения
+            adminChatIdSaved: adminChatId || null,           // если null — админ ещё ни разу не написал боту (или юзернейм не совпал)
+            lastTelegramUpdate: lastUpdate ? { ...lastUpdate, at: new Date(lastUpdate.at).toISOString() } : null // последнее, что вообще пришло на /api/telegram-webhook — null значит апдейты от Telegram не доходят вообще
+        };
+    } catch (e) {
+        telegramAdminInfo = { error: e.message };
+    }
+
     res.status(200).json({
         envVarsPresent: envConfigured, // заданы ли KV_REST_API_URL/TOKEN (или UPSTASH_* аналоги) в Vercel
         readWriteWorks,               // реально ли получилось записать и прочитать тестовое значение
         readWriteError,
         cachedCatalog: catalogInfo,    // что сейчас лежит в кэше каталога, и когда он последний раз синхронизировался
         telegramBotTokenPresent: isTelegramConfigured(), // нужен для уведомлений о статусе заказа и о поступлении товара
+        telegramAdmin: telegramAdminInfo,
         // lastWebhookEvent — дошло ли вообще от МойСклад последнее событие по заказу,
         // и что в нём было (тип/действие). lastStockRefresh — чем закончилась попытка
         // обновить остатки после этого события (result:false = сработал кулдаун 3 минуты
