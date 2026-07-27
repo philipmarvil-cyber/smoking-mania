@@ -29,6 +29,21 @@
     .entry-who { font-size: 13px; color: #4a4a4e; margin-bottom: 4px; }
     .entry-time { font-size: 11.5px; color: #9a9a9e; }
     .empty { text-align: center; color: #9a9a9e; padding: 40px 20px; font-size: 14px; }
+
+    .section-heading { font-size: 16px; font-weight: 700; margin: 32px 0 12px 0; }
+    .banner-edit { background: #fff; border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .banner-edit label { display: block; font-size: 12.5px; color: #8a8a8e; margin: 10px 0 4px 0; }
+    .banner-edit label:first-child { margin-top: 0; }
+    .banner-edit input[type="text"], .banner-edit input[type="url"] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #e2e2e6; font-size: 14px; }
+    .banner-edit .color-row { display: flex; gap: 10px; }
+    .banner-edit .color-row > div { flex: 1; }
+    .banner-edit input[type="color"] { width: 100%; height: 38px; padding: 2px; border-radius: 8px; border: 1px solid #e2e2e6; }
+    .banner-preview { border-radius: 12px; padding: 20px 16px; color: #fff; margin-top: 12px; font-weight: 700; background-size: cover; background-position: center; }
+    .banner-preview .bp-sub { font-weight: 500; font-size: 13px; margin-top: 4px; opacity: 0.9; }
+    .banner-remove-btn { margin-top: 12px; width: 100%; border: none; background: #fdf1e2; color: #9a5b0a; font-size: 13.5px; font-weight: 600; padding: 10px; border-radius: 8px; cursor: pointer; }
+    .add-banner-btn { width: 100%; border: none; background: #eaeaed; color: #1c1c1e; font-size: 14px; font-weight: 600; padding: 12px; border-radius: 10px; cursor: pointer; margin-bottom: 10px; }
+    .save-banners-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14.5px; font-weight: 600; padding: 13px; border-radius: 10px; cursor: pointer; margin-top: 6px; }
+    .banners-save-status { text-align: center; font-size: 13px; margin-top: 8px; min-height: 18px; }
 </style>
 </head>
 <body>
@@ -49,6 +64,13 @@
             <button class="refresh-btn" onclick="loadEntries()">Обновить</button>
         </div>
         <div id="entries-list"></div>
+
+        <div class="section-heading">Баннеры на главной</div>
+        <p class="sub" style="margin-top:-6px;">Листаются свайпом на главной странице бота. Картинка необязательна — можно оставить просто цветной градиент.</p>
+        <button class="add-banner-btn" onclick="addBanner()">+ Добавить баннер</button>
+        <div id="banners-list"></div>
+        <button class="save-banners-btn" onclick="saveBanners()">Сохранить баннеры</button>
+        <div class="banners-save-status" id="banners-save-status"></div>
     </div>
 </div>
 
@@ -125,6 +147,107 @@
     }
 
     if (adminKey) loadEntries();
+
+    // --- Баннеры ---
+    let banners = [];
+
+    function blankBanner() {
+        return { id: `banner-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text: '', subtext: '', color1: '#82394a', color2: '#5a2530', imageUrl: '', buttonText: '', buttonLink: '' };
+    }
+
+    async function loadBanners() {
+        try {
+            const res = await fetch('/api/get-banners');
+            const data = await res.json();
+            banners = (data.success && Array.isArray(data.banners)) ? data.banners : [];
+        } catch (e) {
+            banners = [];
+        }
+        renderBannersList();
+    }
+
+    function addBanner() {
+        banners.push(blankBanner());
+        renderBannersList();
+    }
+
+    function removeBanner(id) {
+        banners = banners.filter(b => b.id !== id);
+        renderBannersList();
+    }
+
+    function updateBannerField(id, field, value) {
+        const b = banners.find(x => x.id === id);
+        if (b) b[field] = value;
+        renderBannerPreview(id);
+    }
+
+    function renderBannerPreview(id) {
+        const b = banners.find(x => x.id === id);
+        const el = document.getElementById(`preview-${id}`);
+        if (!b || !el) return;
+        el.style.background = b.imageUrl
+            ? `linear-gradient(135deg, ${b.color1}cc, ${b.color2}cc), url('${b.imageUrl.replace(/'/g, '')}')`
+            : `linear-gradient(135deg, ${b.color1}, ${b.color2})`;
+        el.innerHTML = `${b.text || 'Текст баннера'}${b.subtext ? `<div class="bp-sub">${b.subtext}</div>` : ''}`;
+    }
+
+    function renderBannersList() {
+        const list = document.getElementById('banners-list');
+        if (!banners.length) {
+            list.innerHTML = '<p class="sub">Баннеров пока нет — будет использован баннер по умолчанию.</p>';
+            return;
+        }
+        list.innerHTML = banners.map(b => `
+            <div class="banner-edit">
+                <label>Текст</label>
+                <input type="text" value="${(b.text || '').replace(/"/g, '&quot;')}" oninput="updateBannerField('${b.id}','text',this.value)">
+                <label>Подпись (необязательно)</label>
+                <input type="text" value="${(b.subtext || '').replace(/"/g, '&quot;')}" oninput="updateBannerField('${b.id}','subtext',this.value)">
+                <div class="color-row">
+                    <div>
+                        <label>Цвет 1</label>
+                        <input type="color" value="${b.color1 || '#82394a'}" oninput="updateBannerField('${b.id}','color1',this.value)">
+                    </div>
+                    <div>
+                        <label>Цвет 2</label>
+                        <input type="color" value="${b.color2 || '#5a2530'}" oninput="updateBannerField('${b.id}','color2',this.value)">
+                    </div>
+                </div>
+                <label>Ссылка на картинку-фон (необязательно)</label>
+                <input type="url" value="${(b.imageUrl || '').replace(/"/g, '&quot;')}" placeholder="https://..." oninput="updateBannerField('${b.id}','imageUrl',this.value)">
+                <label>Текст кнопки (необязательно)</label>
+                <input type="text" value="${(b.buttonText || '').replace(/"/g, '&quot;')}" placeholder="Например: Подробнее" oninput="updateBannerField('${b.id}','buttonText',this.value)">
+                <label>Куда ведёт кнопка (ссылка)</label>
+                <input type="url" value="${(b.buttonLink || '').replace(/"/g, '&quot;')}" placeholder="https://..." oninput="updateBannerField('${b.id}','buttonLink',this.value)">
+                <div class="banner-preview" id="preview-${b.id}"></div>
+                <button class="banner-remove-btn" onclick="removeBanner('${b.id}')">Удалить баннер</button>
+            </div>
+        `).join('');
+        banners.forEach(b => renderBannerPreview(b.id));
+    }
+
+    async function saveBanners() {
+        const statusEl = document.getElementById('banners-save-status');
+        statusEl.textContent = 'Сохраняем…';
+        statusEl.style.color = '#8a8a8e';
+        try {
+            const res = await fetch(`/api/save-banners?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ banners })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Ошибка сохранения');
+            statusEl.textContent = 'Сохранено ✓';
+            statusEl.style.color = '#1f7a4d';
+        } catch (e) {
+            statusEl.textContent = 'Не удалось сохранить: ' + e.message;
+            statusEl.style.color = '#d9482b';
+        }
+    }
+
+    loadBanners();
 </script>
 </body>
 </html>
