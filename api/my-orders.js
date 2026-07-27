@@ -7,7 +7,7 @@
 // 1. ids — локальная история конкретного устройства (Telegram CloudStorage);
 // 2. запись в KV orders-by-user:{telegramUserId} — сохраняется в
 //    /api/create-order при оформлении, переживает смену устройства.
-import { API, fetchJson, kvGetJson } from './_catalog-lib.js';
+import { API, fetchJson, kvGetJson, colorToHex } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -47,11 +47,4 @@ export default async function handler(req, res) {
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
-}
-
-// МойСклад хранит цвет статуса как целое число (decimal RGB), фронту
-// нужен CSS-цвет вида "#rrggbb".
-function colorToHex(color) {
-    if (typeof color !== 'number') return null;
-    return '#' + (color >>> 0).toString(16).padStart(6, '0').slice(-6);
 }
