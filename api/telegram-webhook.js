@@ -21,6 +21,20 @@ export default async function handler(req, res) {
         const update = req.body || {};
         const message = update.message || update.edited_message;
         const from = message?.from;
+
+        // Диагностика: запоминаем последний входящий апдейт, даже если это не
+        // админ — так через /api/kv-status видно, доходят ли сообщения от
+        // Telegram вообще, и какой юзернейм Telegram реально присылает (это
+        // помогает поймать опечатку/несовпадение регистра, из-за которого
+        // сравнение с ADMIN_TELEGRAM_USERNAME тихо не срабатывает).
+        await kvSetJson('last-telegram-update', {
+            at: Date.now(),
+            hasMessage: !!message,
+            fromUsername: from?.username || null,
+            fromId: from?.id || null,
+            text: message?.text || null
+        }).catch(() => {});
+
         if (!from) return;
 
         const senderUsername = (from.username || '').toLowerCase();
