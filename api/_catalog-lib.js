@@ -294,6 +294,11 @@ export async function loadCatalogData() {
     const hiddenFolderIds = getHiddenFolderIds(folderRows);
     const visibleProductRows = productRows.filter(p => {
         const folderId = extractId(p.productFolder?.meta?.href);
+        // Товар без назначенной категории раньше всё равно попадал в
+        // allProducts на фронте — не виден ни в одной категории, но
+        // "протекал" в "Новинки" на главной и в поиск. Пока в МойСклад не
+        // назначена категория — товар в боте вообще не должен появляться.
+        if (!folderId) return false;
         return !hiddenFolderIds.has(folderId);
     });
 
