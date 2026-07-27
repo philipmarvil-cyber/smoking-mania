@@ -18,7 +18,8 @@ export default async function handler(req, res) {
     // Диагностика: запоминаем КАЖДЫЙ входящий запрос как есть, ДО всех
     // проверок ниже — иначе если запрос вообще не доходит с клиента (сеть,
     // WebView) или приходит без productId, в /api/kv-status и подавно не
-    // видно, что вообще происходит.
+    // видно, что вообще происходит. Не ждём (await) специально — не хотим
+    // тормозить ответ клиенту из-за диагностики.
     kvSetJson('last-notify-attempt', { at: Date.now(), body: req.body || null }).catch(() => {});
 
     try {
@@ -28,9 +29,14 @@ export default async function handler(req, res) {
             return;
         }
 
-        // Отвечаем покупателю сразу — дальше просто фоновая запись/уведомление.
-        res.status(200).json({ success: true });
-
+        // ВАЖНО: раньше здесь сразу уходил res.status(200), а вся работа ниже
+        // (запись в лог, отправка в Telegram) продолжалась "в фоне" уже после
+        // ответа — ровно как в order-webhook.js. Там это отрабатывало, а
+        // здесь на практике Vercel обрывал выполнение функции сразу же после
+        // отправки ответа клиенту, не дожидаясь фонового кода — до записи
+        // лога и отправки в Telegram дело просто не доходило. Поэтому теперь
+        // делаем всё ДО ответа: чуть медленнее для клиента (доли секунды),
+        // зато гарантированно выполняется целиком.
         const catalog = await kvGetCatalog().catch(() => null);
         const product = (catalog?.products || []).find(p => p.id === productId);
         const productName = product?.name || productId;
@@ -59,12 +65,15 @@ export default async function handler(req, res) {
             const sent = await sendTelegramMessage(
                 adminChatId,
                 `🔔 Хотят узнать о поступлении\n\n<b>${productName}</b>\n${who}`
-            ).catch((e) => { throw e; });
+            );
             await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatId, sent: !!sent }).catch(() => {});
         } else {
             await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatId: null, sent: false, reason: 'нет сохранённого chat_id админа' }).catch(() => {});
         }
+
+        res.status(200).json({ success: true });
     } catch (e) {
         await kvSetJson('last-notify-error', { at: Date.now(), message: e.message }).catch(() => {});
+        res.status(200).json({ success: true }); // покупателю всё равно не показываем ошибку — попап уже увидел
     }
 }
