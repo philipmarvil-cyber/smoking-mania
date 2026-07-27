@@ -83,7 +83,10 @@ export default async function handler(req, res) {
         res.setHeader('Content-Type', contentType);
         // Кэш на CDN Vercel — повторные запросы этой же картинки от любых пользователей
         // не будут повторно ходить в МойСклад целую неделю.
-        res.setHeader('Cache-Control', 'public, s-maxage=604800, stale-while-revalidate=2592000');
+        // max-age — кэш в самом браузере/WebView телефона (было только s-maxage,
+        // а это работает лишь для CDN; без max-age при повторном заходе телефон
+        // всё равно каждый раз ходил в сеть за уже виденной картинкой).
+        res.setHeader('Cache-Control', 'public, max-age=604800, s-maxage=604800, stale-while-revalidate=2592000');
         res.setHeader('X-Ms-Image-Variant', wantFull ? 'full' : 'mini');
         res.setHeader('X-Ms-Image-Bytes', String(buffer.length));
         res.status(200).send(buffer);
