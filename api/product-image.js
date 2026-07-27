@@ -37,14 +37,18 @@ export default async function handler(req, res) {
             // всегда добывается отдельным точечным запросом по конкретному
             // товару (там это поле есть надёжно) — с кэшем на 7 дней, чтобы
             // не дёргать МойСклад повторно при каждом открытии карточки.
-            const cacheKey = `imgfull:${id}`;
+            const cacheKey = `imgfull2:${id}`;
             const cached = await kvGetJson(cacheKey);
             if (cached && (Date.now() - cached.at) < HREF_TTL_MS) {
                 href = cached.href || null;
             } else {
                 const data = await fetchJson(`${API}/entity/product/${id}/images?limit=1`);
                 const row = data?.rows?.[0];
-                href = row?.downloadHref || row?.miniature?.downloadHref || null;
+                // ВАЖНО: ссылка на оригинал изображения лежит в row.meta.downloadHref,
+                // а НЕ в row.downloadHref (это поле почти всегда пустое) — из-за этой
+                // путаницы "full" вообще всё это время незаметно откатывался на
+                // миниатюру, сколько бы других вещей (кэш, версии URL) мы ни правили.
+                href = row?.meta?.downloadHref || row?.miniature?.downloadHref || null;
                 await kvSetJson(cacheKey, { href: href || '', at: Date.now() });
             }
         } else {
