@@ -1028,7 +1028,11 @@
             } else {
                 alert(message);
             }
-            if (!telegramUserId) return; // без Telegram id подписку не на что оформлять
+            // Раньше тут был ранний return при отсутствии telegramUserId — это
+            // тихо блокировало сам запрос целиком (заявка не сохранялась и
+            // администратор ничего не получал, даже когда telegramUserId по
+            // какой-то причине не пришёл от Telegram). Подписка полезна и без
+            // id, поэтому отправляем в любом случае.
             const tgUser = tg.initDataUnsafe?.user;
             const fullName = tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : null;
             fetch('/api/notify-restock', {
@@ -1036,7 +1040,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     productId: prod.id,
-                    telegramUserId,
+                    telegramUserId: telegramUserId || null,
                     name: fullName,
                     username: tgUser?.username || null
                 })
