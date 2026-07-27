@@ -385,6 +385,16 @@ export function isTelegramConfigured() {
     return !!TELEGRAM_BOT_TOKEN;
 }
 
+// Юзернейм администратора (без "@"), которому шлём уведомления о клиентах,
+// нажавших "Уведомить". Можно переопределить переменной окружения
+// ADMIN_TELEGRAM_USERNAME, не трогая код. chat_id самого админа Telegram
+// по юзернейму напрямую не отдаёт (это ограничение самого Bot API, не наше) —
+// поэтому chat_id узнаём автоматически, как только админ сам хоть раз
+// напишет что-нибудь боту (см. api/telegram-webhook.js), и дальше уже
+// используем сохранённый в KV chat_id.
+export const ADMIN_TELEGRAM_USERNAME = (process.env.ADMIN_TELEGRAM_USERNAME || 'propervoperpropervoperpropervope').replace(/^@/, '').toLowerCase();
+export const ADMIN_CHAT_ID_KEY = 'admin-chat-id:v1';
+
 export async function sendTelegramMessage(chatId, text) {
     if (!TELEGRAM_BOT_TOKEN || !chatId) return false;
     try {
