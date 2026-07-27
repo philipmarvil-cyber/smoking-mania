@@ -121,7 +121,7 @@ export default async function handler(req, res) {
             'Заказ из Telegram-бота.',
             `Клиент: ${customerName || '—'}`,
             `Телефон: ${cleanPhone}`,
-            `Доставка: ${deliveryMethod || '—'}`
+            `Доставка: ${deliveryMethod || '—'} (г. Москва, Шипиловская улица, дом 50, корпус 1)`
         ];
         if (address) descriptionLines.push(`Адрес: ${address}`);
         if (promoCode) descriptionLines.push(`Промокод: ${promoCode}`);
