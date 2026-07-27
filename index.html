@@ -1188,17 +1188,26 @@
                 return card;
             }
 
-            // Первая порция (то, что и так поместится на экране) строится и
-            // вставляется сразу — открытие категории не ждёт всех товаров.
-            // Остальное дорисовывается порциями по requestAnimationFrame —
-            // раньше весь список (в т.ч. огромные категории вроде "Кальянные
-            // смеси" со всеми вложенными подкатегориями) строился одним
-            // синхронным циклом и на секунду-две "вешал" интерфейс при
-            // открытии.
+            // Раньше тут были requestAnimationFrame-порции, которые всё равно
+            // очень быстро (пара секунд) строили ВЕСЬ список в DOM целиком —
+            // для обычной категории это незаметно, но "Кальянные смеси"
+            // (тысячи позиций с учётом всех вложенных подкатегорий) в итоге
+            // получала тысячи живых карточек (картинки + несколько SVG-иконок
+            // на каждой) сразу после открытия. Само открытие переставало
+            // "виснуть", но ПОСЛЕДУЮЩИЙ скролл лагал и на iPhone, и на Android —
+            // именно от размера DOM, а не от того, как он строился. Теперь
+            // рендерим по одной порции и достраиваем следующую только когда
+            // пользователь реально долистал почти до конца — DOM растёт
+            // настолько, насколько человек реально пролистал, а не сразу
+            // весь список наперёд.
             const CHUNK_SIZE = 24;
             let index = 0;
+            let chunkObserver = null;
+            let sentinel = null;
+
             function renderNextChunk() {
-                if (myToken !== productRenderToken) return; // отменено более новым рендером
+                if (myToken !== productRenderToken) { if (chunkObserver) chunkObserver.disconnect(); return; }
+                if (sentinel) { sentinel.remove(); sentinel = null; }
                 const fragment = document.createDocumentFragment();
                 const end = Math.min(index + CHUNK_SIZE, sortedList.length);
                 for (; index < end; index++) {
@@ -1206,7 +1215,17 @@
                 }
                 container.appendChild(fragment);
                 if (index < sortedList.length) {
-                    requestAnimationFrame(renderNextChunk);
+                    sentinel = document.createElement('div');
+                    sentinel.className = 'grid-load-sentinel';
+                    container.appendChild(sentinel);
+                    if (!chunkObserver) {
+                        chunkObserver = new IntersectionObserver((entries) => {
+                            if (entries[0].isIntersecting) renderNextChunk();
+                        }, { rootMargin: '800px 0px' }); // с запасом вперёд, чтобы догрузка была не заметна на глаз
+                    }
+                    chunkObserver.observe(sentinel);
+                } else if (chunkObserver) {
+                    chunkObserver.disconnect();
                 }
             }
             renderNextChunk();
@@ -1501,6 +1520,8 @@
         /* Shop Page */
         .banner { background: #6b2d38; color: #fff; margin: 15px; padding: 20px; border-radius: 16px; }
         .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 12px; box-sizing: border-box; }
+        .grid-load-sentinel { grid-column: 1 / -1; height: 1px; }
+        .product-card { content-visibility: auto; contain-intrinsic-size: 280px; }
         .product-card { background: #fff; border-radius: 20px; padding: 14px 14px 16px 14px; cursor: pointer; min-width: 0; overflow: hidden; box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
         .product-image-container { aspect-ratio: 1 / 1; height: auto; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; position: relative; }
         .product-card img { max-width: 100%; max-height: 100%; object-fit: contain; }
