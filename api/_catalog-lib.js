@@ -366,6 +366,7 @@ export async function loadCatalogData() {
             name: product.name,
             price: (product.salePrices?.[0]?.value || 0) / 100,
             img: hasPhoto ? `/api/product-image?id=${product.id}` : '',
+            description: product.description || '',
             folderId,
             stock: stock === null ? null : Math.max(0, stock), // доступное количество; null = учёт остатков выключен в МойСклад
             outOfStock: stock === null ? false : stock <= 0,
