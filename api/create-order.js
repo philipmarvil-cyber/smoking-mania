@@ -1,6 +1,6 @@
 // Создание заказа покупателя в МойСклад из корзины бота.
 // Все запросы идут через fetchJson с троттлингом и ретраями на 429.
-import { API, fetchJson, kvGetCatalog, kvSetCatalog, getLiveStock } from './_catalog-lib.js';
+import { API, fetchJson, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, getLiveStock } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -9,7 +9,7 @@ export default async function handler(req, res) {
     }
 
     try {
-        const { items, customerName, phone } = req.body || {};
+        const { items, customerName, phone, telegramUserId, deliveryMethod, address, promoCode, comment } = req.body || {};
         if (!Array.isArray(items) || !items.length) {
             res.status(400).json({ success: false, error: 'Корзина пуста' });
             return;
@@ -113,6 +113,20 @@ export default async function handler(req, res) {
         });
 
         // 4. Заказ покупателя.
+        // ВАЖНО: раньше сюда попадали только имя и телефон — способ доставки,
+        // адрес, промокод и комментарий клиента собирались на фронте, но
+        // никогда не передавались на сервер и терялись. Теперь всё это уходит
+        // в описание заказа, чтобы менеджер видел куда и что везти.
+        const descriptionLines = [
+            'Заказ из Telegram-бота.',
+            `Клиент: ${customerName || '—'}`,
+            `Телефон: ${cleanPhone}`,
+            `Доставка: ${deliveryMethod || '—'}`,
+            `Адрес: ${address || '—'}`
+        ];
+        if (promoCode) descriptionLines.push(`Промокод: ${promoCode}`);
+        if (comment) descriptionLines.push(`Комментарий клиента: ${comment}`);
+
         const order = await fetchJson(`${API}/entity/customerorder`, {
             method: 'POST',
             body: JSON.stringify({
@@ -120,7 +134,7 @@ export default async function handler(req, res) {
                 agent: { meta: agent.meta },
                 ...(mainStore ? { store: { meta: mainStore.meta } } : {}),
                 positions,
-                description: `Заказ из Telegram-бота.\nКлиент: ${customerName || '—'}\nТелефон: ${cleanPhone}`
+                description: descriptionLines.join('\n')
             })
         });
 
@@ -160,7 +174,19 @@ export default async function handler(req, res) {
             await kvSetCatalog(catalog);
         }
 
-        res.status(200).json({ success: true, orderName: order.name, reservedPositions: reservedCount });
+        // Сохраняем связку telegramUserId → id заказа в KV — раньше "Мои
+        // заказы" полагались только на локальный CloudStorage устройства,
+        // и заказ, оформленный без сохранения orderId (см. фикс ниже), был
+        // виден только на этом же телефоне. Теперь список переживёт
+        // переустановку/смену устройства.
+        if (telegramUserId) {
+            const key = `orders-by-user:${telegramUserId}`;
+            const existing = (await kvGetJson(key)) || [];
+            const updated = [order.id, ...existing.filter(id => id !== order.id)].slice(0, 30);
+            await kvSetJson(key, updated);
+        }
+
+        res.status(200).json({ success: true, orderId: order.id, orderName: order.name, reservedPositions: reservedCount });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
