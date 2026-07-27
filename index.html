@@ -280,6 +280,53 @@
             });
         }
 
+        const loadedOrderDetails = {}; // кэш уже загруженных составов заказов на время сессии
+
+        // Разворачивает/сворачивает состав заказа под карточкой в "Мои заказы".
+        // Детали грузятся только один раз при первом раскрытии.
+        async function toggleOrderDetail(orderId) {
+            const detailEl = document.getElementById(`order-detail-${orderId}`);
+            if (!detailEl) return;
+
+            if (detailEl.style.display !== 'none') {
+                detailEl.style.display = 'none';
+                return;
+            }
+
+            if (loadedOrderDetails[orderId]) {
+                detailEl.innerHTML = loadedOrderDetails[orderId];
+                detailEl.style.display = 'block';
+                return;
+            }
+
+            detailEl.innerHTML = '<div class="order-detail-loading">Загружаем состав заказа…</div>';
+            detailEl.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/order-detail', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: orderId })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.error || 'Ошибка');
+
+                const html = data.order.positions.length
+                    ? data.order.positions.map(p => `
+                        <div class="order-detail-row">
+                            <span>${p.name} × ${p.quantity}</span>
+                            <span>${(p.price * p.quantity).toLocaleString()} ₽</span>
+                        </div>
+                    `).join('')
+                    : '<div class="order-detail-row">Список товаров пуст</div>';
+
+                loadedOrderDetails[orderId] = html;
+                detailEl.innerHTML = html;
+            } catch (e) {
+                detailEl.innerHTML = '<div class="order-detail-loading">Не удалось загрузить состав заказа</div>';
+            }
+        }
+
         function renderOrdersPage() {
             const container = document.getElementById('orders-content');
             container.innerHTML = '<div class="empty-state">Загружаем заказы…</div>';
@@ -311,7 +358,7 @@
                         return;
                     }
                     container.innerHTML = data.orders.map(o => `
-                        <div class="order-card">
+                        <div class="order-card" id="order-card-${o.id}" data-order-id="${o.id}">
                             <div class="order-card-top">
                                 <span class="order-card-name">Заказ №${o.name}</span>
                                 <span class="order-card-status"${o.stateColor ? ` style="background:${o.stateColor}22;color:${o.stateColor}"` : ''}>${o.stateName}</span>
@@ -320,8 +367,16 @@
                                 <span>${new Date(o.moment).toLocaleDateString('ru-RU')}</span>
                                 <span>${o.sum.toLocaleString()} ₽</span>
                             </div>
+                            <div class="order-card-detail" id="order-detail-${o.id}" style="display:none;"></div>
                         </div>
                     `).join('');
+
+                    // Тап по заказу — разворачивает состав (что заказали). Грузим детали
+                    // только при первом раскрытии конкретного заказа и запоминаем в памяти,
+                    // повторный тап просто открывает/закрывает уже загруженное.
+                    container.querySelectorAll('.order-card').forEach(card => {
+                        card.addEventListener('click', () => toggleOrderDetail(card.dataset.orderId));
+                    });
                 } catch (e) {
                     container.innerHTML = '<div class="empty-state">Не удалось загрузить заказы</div>';
                 }
@@ -834,12 +889,12 @@
             droplet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c4 5 7 8.5 7 12a7 7 0 1 1-14 0c0-3.5 3-7 7-12z"/></svg>',
             star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.2-5.4 3.2 1.3-6-4.6-4.1 6.1-.6z"/></svg>',
             flame: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1 3-3 4-3 8a4 4 0 0 0 8 0c0-1-1-2-2-2 1 3-1 5-3 5a4 4 0 0 1-4-4c0-4 4-5 4-7z"/></svg>',
-            cup: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16l-1.5 8a3 3 0 0 1-3 2.5h-7A3 3 0 0 1 5.5 17L4 9z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/></svg>',
+            cup: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5h16"/><path d="M5 8.5c0 5.5 2.3 10 7 10s7-4.5 7-10"/></svg>',
             shirt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4 4 7l2 3 2-1v10h8V9l2 1 2-3-4-3-2 2h-4z"/></svg>',
             hookah: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 4h7l1 3h-9z"/><path d="M12 7v9.5"/><ellipse cx="12" cy="19" rx="6" ry="2.5"/></svg>',
             petal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="3"/><circle cx="12" cy="16.5" r="3"/><circle cx="7.5" cy="12" r="3"/><circle cx="16.5" cy="12" r="3"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/></svg>',
-            flask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2M6.453 15h11.094M8.5 2h7"/></svg>',
-            coal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2.5"/><circle cx="9.5" cy="9.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="14.5" cy="9.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="9.5" cy="14.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="14.5" cy="14.5" r="0.9" fill="currentColor" stroke="none"/></svg>',
+            flask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3h4"/><path d="M10.5 3v5.2c-3 2-4.5 5-4.5 7.8a6 6 0 0 0 12 0c0-2.8-1.5-5.8-4.5-7.8V3"/></svg>',
+            coal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="8" height="8" rx="1.6"/><rect x="10.5" y="5.5" width="8" height="8" rx="1.6"/><circle cx="7" cy="14" r="0.8" fill="currentColor" stroke="none"/><circle cx="14.5" cy="9.5" r="0.8" fill="currentColor" stroke="none"/></svg>',
             mouthpiece: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="13" height="6" rx="3"/><path d="M16 10.5h3a2.5 2.5 0 0 1 0 5h-3"/></svg>',
             tongs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3c0 6.5 1.5 9.5 1.5 14"/><path d="M16 3c0 6.5-1.5 9.5-1.5 14"/><path d="M6.5 3h3M14.5 3h3"/></svg>',
             foil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8c4-3 12-3 16 0"/><path d="M4 13c4-3 12-3 16 0"/><path d="M4 18c4-3 12-3 16 0"/></svg>',
@@ -908,6 +963,16 @@
             if (!el || el.dataset.dragScrollBound) return;
             el.dataset.dragScrollBound = '1';
             let startX = 0, startY = 0, startScrollLeft = 0, direction = null;
+            let pendingLeft = null, rafId = null;
+
+            function flush() {
+                rafId = null;
+                if (pendingLeft !== null) {
+                    el.scrollLeft = pendingLeft;
+                    pendingLeft = null;
+                }
+            }
+
             el.addEventListener('touchstart', (e) => {
                 const t = e.touches[0];
                 startX = t.clientX;
@@ -924,7 +989,11 @@
                 }
                 if (direction === 'x') {
                     e.preventDefault();
-                    el.scrollLeft = startScrollLeft - dx;
+                    // Пишем scrollLeft не на каждое событие touchmove (их может быть
+                    // много за один кадр — это раньше и вызывало фриз/лаги), а
+                    // максимум раз за кадр отрисовки.
+                    pendingLeft = startScrollLeft - dx;
+                    if (rafId === null) rafId = requestAnimationFrame(flush);
                 }
                 // direction === 'y' — ничего не делаем, пусть страница скроллится сама
             }, { passive: false });
@@ -1195,11 +1264,18 @@
                 // а качественную версию догружает в фоне и бесшовно подменяет —
                 // так сетка остаётся такой же быстрой, как раньше, но со временем
                 // "дозревает" до чёткой картинки, не тормозя открытие категории.
+                // Откладываем через requestIdleCallback — если в этот момент человек
+                // как раз свайпает (например, ленту "Новинки"), запуск декодирования
+                // десятков картинок одновременно с жестом и вызывал те самые лаги.
                 const cardImgEl = card.querySelector('.product-image-container img');
                 if (cardImgEl && cardImgEl.dataset.fullSrc) {
-                    const preload = new Image();
-                    preload.onload = () => { cardImgEl.src = cardImgEl.dataset.fullSrc; };
-                    preload.src = cardImgEl.dataset.fullSrc;
+                    const upgrade = () => {
+                        const preload = new Image();
+                        preload.onload = () => { cardImgEl.src = cardImgEl.dataset.fullSrc; };
+                        preload.src = cardImgEl.dataset.fullSrc;
+                    };
+                    if ('requestIdleCallback' in window) requestIdleCallback(upgrade, { timeout: 2000 });
+                    else setTimeout(upgrade, 300);
                 }
 
                 return card;
@@ -1574,7 +1650,11 @@
         .accordion-body { padding: 0 0 15px 0; font-size: 13.5px; line-height: 1.5; color: #4a4a4e; }
         
         /* Shop Page */
-        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; margin: 15px 6px; padding: 20px; border-radius: 16px; }
+        .banners-strip { display: flex; gap: 8px; overflow-x: auto; padding: 15px 6px; box-sizing: border-box; scrollbar-width: none; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+        .banners-strip::-webkit-scrollbar { display: none; }
+        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 100%; width: 100%; box-sizing: border-box; scroll-snap-align: start; background-size: cover; background-position: center; }
+        .banner-sub { font-weight: 500; font-size: 13px; margin-top: 6px; opacity: 0.9; }
+        .banner-cta { display: inline-block; margin-top: 14px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: #fff; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 20px; cursor: pointer; }
         .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 12px; box-sizing: border-box; }
         .grid-load-sentinel { grid-column: 1 / -1; height: 1px; }
         .product-card { content-visibility: auto; contain-intrinsic-size: 280px; }
@@ -1713,7 +1793,10 @@
         .account-link-row:first-child { border-top: none; }
         .account-link-row .count { color: #8e8e93; }
         .orders-content { padding: 15px; }
-        .order-card { background: #fff; border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; }
+        .order-card { background: #fff; border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; cursor: pointer; }
+        .order-card-detail { margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0f0f2; }
+        .order-detail-row { display: flex; justify-content: space-between; font-size: 13.5px; color: #4a4a4e; padding: 4px 0; }
+        .order-detail-loading { font-size: 13px; color: #9a9a9e; padding: 4px 0; }
         .order-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
         .order-card-name { font-weight: 700; font-size: 14.5px; }
         .order-card-status { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px; background: #f2f2f7; color: #636366; white-space: nowrap; }
@@ -1802,7 +1885,7 @@
                 <span class="online-dot"></span>
             </a>
         </div>
-        <div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div>
+        <div class="banners-strip" id="banners-strip"><div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div></div>
 
         <div class="search-bar"><input type="text" id="search-input" placeholder="Поиск товаров" oninput="handleHomeSearch()"></div>
 
@@ -1976,6 +2059,47 @@
         loadCartAndFavorites(() => {
             loadShopData();
         });
+
+        // Баннеры на главной — настраиваются в личном кабинете админа,
+        // листаются свайпом. Пока не загрузились (или админ ничего не
+        // настроил), на странице уже стоит баннер по умолчанию — не мигаем
+        // пустотой.
+        fetch('/api/get-banners')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && Array.isArray(data.banners) && data.banners.length) {
+                    renderBanners(data.banners);
+                }
+            })
+            .catch(() => {});
+
+        function renderBanners(banners) {
+            const strip = document.getElementById('banners-strip');
+            if (!strip) return;
+            strip.innerHTML = banners.map(b => {
+                const bg = b.imageUrl
+                    ? `background-image: linear-gradient(135deg, ${b.color1}cc, ${b.color2}cc), url('${b.imageUrl.replace(/'/g, '')}');`
+                    : `background-image: linear-gradient(135deg, ${b.color1 || '#82394a'}, ${b.color2 || '#5a2530'});`;
+                const btn = b.buttonText
+                    ? `<div class="banner-cta" data-link="${(b.buttonLink || '').replace(/"/g, '&quot;')}">${b.buttonText}</div>`
+                    : '';
+                return `
+                    <div class="banner" style="${bg}">
+                        <h3>${b.text || ''}</h3>
+                        ${b.subtext ? `<div class="banner-sub">${b.subtext}</div>` : ''}
+                        ${btn}
+                    </div>
+                `;
+            }).join('');
+            strip.querySelectorAll('.banner-cta').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const link = el.dataset.link;
+                    if (link) window.open(link, '_blank');
+                });
+            });
+            enableHorizontalDragScroll(strip);
+        }
 
         // Тап куда угодно вне поля ввода убирает фокус с текущего инпута —
         // раньше ничего не вызывало blur(), и клавиатура оставалась открытой,
