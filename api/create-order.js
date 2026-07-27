@@ -1,6 +1,6 @@
 // Создание заказа покупателя в МойСклад из корзины бота.
 // Все запросы идут через fetchJson с троттлингом и ретраями на 429.
-import { API, fetchJson, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, getLiveStock } from './_catalog-lib.js';
+import { API, fetchJson, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, getLiveStock, sendTelegramMessage, ADMIN_CHAT_ID_KEY } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -184,6 +184,36 @@ export default async function handler(req, res) {
             const existing = (await kvGetJson(key)) || [];
             const updated = [order.id, ...existing.filter(id => id !== order.id)].slice(0, 30);
             await kvSetJson(key, updated);
+        }
+
+        // Уведомление админу в Telegram о новом заказе — не полагаемся на то, что
+        // МойСклад сам пришлёт push/уведомление по заказу, созданному через API:
+        // на практике их нативные уведомления о новых заказах надёжно всплывают
+        // только для заказов, оформленных прямо в интерфейсе/приложении МойСклад,
+        // а не через JSON API. Шлём сами, тем же каналом, что и "Уведомить о
+        // поступлении" — chat_id админа уже сохранён в KV (см. telegram-webhook.js).
+        try {
+            const adminChatId = await kvGetJson(ADMIN_CHAT_ID_KEY);
+            if (adminChatId) {
+                const orderTotal = items.reduce((sum, i) => {
+                    const qty = Math.max(1, parseInt(i.qty, 10) || 1);
+                    return sum + (Number(i.price) || 0) * qty;
+                }, 0);
+                const itemsLines = items.map(i => `• ${i.name || 'Товар'} × ${Math.max(1, parseInt(i.qty, 10) || 1)}`).join('\n');
+                const messageLines = [
+                    `🛒 Новый заказ №${order.name}`,
+                    `Клиент: ${customerName || '—'}`,
+                    `Телефон: ${cleanPhone}`,
+                    `Доставка: ${deliveryMethod || '—'}`,
+                    `Сумма: ${orderTotal.toLocaleString('ru-RU')} ₽`,
+                    '',
+                    itemsLines
+                ];
+                if (comment) messageLines.push('', `Комментарий: ${comment}`);
+                await sendTelegramMessage(adminChatId, messageLines.join('\n'));
+            }
+        } catch (e) {
+            // Не даём сбою уведомления сорвать уже успешно созданный заказ.
         }
 
         res.status(200).json({ success: true, orderId: order.id, orderName: order.name, reservedPositions: reservedCount });
