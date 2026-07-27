@@ -303,7 +303,7 @@
             detailEl.style.display = 'block';
 
             try {
-                const response = await fetch('/api/order-detail', {
+                const response = await fetch('/api/orders', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: orderId })
@@ -347,7 +347,7 @@
                 }
 
                 try {
-                    const response = await fetch('/api/my-orders', {
+                    const response = await fetch('/api/orders', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ ids, telegramUserId })
@@ -2064,7 +2064,7 @@
         // листаются свайпом. Пока не загрузились (или админ ничего не
         // настроил), на странице уже стоит баннер по умолчанию — не мигаем
         // пустотой.
-        fetch('/api/get-banners')
+        fetch('/api/banners')
             .then(r => r.json())
             .then(data => {
                 if (data.success && Array.isArray(data.banners) && data.banners.length) {
