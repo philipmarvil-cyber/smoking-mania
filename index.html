@@ -158,6 +158,9 @@
             } else if (screen.type === 'category') {
                 document.getElementById('page-category').classList.add('active');
                 renderCategoryScreen(screen);
+            } else if (screen.type === 'newest') {
+                document.getElementById('page-newest').classList.add('active');
+                renderNewestScreen();
             } else if (screen.type === 'detail') {
                 document.getElementById('page-detail').classList.add('active');
                 renderProductDetail(screen.productId);
@@ -872,6 +875,14 @@
             renderProductCardsInto(wrap, newest);
         }
 
+        // Полный список новинок (кнопка "Все" рядом с лентой на главной) —
+        // обычная сетка в 2 колонки, тот же рендер с подгрузкой по скроллу,
+        // что и в категориях.
+        function renderNewestScreen() {
+            const newest = allProducts.filter(p => p.isNew);
+            renderProductCardsInto(document.getElementById('newest-products-container'), newest);
+        }
+
         function handleHomeSearch() {
             const term = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
             const browseEl = document.getElementById('home-browse');
@@ -1086,7 +1097,7 @@
                 const priceOrBadgeHtml = prod.archived
                     ? `<div class="oos-badge">Нет в наличии</div>`
                     : renderCardPriceHtml(prod);
-                const imgHtml = prod.img ? `<img src="${prod.img}" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+                const imgHtml = prod.img ? `<img src="${prod.img}" data-full-src="${prod.img}&size=full&v=3" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
                 const newBadgeHtml = prod.isNew ? `<div class="new-badge">NEW</div>` : '';
                 const actionBtnHtml = prod.archived
                     ? `<button class="notify-btn" data-id="${prod.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M9.7 21a2 2 0 0 0 4.6 0"/></svg>Уведомить</button>`
@@ -1124,6 +1135,18 @@
                         notifyWhenAvailable(prod);
                     });
                 }
+
+                // Карточка сразу показывает миниатюру (лёгкая, обычно уже в кэше),
+                // а качественную версию догружает в фоне и бесшовно подменяет —
+                // так сетка остаётся такой же быстрой, как раньше, но со временем
+                // "дозревает" до чёткой картинки, не тормозя открытие категории.
+                const cardImgEl = card.querySelector('.product-image-container img');
+                if (cardImgEl && cardImgEl.dataset.fullSrc) {
+                    const preload = new Image();
+                    preload.onload = () => { cardImgEl.src = cardImgEl.dataset.fullSrc; };
+                    preload.src = cardImgEl.dataset.fullSrc;
+                }
+
                 return card;
             }
 
@@ -1426,6 +1449,14 @@
 
         /* Категории (плитки) на главной и на странице категории */
         .section-title { margin: 15px 15px 10px 15px; font-weight: 700; }
+        .section-title-row { display: flex; align-items: center; justify-content: space-between; margin: 15px 15px 10px 15px; }
+        .section-title-all-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 20px; cursor: pointer; }
+        .section-title-all-btn:active { opacity: 0.75; }
+        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
+        .products-strip * { touch-action: pan-x; }
+        .products-strip::-webkit-scrollbar { display: none; }
+        .products-strip .product-card { flex: 0 0 150px; width: 150px; }
+        .products-strip .grid-load-sentinel { flex: 0 0 1px; }
         .category-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 12px 5px 12px; box-sizing: border-box; }
 .category-tile {
     width: auto;
@@ -1714,8 +1745,11 @@
             <div class="category-grid" id="home-categories-container"></div>
 
             <div id="home-newest-section">
-                <div class="section-title">Новинки</div>
-                <div class="products-grid" id="home-newest-container"></div>
+                <div class="section-title-row">
+                    <div class="section-title" style="margin:0;">Новинки</div>
+                    <button class="section-title-all-btn" onclick="navigateTo({type:'newest'})">Все</button>
+                </div>
+                <div class="products-strip" id="home-newest-container"></div>
             </div>
         </div>
 
@@ -1726,6 +1760,10 @@
 
     <!-- Страница категории/подкатегории (наполняется динамически) -->
     <div id="page-category" class="page"></div>
+    <div id="page-newest" class="page">
+        <div class="header" style="margin-top:0;"><span>Новинки</span></div>
+        <div class="products-grid" id="newest-products-container" style="padding:15px 12px;"></div>
+    </div>
 
     <!-- Остальные страницы -->
     <div id="page-detail" class="page"></div>
