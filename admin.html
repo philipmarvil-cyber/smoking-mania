@@ -30,7 +30,13 @@
     .entry-time { font-size: 11.5px; color: #9a9a9e; }
     .empty { text-align: center; color: #9a9a9e; padding: 40px 20px; font-size: 14px; }
 
-    .section-heading { font-size: 16px; font-weight: 700; margin: 32px 0 12px 0; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 18px; background: #eaeaed; border-radius: 12px; padding: 4px; }
+    .tab-btn { flex: 1; border: none; background: transparent; color: #6b6b70; font-size: 14px; font-weight: 600; padding: 10px 0; border-radius: 9px; cursor: pointer; }
+    .tab-btn.active { background: #fff; color: #1c1c1e; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .section-heading { font-size: 16px; font-weight: 700; margin: 0 0 12px 0; }
     .banner-edit { background: #fff; border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     .banner-edit label { display: block; font-size: 12.5px; color: #8a8a8e; margin: 10px 0 4px 0; }
     .banner-edit label:first-child { margin-top: 0; }
@@ -38,6 +44,10 @@
     .banner-edit .color-row { display: flex; gap: 10px; }
     .banner-edit .color-row > div { flex: 1; }
     .banner-edit input[type="color"] { width: 100%; height: 38px; padding: 2px; border-radius: 8px; border: 1px solid #e2e2e6; }
+    .image-upload-row { display: flex; gap: 8px; align-items: center; }
+    .image-upload-row input[type="url"] { flex: 1; }
+    .upload-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 13px; font-weight: 600; padding: 10px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+    .upload-hint { font-size: 11.5px; color: #9a9a9e; margin-top: 4px; }
     .banner-preview { border-radius: 12px; padding: 20px 16px; color: #fff; margin-top: 12px; font-weight: 700; background-size: cover; background-position: center; }
     .banner-preview .bp-sub { font-weight: 500; font-size: 13px; margin-top: 4px; opacity: 0.9; }
     .banner-remove-btn { margin-top: 12px; width: 100%; border: none; background: #fdf1e2; color: #9a5b0a; font-size: 13.5px; font-weight: 600; padding: 10px; border-radius: 8px; cursor: pointer; }
@@ -58,21 +68,39 @@
     </div>
 
     <div id="content-screen" style="display:none;">
-        <div id="status-banner"></div>
-        <div class="toolbar">
-            <span class="sub" style="margin:0;" id="count-label"></span>
-            <button class="refresh-btn" onclick="loadEntries()">Обновить</button>
+        <div class="tabs">
+            <button class="tab-btn active" id="tab-btn-notify" onclick="switchTab('notify')">Уведомления</button>
+            <button class="tab-btn" id="tab-btn-banners" onclick="switchTab('banners')">Баннеры</button>
         </div>
-        <div id="entries-list"></div>
 
-        <div class="section-heading">Баннеры на главной</div>
-        <p class="sub" style="margin-top:-6px;">Листаются свайпом на главной странице бота. Картинка необязательна — можно оставить просто цветной градиент.</p>
-        <button class="add-banner-btn" onclick="addBanner()">+ Добавить баннер</button>
-        <div id="banners-list"></div>
-        <button class="save-banners-btn" onclick="saveBanners()">Сохранить баннеры</button>
-        <div class="banners-save-status" id="banners-save-status"></div>
+        <div class="tab-panel active" id="tab-panel-notify">
+            <div id="status-banner"></div>
+            <div class="toolbar">
+                <span class="sub" style="margin:0;" id="count-label"></span>
+                <button class="refresh-btn" onclick="loadEntries()">Обновить</button>
+            </div>
+            <div id="entries-list"></div>
+        </div>
+
+        <div class="tab-panel" id="tab-panel-banners">
+            <div class="section-heading">Баннеры на главной</div>
+            <p class="sub" style="margin-top:-6px;">Листаются свайпом на главной странице бота. Картинка необязательна — можно оставить просто цветной градиент.</p>
+            <button class="add-banner-btn" onclick="addBanner()">+ Добавить баннер</button>
+            <div id="banners-list"></div>
+            <button class="save-banners-btn" onclick="saveBanners()">Сохранить баннеры</button>
+            <div class="banners-save-status" id="banners-save-status"></div>
+        </div>
     </div>
 </div>
+
+<script>
+    function switchTab(name) {
+        document.getElementById('tab-panel-notify').classList.toggle('active', name === 'notify');
+        document.getElementById('tab-panel-banners').classList.toggle('active', name === 'banners');
+        document.getElementById('tab-btn-notify').classList.toggle('active', name === 'notify');
+        document.getElementById('tab-btn-banners').classList.toggle('active', name === 'banners');
+    }
+</script>
 
 <script>
     // Ключ хранится только в sessionStorage — переживает обновление страницы,
@@ -176,6 +204,33 @@
         renderBannersList();
     }
 
+    // Свой файл-картинка: сжимаем на клиенте (иначе большие фото с телефона
+    // легко весят по несколько МБ каждое — это и долго грузится в самом боте,
+    // и быстро упрётся в лимиты хранилища KV) и сохраняем как data URL прямо
+    // в самом баннере — отдельное файловое хранилище тут не нужно.
+    function handleImageUpload(id, file) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const MAX_W = 900;
+                const scale = Math.min(1, MAX_W / img.width);
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(img.width * scale);
+                canvas.height = Math.round(img.height * scale);
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                updateBannerField(id, 'imageUrl', dataUrl);
+                const urlInput = document.getElementById(`url-${id}`);
+                if (urlInput) urlInput.value = '(своя загруженная картинка)';
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+
     function updateBannerField(id, field, value) {
         const b = banners.find(x => x.id === id);
         if (b) b[field] = value;
@@ -214,8 +269,13 @@
                         <input type="color" value="${b.color2 || '#5a2530'}" oninput="updateBannerField('${b.id}','color2',this.value)">
                     </div>
                 </div>
-                <label>Ссылка на картинку-фон (необязательно)</label>
-                <input type="url" value="${(b.imageUrl || '').replace(/"/g, '&quot;')}" placeholder="https://..." oninput="updateBannerField('${b.id}','imageUrl',this.value)">
+                <label>Картинка-фон (необязательно)</label>
+                <div class="image-upload-row">
+                    <input type="url" value="${(b.imageUrl || '').startsWith('data:') ? '(своя загруженная картинка)' : (b.imageUrl || '').replace(/"/g, '&quot;')}" placeholder="https://... или загрузите файл" oninput="updateBannerField('${b.id}','imageUrl',this.value)" id="url-${b.id}">
+                    <button class="upload-btn" onclick="document.getElementById('file-${b.id}').click()">Загрузить</button>
+                    <input type="file" accept="image/*" id="file-${b.id}" style="display:none;" onchange="handleImageUpload('${b.id}', this.files[0])">
+                </div>
+                <div class="upload-hint">Своя картинка сохраняется прямо в баннере — большие фото автоматически уменьшаются.</div>
                 <label>Текст кнопки (необязательно)</label>
                 <input type="text" value="${(b.buttonText || '').replace(/"/g, '&quot;')}" placeholder="Например: Подробнее" oninput="updateBannerField('${b.id}','buttonText',this.value)">
                 <label>Куда ведёт кнопка (ссылка)</label>
