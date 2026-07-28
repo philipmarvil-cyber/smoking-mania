@@ -1553,7 +1553,8 @@
         .section-title-row { display: flex; align-items: center; justify-content: space-between; margin: 15px 15px 10px 15px; }
         .section-title-all-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 20px; cursor: pointer; }
         .section-title-all-btn:active { opacity: 0.75; }
-        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; }
+        .products-strip * { touch-action: pan-x pan-y; }
         .products-strip .product-card { content-visibility: visible; contain-intrinsic-size: auto; }
         .products-strip::-webkit-scrollbar { display: none; }
         .products-strip .product-card { flex: 0 0 150px; width: 150px; }
