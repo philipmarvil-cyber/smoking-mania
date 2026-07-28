@@ -467,8 +467,19 @@ export async function getAllAdminChatIds() {
 // типа, чтобы никто не перестал получать уведомления при миграции.
 export async function getAdminChatIdsForType(type) {
     const field = type === 'restock' ? 'notifyRestock' : 'notifyOrders';
+    // Если поле явно не задано (запись создана до появления разделения по
+    // типам) — по умолчанию считаем "заказы: да", "уведомить о поступлении:
+    // нет". Раньше оба типа по умолчанию считались "да", из-за чего админ,
+    // которому в личном кабинете чекбокс честно показывал "выключено", всё
+    // равно продолжал получать уведомления о поступлении — интерфейс не врал,
+    // врала как раз эта логика отправки.
+    const defaultIncluded = type !== 'restock';
     const list = (await kvGetJson(ADMIN_CHAT_IDS_KEY)) || [];
-    const ids = new Set(list.filter(a => a[field] !== false).map(a => a.chatId));
+    const ids = new Set(
+        list
+            .filter(a => (a[field] === undefined ? defaultIncluded : a[field] === true))
+            .map(a => a.chatId)
+    );
     const legacy = await kvGetJson(ADMIN_CHAT_ID_KEY);
     if (legacy) ids.add(legacy); // самый первый (старого формата) админ — всегда оба типа
     return [...ids];
@@ -555,9 +566,14 @@ async function fetchWithLimitedConcurrency(urls, concurrency) {
 }
 
 function withOffset(url, offset) {
-    const u = new URL(url);
-    u.searchParams.set('offset', String(offset));
-    return u.toString();
+    try {
+        const u = new URL(url);
+        u.searchParams.set('offset', String(offset));
+        return u.toString();
+    } catch (e) {
+        console.error(`[withOffset] не удалось разобрать URL для страницы: "${url}" (offset=${offset}):`, e?.message);
+        throw new Error(`Не удалось построить адрес страницы №${offset} каталога (см. логи Vercel для функции sync-catalog — там exact URL)`);
+    }
 }
 
 function getParentFolderId(folder) {
