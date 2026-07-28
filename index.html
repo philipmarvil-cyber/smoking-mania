@@ -742,24 +742,17 @@
 
             page.querySelector('#co-items-summary').onclick = () => navigateTo({ type: 'cart' });
 
-            // Плашка "Сумма заказа/Итого" зафиксирована внизу экрана. Раньше при
-            // открытой клавиатуре она перекрывала поля "Промокод"/"Комментарий",
-            // и мы просто прятали её на время ввода — но тогда пропадала и
-            // кнопка "Оформить заказ", что тоже неудобно. Теперь вместо того,
-            // чтобы прятать, поднимаем плашку ровно настолько, чтобы она легла
-            // сразу над клавиатурой — сама плашка остаётся на месте и видна
-            // всегда, просто не перекрывает поле ввода снизу.
+            // Плашка "Сумма заказа/Итого" зафиксирована внизу экрана. При
+            // открытой клавиатуре она перекрывала поля "Промокод"/"Комментарий" —
+            // прячем её (плавно уезжает вниз, как будто скрывается под
+            // клавиатуру) на время набора текста и возвращаем обратно, как
+            // только человек убирает палец/клавиатуру с поля.
             const checkoutFooter = page.querySelector('.cart-footer');
-            if (checkoutFooter && window.visualViewport) {
-                const vv = window.visualViewport;
-                const baseBottom = 65; // совпадает с .cart-footer { bottom: 65px } в CSS — высота нижнего таббара
-                const updateFooterPosition = () => {
-                    const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-                    checkoutFooter.style.bottom = (keyboardHeight > 40 ? keyboardHeight : baseBottom) + 'px';
-                };
-                vv.addEventListener('resize', updateFooterPosition);
-                vv.addEventListener('scroll', updateFooterPosition);
-                updateFooterPosition();
+            if (checkoutFooter) {
+                page.querySelectorAll('.checkout-input, .checkout-textarea').forEach(el => {
+                    el.addEventListener('focus', () => { checkoutFooter.classList.add('hidden-under-keyboard'); });
+                    el.addEventListener('blur', () => { checkoutFooter.classList.remove('hidden-under-keyboard'); });
+                });
             }
         }
 
@@ -1706,7 +1699,8 @@
         .discount-progress-fill { height: 100%; border-radius: 3px; background: #34c759; transition: width 0.3s ease; }
         .discount-progress-fill.full { background: #2f8f4e; }
 
-        .cart-footer { position: fixed; left: 0; right: 0; bottom: 65px; background: #fff; border-top: 1px solid #e5e5ea; padding: 14px 15px calc(14px + env(safe-area-inset-bottom)) 15px; z-index: 900; }
+        .cart-footer { position: fixed; left: 0; right: 0; bottom: 65px; background: #fff; border-top: 1px solid #e5e5ea; padding: 14px 15px calc(14px + env(safe-area-inset-bottom)) 15px; z-index: 900; transition: transform 0.2s ease; }
+        .cart-footer.hidden-under-keyboard { transform: translateY(100%); }
         .cart-total-row { display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; margin-bottom: 10px; }
         .cart-total-row.checkout-delivery-row { font-weight: 500; color: #8e8e93; }
         .cart-total-row.checkout-grand-total { font-size: 17px; padding-top: 10px; border-top: 1px solid #ececef; }
