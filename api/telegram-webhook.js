@@ -54,9 +54,13 @@ export default async function handler(req, res) {
         }
 
         const pending = (await kvGetJson(ADMIN_PENDING_USERNAMES_KEY)) || [];
+        // Записи могут быть как старым форматом (просто строка-юзернейм), так
+        // и новым (объект с выбранными типами уведомлений) — приводим к одному виду.
+        const pendingEntry = pending
+            .map(p => (typeof p === 'string' ? { username: p, notifyOrders: true, notifyRestock: true } : p))
+            .find(p => p.username === senderUsername);
         const isPrimary = senderUsername === ADMIN_TELEGRAM_USERNAME;
-        const isPending = pending.includes(senderUsername);
-        if (!isPrimary && !isPending) {
+        if (!isPrimary && !pendingEntry) {
             console.log('[telegram-webhook] не админ и не в списке ожидающих:', senderUsername);
             res.status(200).json({ ok: true });
             return;
@@ -64,17 +68,28 @@ export default async function handler(req, res) {
 
         const list = (await kvGetJson(ADMIN_CHAT_IDS_KEY)) || [];
         if (!list.some(a => a.chatId === from.id)) {
-            list.push({ chatId: from.id, username: senderUsername, addedAt: Date.now() });
+            list.push({
+                chatId: from.id,
+                username: senderUsername,
+                addedAt: Date.now(),
+                notifyOrders: pendingEntry ? pendingEntry.notifyOrders !== false : true,
+                notifyRestock: pendingEntry ? pendingEntry.notifyRestock !== false : true
+            });
             const wroteList = await kvSetJson(ADMIN_CHAT_IDS_KEY, list);
             if (!wroteList) console.error('[telegram-webhook] не удалось записать список админов в KV');
         }
-        if (isPending) {
-            await kvSetJson(ADMIN_PENDING_USERNAMES_KEY, pending.filter(u => u !== senderUsername));
+        if (pendingEntry) {
+            await kvSetJson(ADMIN_PENDING_USERNAMES_KEY, pending.filter(p => (typeof p === 'string' ? p : p.username) !== senderUsername));
         }
 
+        const grantedParts = [];
+        const grantsOrders = pendingEntry ? pendingEntry.notifyOrders !== false : true;
+        const grantsRestock = pendingEntry ? pendingEntry.notifyRestock !== false : true;
+        if (grantsOrders) grantedParts.push('о новых заказах');
+        if (grantsRestock) grantedParts.push('когда покупатель нажимает «Уведомить» на товаре не в наличии');
         const sent = await sendTelegramMessage(
             from.id,
-            '✅ Готово, вы подключены как администратор.\n\nТеперь сюда будут приходить уведомления о новых заказах и когда покупатель нажимает «Уведомить» на товаре не в наличии.'
+            `✅ Готово, вы подключены как администратор.\n\nТеперь сюда будут приходить уведомления: ${grantedParts.join(' и ')}.`
         );
         if (!sent) console.error('[telegram-webhook] не удалось отправить подтверждение в Telegram, chatId=', from.id);
 
