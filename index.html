@@ -975,26 +975,31 @@
             if (!el || el.dataset.dragScrollBound) return;
             el.dataset.dragScrollBound = '1';
             let startX = 0, startY = 0, startScrollLeft = 0, direction = null;
-            let history = []; // {x, t} за последние ~100мс — для устойчивого расчёта скорости отпускания
-            let pendingLeft = null, rafId = null;
+            let history = []; // {x, t} за последние ~120мс — для устойчивого расчёта скорости отпускания
+            let dragDx = 0;
             let momentumId = null;
 
-            function flush() {
-                rafId = null;
-                if (pendingLeft !== null) {
-                    el.scrollLeft = pendingLeft;
-                    pendingLeft = null;
-                }
+            // ВАЖНО: во время самого перетаскивания двигаем ленту через
+            // CSS-transform, а не через scrollLeft. Прямая правка scrollLeft на
+            // каждый touchmove (а их может быть десятки в секунду) заставляет
+            // браузер синхронно пересчитывать скролл и перерисовывать —
+            // на iPhone это и давало ощутимый фриз. transform — чисто
+            // композитинг на GPU, лэйаут не трогает вообще. Итоговое смещение
+            // "фиксируем" в реальный scrollLeft только один раз, при отпускании
+            // пальца — так дальше можно продолжать инерцию как раньше.
+            function setDragTransform(dx) {
+                el.style.transform = dx ? `translateX(${dx}px)` : '';
+            }
+
+            function commitDragToScrollLeft() {
+                el.style.transform = '';
+                el.scrollLeft = startScrollLeft - dragDx;
             }
 
             // После отпускания пальца — инерция с затуханием (как в нативном
-            // скролле), а в конце всегда доводим до ближайшего слайда. Раньше
-            // лента просто останавливалась там, где отпустили палец — отсюда и
-            // ощущение "дёрганого", не плавного свайпа.
+            // скролле). Раньше лента просто останавливалась там, где отпустили
+            // палец — отсюда и ощущение "дёрганого", не плавного свайпа.
             function settle(startVelocity) {
-                const child = el.children[0];
-                if (!child) return;
-                const slideWidth = child.getBoundingClientRect().width + (parseFloat(getComputedStyle(el).columnGap) || 0);
                 const maxScroll = el.scrollWidth - el.clientWidth;
                 let v = startVelocity;
                 let pos = el.scrollLeft;
@@ -1010,13 +1015,9 @@
                     el.scrollLeft = pos;
                     if (Math.abs(v) > 0.02 && pos > 0 && pos < maxScroll) {
                         momentumId = requestAnimationFrame(step);
-                    } else if (slideWidth > 0) {
-                        const targetIndex = Math.round(pos / slideWidth);
-                        const target = Math.max(0, Math.min(maxScroll, targetIndex * slideWidth));
-                        el.scrollTo({ left: target, behavior: 'smooth' });
                     }
                 }
-                momentumId = requestAnimationFrame(step);
+                if (Math.abs(v) > 0.02) momentumId = requestAnimationFrame(step);
             }
 
             el.addEventListener('touchstart', (e) => {
@@ -1026,6 +1027,7 @@
                 startY = t.clientY;
                 startScrollLeft = el.scrollLeft;
                 history = [{ x: t.clientX, t: performance.now() }];
+                dragDx = 0;
                 direction = null;
             }, { passive: true });
             el.addEventListener('touchmove', (e) => {
@@ -1042,11 +1044,8 @@
                     // Держим только последние ~120мс — этого достаточно, чтобы
                     // усреднить скорость и не тащить в расчёт всё касание целиком.
                     while (history.length > 2 && now - history[0].t > 120) history.shift();
-                    // Пишем scrollLeft не на каждое событие touchmove (их может быть
-                    // много за один кадр — это раньше и вызывало фриз/лаги), а
-                    // максимум раз за кадр отрисовки.
-                    pendingLeft = startScrollLeft - dx;
-                    if (rafId === null) rafId = requestAnimationFrame(flush);
+                    dragDx = dx;
+                    setDragTransform(dx);
                 }
                 // direction === 'y' — ничего не делаем, пусть страница скроллится сама
             }, { passive: false });
@@ -1062,6 +1061,7 @@
                         const dt = last.t - first.t;
                         if (dt > 0) velocity = (last.x - first.x) / dt;
                     }
+                    commitDragToScrollLeft();
                     settle(-velocity);
                 }
             });
@@ -1659,7 +1659,7 @@
         .section-title-row { display: flex; align-items: center; justify-content: space-between; margin: 15px 15px 10px 15px; }
         .section-title-all-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 20px; cursor: pointer; }
         .section-title-all-btn:active { opacity: 0.75; }
-        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-y; will-change: transform; }
         .products-strip::-webkit-scrollbar { display: none; }
         .products-strip .product-card { flex: 0 0 150px; width: 150px; }
         .products-strip .grid-load-sentinel { flex: 0 0 1px; }
