@@ -4,7 +4,7 @@
 // 2) Если чат админа уже известен (см. api/telegram-webhook.js — он
 //    появляется там сам, как только админ хоть раз напишет боту), сразу
 //    шлём ему уведомление в Telegram: кто и о каком товаре просит сообщить.
-import { kvGetJson, kvSetJson, kvGetCatalog, sendTelegramMessage, ADMIN_CHAT_ID_KEY } from './_catalog-lib.js';
+import { kvGetJson, kvSetJson, kvGetCatalog, sendToAllAdmins, getAllAdminChatIds } from './_catalog-lib.js';
 
 const LOG_KEY = 'notify-subs:v1';
 const MAX_LOG_ENTRIES = 500; // не даём логу расти бесконечно
@@ -70,20 +70,17 @@ export default async function handler(req, res) {
             }
         }
 
-        const adminChatId = await kvGetJson(ADMIN_CHAT_ID_KEY);
-        if (adminChatId) {
+        const adminChatIds = await getAllAdminChatIds();
+        if (adminChatIds.length) {
             const whoParts = [];
             if (entry.name) whoParts.push(entry.name);
             if (entry.username) whoParts.push(`@${entry.username}`);
             if (entry.telegramUserId) whoParts.push(`id ${entry.telegramUserId}`);
             const who = whoParts.length ? whoParts.join(' · ') : 'Неизвестный пользователь';
-            const sent = await sendTelegramMessage(
-                adminChatId,
-                `🔔 Хотят узнать о поступлении\n\n<b>${productName}</b>\n${who}`
-            );
-            await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatId, sent: !!sent }).catch(() => {});
+            await sendToAllAdmins(`🔔 Хотят узнать о поступлении\n\n<b>${productName}</b>\n${who}`);
+            await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatIds, sent: true }).catch(() => {});
         } else {
-            await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatId: null, sent: false, reason: 'нет сохранённого chat_id админа' }).catch(() => {});
+            await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatIds: [], sent: false, reason: 'нет ни одного подтверждённого администратора' }).catch(() => {});
         }
 
         res.status(200).json({ success: true });
