@@ -2,7 +2,7 @@
 // https://ваш-домен.vercel.app/api/kv-status), чтобы проверить,
 // действительно ли настроено и работает хранилище KV, а не только
 // заданы переменные окружения.
-import { isKvConfigured, kvGetJson, kvSetJson, kvGetCatalog, isTelegramConfigured, ADMIN_TELEGRAM_USERNAME, ADMIN_CHAT_ID_KEY } from './_catalog-lib.js';
+import { isKvConfigured, kvGetJson, kvSetJson, kvGetCatalog, isTelegramConfigured, ADMIN_TELEGRAM_USERNAME, ADMIN_CHAT_ID_KEY, getAllAdminChatIds } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     const envConfigured = isKvConfigured();
@@ -48,9 +48,11 @@ export default async function handler(req, res) {
     try {
         const lastUpdate = await kvGetJson('last-telegram-update');
         const adminChatId = await kvGetJson(ADMIN_CHAT_ID_KEY);
+        const allAdminChatIds = await getAllAdminChatIds();
         telegramAdminInfo = {
-            expectedAdminUsername: ADMIN_TELEGRAM_USERNAME, // с кем сверяется юзернейм пришедшего сообщения
-            adminChatIdSaved: adminChatId || null,           // если null — админ ещё ни разу не написал боту (или юзернейм не совпал)
+            expectedAdminUsername: ADMIN_TELEGRAM_USERNAME, // основной админ, с кем сверяется юзернейм пришедшего сообщения
+            adminChatIdSaved: adminChatId || null,           // старый формат (один chat_id) — оставлен для справки
+            allAdminChatIds,                                 // актуальный список всех подключённых администраторов
             lastTelegramUpdate: lastUpdate ? { ...lastUpdate, at: new Date(lastUpdate.at).toISOString() } : null // последнее, что вообще пришло на /api/telegram-webhook — null значит апдейты от Telegram не доходят вообще
         };
     } catch (e) {
