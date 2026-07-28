@@ -741,6 +741,18 @@
             `;
 
             page.querySelector('#co-items-summary').onclick = () => navigateTo({ type: 'cart' });
+
+            // Плашка "Сумма заказа/Итого" зафиксирована внизу экрана и при
+            // открытой клавиатуре перекрывала поля "Промокод" и "Комментарий" —
+            // человек не видел, что печатает. Прячем плашку, пока активно любое
+            // поле ввода на этом экране, и возвращаем обратно при уходе с поля.
+            const checkoutFooter = page.querySelector('.cart-footer');
+            if (checkoutFooter) {
+                page.querySelectorAll('.checkout-input, .checkout-textarea').forEach(el => {
+                    el.addEventListener('focus', () => { checkoutFooter.style.display = 'none'; });
+                    el.addEventListener('blur', () => { checkoutFooter.style.display = ''; });
+                });
+            }
         }
 
         // Забирает текущие значения полей формы в checkoutFormState — чтобы не
@@ -1650,9 +1662,9 @@
         .accordion-body { padding: 0 0 15px 0; font-size: 13.5px; line-height: 1.5; color: #4a4a4e; }
         
         /* Shop Page */
-        .banners-strip { display: flex; gap: 8px; overflow-x: auto; padding: 15px 6px; box-sizing: border-box; scrollbar-width: none; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+        .banners-strip { display: flex; gap: 10px; overflow-x: auto; padding: 15px; box-sizing: border-box; scrollbar-width: none; scroll-snap-type: x mandatory; scroll-padding: 0 15px; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
         .banners-strip::-webkit-scrollbar { display: none; }
-        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 100%; width: 100%; box-sizing: border-box; scroll-snap-align: start; background-size: cover; background-position: center; }
+        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 calc(100% - 30px); width: calc(100% - 30px); box-sizing: border-box; scroll-snap-align: start; background-size: cover; background-position: center; }
         .banner-sub { font-weight: 500; font-size: 13px; margin-top: 6px; opacity: 0.9; }
         .banner-cta { display: inline-block; margin-top: 14px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: #fff; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 20px; cursor: pointer; }
         .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 12px; box-sizing: border-box; }
@@ -2098,7 +2110,6 @@
                     if (link) window.open(link, '_blank');
                 });
             });
-            enableHorizontalDragScroll(strip);
         }
 
         // Тап куда угодно вне поля ввода убирает фокус с текущего инпута —
