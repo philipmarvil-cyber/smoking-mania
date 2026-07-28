@@ -424,7 +424,28 @@ export function isTelegramConfigured() {
 // напишет что-нибудь боту (см. api/telegram-webhook.js), и дальше уже
 // используем сохранённый в KV chat_id.
 export const ADMIN_TELEGRAM_USERNAME = (process.env.ADMIN_TELEGRAM_USERNAME || 'propervoperpropervoperpropervope').replace(/^@/, '').toLowerCase();
-export const ADMIN_CHAT_ID_KEY = 'admin-chat-id:v1';
+export const ADMIN_CHAT_ID_KEY = 'admin-chat-id:v1'; // старый формат — один chat_id; оставлен ради обратной совместимости
+export const ADMIN_CHAT_IDS_KEY = 'admin-chat-ids:v1'; // новый формат — список { chatId, username, addedAt }
+export const ADMIN_PENDING_USERNAMES_KEY = 'admin-pending-usernames:v1'; // юзернеймы, добавленные в личном кабинете, но ещё не написавшие боту
+
+// Единый список chat_id всех администраторов, которым нужно слать уведомления
+// о заказах и о "Уведомить о поступлении" — объединяет новый список (несколько
+// админов, добавленных через личный кабинет) со старым форматом (один
+// chat_id из самой первой версии бота), чтобы никто не пропал при миграции.
+export async function getAllAdminChatIds() {
+    const list = (await kvGetJson(ADMIN_CHAT_IDS_KEY)) || [];
+    const ids = new Set(list.map(a => a.chatId));
+    const legacy = await kvGetJson(ADMIN_CHAT_ID_KEY);
+    if (legacy) ids.add(legacy);
+    return [...ids];
+}
+
+// Шлёт сообщение всем администраторам разом. Ошибка отправки одному не
+// должна мешать остальным — поэтому Promise.allSettled, а не Promise.all.
+export async function sendToAllAdmins(text) {
+    const ids = await getAllAdminChatIds();
+    await Promise.allSettled(ids.map(id => sendTelegramMessage(id, text)));
+}
 
 export async function sendTelegramMessage(chatId, text) {
     if (!TELEGRAM_BOT_TOKEN || !chatId) return false;
