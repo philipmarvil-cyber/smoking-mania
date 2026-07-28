@@ -27,6 +27,7 @@ export default async function handler(req, res) {
             restockNotificationsSent: notified
         });
     } catch (e) {
+        console.error('[sync-catalog] ошибка синхронизации:', e?.message, e?.stack);
         res.status(500).json({ success: false, error: e.message });
     }
 }
