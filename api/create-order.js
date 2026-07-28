@@ -1,6 +1,6 @@
 // Создание заказа покупателя в МойСклад из корзины бота.
 // Все запросы идут через fetchJson с троттлингом и ретраями на 429.
-import { API, fetchJson, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, getLiveStock, sendToAllAdmins } from './_catalog-lib.js';
+import { API, fetchJson, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, getLiveStock, sendToAdminsForType } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -208,7 +208,7 @@ export default async function handler(req, res) {
                 itemsLines
             ];
             if (comment) messageLines.push('', `Комментарий: ${comment}`);
-            await sendToAllAdmins(messageLines.join('\n'));
+            await sendToAdminsForType('orders', messageLines.join('\n'));
         } catch (e) {
             // Не даём сбою уведомления сорвать уже успешно созданный заказ.
         }
