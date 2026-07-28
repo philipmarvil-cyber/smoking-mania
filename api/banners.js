@@ -56,7 +56,7 @@ async function handlePost(req, res) {
             subtext: String(b.subtext || '').slice(0, 160),
             color1: String(b.color1 || '#82394a').slice(0, 20),
             color2: String(b.color2 || '#5a2530').slice(0, 20),
-            imageUrl: String(b.imageUrl || '').slice(0, 2000),
+            imageUrl: String(b.imageUrl || '').slice(0, 900000), // с запасом под data:-URL загруженной картинки (обычная ссылка тоже поместится)
             buttonText: String(b.buttonText || '').slice(0, 40),
             buttonLink: String(b.buttonLink || '').slice(0, 500)
         }));
