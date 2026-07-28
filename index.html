@@ -975,7 +975,9 @@
             if (!el || el.dataset.dragScrollBound) return;
             el.dataset.dragScrollBound = '1';
             let startX = 0, startY = 0, startScrollLeft = 0, direction = null;
+            let lastX = 0, lastT = 0, velocity = 0; // velocity в px/мс, для инерции после отпускания пальца
             let pendingLeft = null, rafId = null;
+            let momentumId = null;
 
             function flush() {
                 rafId = null;
@@ -985,11 +987,46 @@
                 }
             }
 
+            // После отпускания пальца — небольшая инерция с затуханием (как в
+            // нативном скролле), а в конце всегда доводим до ближайшего слайда.
+            // Раньше лента просто останавливалась там, где отпустили палец —
+            // отсюда и ощущение "дёрганого", не плавного свайпа.
+            function settle(startVelocity) {
+                const child = el.children[0];
+                if (!child) return;
+                const slideWidth = child.getBoundingClientRect().width + (parseFloat(getComputedStyle(el).columnGap) || 0);
+                const maxScroll = el.scrollWidth - el.clientWidth;
+                let v = startVelocity;
+                let pos = el.scrollLeft;
+                let lastTs = null;
+
+                function step(ts) {
+                    if (lastTs === null) lastTs = ts;
+                    const dt = Math.min(32, ts - lastTs);
+                    lastTs = ts;
+                    v *= 0.94; // затухание
+                    pos += v * dt;
+                    pos = Math.max(0, Math.min(maxScroll, pos));
+                    el.scrollLeft = pos;
+                    if (Math.abs(v) > 0.02 && pos > 0 && pos < maxScroll) {
+                        momentumId = requestAnimationFrame(step);
+                    } else if (slideWidth > 0) {
+                        const targetIndex = Math.round(pos / slideWidth);
+                        const target = Math.max(0, Math.min(maxScroll, targetIndex * slideWidth));
+                        el.scrollTo({ left: target, behavior: 'smooth' });
+                    }
+                }
+                momentumId = requestAnimationFrame(step);
+            }
+
             el.addEventListener('touchstart', (e) => {
+                if (momentumId) { cancelAnimationFrame(momentumId); momentumId = null; }
                 const t = e.touches[0];
-                startX = t.clientX;
+                startX = lastX = t.clientX;
                 startY = t.clientY;
                 startScrollLeft = el.scrollLeft;
+                lastT = performance.now();
+                velocity = 0;
                 direction = null;
             }, { passive: true });
             el.addEventListener('touchmove', (e) => {
@@ -1001,6 +1038,11 @@
                 }
                 if (direction === 'x') {
                     e.preventDefault();
+                    const now = performance.now();
+                    const dt = now - lastT || 16;
+                    velocity = (t.clientX - lastX) / dt;
+                    lastX = t.clientX;
+                    lastT = now;
                     // Пишем scrollLeft не на каждое событие touchmove (их может быть
                     // много за один кадр — это раньше и вызывало фриз/лаги), а
                     // максимум раз за кадр отрисовки.
@@ -1009,6 +1051,9 @@
                 }
                 // direction === 'y' — ничего не делаем, пусть страница скроллится сама
             }, { passive: false });
+            el.addEventListener('touchend', () => {
+                if (direction === 'x') settle(-velocity);
+            });
         }
 
         // Полный список новинок (кнопка "Все" рядом с лентой на главной) —
@@ -1662,9 +1707,12 @@
         .accordion-body { padding: 0 0 15px 0; font-size: 13.5px; line-height: 1.5; color: #4a4a4e; }
         
         /* Shop Page */
-        .banners-strip { display: flex; gap: 10px; overflow-x: auto; padding: 15px; box-sizing: border-box; scrollbar-width: none; scroll-snap-type: x mandatory; scroll-padding: 0 15px; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+        .banners-strip { display: flex; gap: 10px; overflow-x: auto; padding: 15px; box-sizing: border-box; scrollbar-width: none; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
         .banners-strip::-webkit-scrollbar { display: none; }
-        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 calc(100% - 30px); width: calc(100% - 30px); box-sizing: border-box; scroll-snap-align: start; background-size: cover; background-position: center; }
+        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 100%; width: 100%; box-sizing: border-box; scroll-snap-align: start; scroll-snap-stop: always; background-size: cover; background-position: center; }
+        .banners-dots { display: flex; justify-content: center; gap: 6px; margin: -6px 0 6px 0; }
+        .banners-dot { width: 6px; height: 6px; border-radius: 50%; background: #d1d1d6; transition: background 0.2s, width 0.2s; cursor: pointer; }
+        .banners-dot.active { background: #82394a; width: 16px; border-radius: 3px; }
         .banner-sub { font-weight: 500; font-size: 13px; margin-top: 6px; opacity: 0.9; }
         .banner-cta { display: inline-block; margin-top: 14px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: #fff; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 20px; cursor: pointer; }
         .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 12px; box-sizing: border-box; }
@@ -1898,6 +1946,7 @@
             </a>
         </div>
         <div class="banners-strip" id="banners-strip"><div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div></div>
+        <div class="banners-dots" id="banners-dots"></div>
 
         <div class="search-bar"><input type="text" id="search-input" placeholder="Поиск товаров" oninput="handleHomeSearch()"></div>
 
@@ -2087,6 +2136,7 @@
 
         function renderBanners(banners) {
             const strip = document.getElementById('banners-strip');
+            const dotsWrap = document.getElementById('banners-dots');
             if (!strip) return;
             strip.innerHTML = banners.map(b => {
                 const bg = b.imageUrl
@@ -2111,6 +2161,33 @@
                 });
             });
             enableHorizontalDragScroll(strip);
+
+            // Точки-навигация — показываем только если баннеров больше одного.
+            if (dotsWrap) {
+                if (banners.length <= 1) {
+                    dotsWrap.innerHTML = '';
+                } else {
+                    dotsWrap.innerHTML = banners.map((_, i) => `<div class="banners-dot${i === 0 ? ' active' : ''}" data-index="${i}"></div>`).join('');
+                    dotsWrap.querySelectorAll('.banners-dot').forEach(dot => {
+                        dot.addEventListener('click', () => {
+                            const i = parseInt(dot.dataset.index, 10);
+                            strip.scrollTo({ left: i * strip.clientWidth, behavior: 'smooth' });
+                        });
+                    });
+                    let scrollTicking = false;
+                    strip.addEventListener('scroll', () => {
+                        if (scrollTicking) return;
+                        scrollTicking = true;
+                        requestAnimationFrame(() => {
+                            scrollTicking = false;
+                            const activeIndex = Math.round(strip.scrollLeft / strip.clientWidth);
+                            dotsWrap.querySelectorAll('.banners-dot').forEach((dot, i) => {
+                                dot.classList.toggle('active', i === activeIndex);
+                            });
+                        });
+                    });
+                }
+            }
         }
 
         // Тап куда угодно вне поля ввода убирает фокус с текущего инпута —
