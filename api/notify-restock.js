@@ -4,7 +4,7 @@
 // 2) Если чат админа уже известен (см. api/telegram-webhook.js — он
 //    появляется там сам, как только админ хоть раз напишет боту), сразу
 //    шлём ему уведомление в Telegram: кто и о каком товаре просит сообщить.
-import { kvGetJson, kvSetJson, kvGetCatalog, sendToAllAdmins, getAllAdminChatIds } from './_catalog-lib.js';
+import { kvGetJson, kvSetJson, kvGetCatalog, sendToAdminsForType, getAdminChatIdsForType } from './_catalog-lib.js';
 
 const LOG_KEY = 'notify-subs:v1';
 const MAX_LOG_ENTRIES = 500; // не даём логу расти бесконечно
@@ -70,17 +70,17 @@ export default async function handler(req, res) {
             }
         }
 
-        const adminChatIds = await getAllAdminChatIds();
+        const adminChatIds = await getAdminChatIdsForType('restock');
         if (adminChatIds.length) {
             const whoParts = [];
             if (entry.name) whoParts.push(entry.name);
             if (entry.username) whoParts.push(`@${entry.username}`);
             if (entry.telegramUserId) whoParts.push(`id ${entry.telegramUserId}`);
             const who = whoParts.length ? whoParts.join(' · ') : 'Неизвестный пользователь';
-            await sendToAllAdmins(`🔔 Хотят узнать о поступлении\n\n<b>${productName}</b>\n${who}`);
+            await sendToAdminsForType('restock', `🔔 Хотят узнать о поступлении\n\n<b>${productName}</b>\n${who}`);
             await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatIds, sent: true }).catch(() => {});
         } else {
-            await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatIds: [], sent: false, reason: 'нет ни одного подтверждённого администратора' }).catch(() => {});
+            await kvSetJson('last-notify-telegram-send', { at: Date.now(), adminChatIds: [], sent: false, reason: 'нет ни одного администратора, подписанного на этот тип уведомлений' }).catch(() => {});
         }
 
         res.status(200).json({ success: true });
