@@ -58,11 +58,19 @@ export async function kvGetJson(key) {
         const response = await fetch(`${KV_URL}/get/${key}`, {
             headers: { Authorization: `Bearer ${KV_TOKEN}` }
         });
-        if (!response.ok) return null;
+        if (!response.ok) {
+            console.error(`[kvGetJson] HTTP ${response.status} для ключа "${key}"`);
+            return null;
+        }
         const body = await response.json();
+        if (body.error) {
+            console.error(`[kvGetJson] KV вернул ошибку для ключа "${key}":`, body.error);
+            return null;
+        }
         if (!body.result) return null;
         return JSON.parse(body.result);
     } catch (e) {
+        console.error(`[kvGetJson] исключение для ключа "${key}":`, e?.message);
         return null;
     }
 }
@@ -75,8 +83,21 @@ export async function kvSetJson(key, value) {
             headers: { Authorization: `Bearer ${KV_TOKEN}` },
             body: JSON.stringify(value)
         });
-        return response.ok;
+        if (!response.ok) {
+            console.error(`[kvSetJson] HTTP ${response.status} для ключа "${key}"`);
+            return false;
+        }
+        // ВАЖНО: у Upstash REST API бывает так, что HTTP-статус 200, а сама
+        // команда всё равно не выполнилась — ошибка тогда видна только в теле
+        // ответа. Раньше это тихо считалось успехом.
+        const body = await response.json().catch(() => null);
+        if (body?.error) {
+            console.error(`[kvSetJson] KV вернул ошибку для ключа "${key}":`, body.error);
+            return false;
+        }
+        return true;
     } catch (e) {
+        console.error(`[kvSetJson] исключение для ключа "${key}":`, e?.message);
         return false;
     }
 }
