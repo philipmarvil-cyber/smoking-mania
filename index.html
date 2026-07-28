@@ -975,7 +975,7 @@
             if (!el || el.dataset.dragScrollBound) return;
             el.dataset.dragScrollBound = '1';
             let startX = 0, startY = 0, startScrollLeft = 0, direction = null;
-            let lastX = 0, lastT = 0, velocity = 0; // velocity в px/мс, для инерции после отпускания пальца
+            let history = []; // {x, t} за последние ~100мс — для устойчивого расчёта скорости отпускания
             let pendingLeft = null, rafId = null;
             let momentumId = null;
 
@@ -987,10 +987,10 @@
                 }
             }
 
-            // После отпускания пальца — небольшая инерция с затуханием (как в
-            // нативном скролле), а в конце всегда доводим до ближайшего слайда.
-            // Раньше лента просто останавливалась там, где отпустили палец —
-            // отсюда и ощущение "дёрганого", не плавного свайпа.
+            // После отпускания пальца — инерция с затуханием (как в нативном
+            // скролле), а в конце всегда доводим до ближайшего слайда. Раньше
+            // лента просто останавливалась там, где отпустили палец — отсюда и
+            // ощущение "дёрганого", не плавного свайпа.
             function settle(startVelocity) {
                 const child = el.children[0];
                 if (!child) return;
@@ -1004,7 +1004,7 @@
                     if (lastTs === null) lastTs = ts;
                     const dt = Math.min(32, ts - lastTs);
                     lastTs = ts;
-                    v *= 0.94; // затухание
+                    v *= 0.95; // затухание
                     pos += v * dt;
                     pos = Math.max(0, Math.min(maxScroll, pos));
                     el.scrollLeft = pos;
@@ -1022,11 +1022,10 @@
             el.addEventListener('touchstart', (e) => {
                 if (momentumId) { cancelAnimationFrame(momentumId); momentumId = null; }
                 const t = e.touches[0];
-                startX = lastX = t.clientX;
+                startX = t.clientX;
                 startY = t.clientY;
                 startScrollLeft = el.scrollLeft;
-                lastT = performance.now();
-                velocity = 0;
+                history = [{ x: t.clientX, t: performance.now() }];
                 direction = null;
             }, { passive: true });
             el.addEventListener('touchmove', (e) => {
@@ -1039,10 +1038,10 @@
                 if (direction === 'x') {
                     e.preventDefault();
                     const now = performance.now();
-                    const dt = now - lastT || 16;
-                    velocity = (t.clientX - lastX) / dt;
-                    lastX = t.clientX;
-                    lastT = now;
+                    history.push({ x: t.clientX, t: now });
+                    // Держим только последние ~120мс — этого достаточно, чтобы
+                    // усреднить скорость и не тащить в расчёт всё касание целиком.
+                    while (history.length > 2 && now - history[0].t > 120) history.shift();
                     // Пишем scrollLeft не на каждое событие touchmove (их может быть
                     // много за один кадр — это раньше и вызывало фриз/лаги), а
                     // максимум раз за кадр отрисовки.
@@ -1052,7 +1051,19 @@
                 // direction === 'y' — ничего не делаем, пусть страница скроллится сама
             }, { passive: false });
             el.addEventListener('touchend', () => {
-                if (direction === 'x') settle(-velocity);
+                if (direction === 'x') {
+                    // Скорость отпускания — по разнице между первой и последней
+                    // точкой в недавней истории, а не по одному последнему
+                    // событию (оно может быть шумным/неточным).
+                    let velocity = 0;
+                    if (history.length >= 2) {
+                        const first = history[0];
+                        const last = history[history.length - 1];
+                        const dt = last.t - first.t;
+                        if (dt > 0) velocity = (last.x - first.x) / dt;
+                    }
+                    settle(-velocity);
+                }
             });
         }
 
@@ -1709,7 +1720,7 @@
         /* Shop Page */
         .banners-strip { display: flex; gap: 10px; overflow-x: auto; padding: 15px; box-sizing: border-box; scrollbar-width: none; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
         .banners-strip::-webkit-scrollbar { display: none; }
-        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 100%; width: 100%; box-sizing: border-box; scroll-snap-align: start; scroll-snap-stop: always; background-size: cover; background-position: center; }
+        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 calc(100vw - 30px); width: calc(100vw - 30px); max-width: calc(100vw - 30px); box-sizing: border-box; scroll-snap-align: start; scroll-snap-stop: always; background-size: cover; background-position: center; }
         .banners-dots { display: flex; justify-content: center; gap: 6px; margin: -6px 0 6px 0; }
         .banners-dot { width: 6px; height: 6px; border-radius: 50%; background: #d1d1d6; transition: background 0.2s, width 0.2s; cursor: pointer; }
         .banners-dot.active { background: #82394a; width: 16px; border-radius: 3px; }
