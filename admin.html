@@ -30,6 +30,18 @@
     .entry-time { font-size: 11.5px; color: #9a9a9e; }
     .empty { text-align: center; color: #9a9a9e; padding: 40px 20px; font-size: 14px; }
 
+    .admins-block { background: #fff; border-radius: 14px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .admin-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f2; font-size: 14px; }
+    .admin-row:last-of-type { border-bottom: none; }
+    .admin-row .who { font-weight: 600; }
+    .admin-row .status { font-size: 12px; color: #9a9a9e; }
+    .admin-row.pending .status { color: #9a5b0a; }
+    .admin-remove { border: none; background: #fdf1e2; color: #9a5b0a; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+    .add-admin-row { display: flex; gap: 8px; margin-top: 12px; }
+    .add-admin-row input { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #e2e2e6; font-size: 14px; }
+    .add-admin-row button { border: none; background: #1c1c1e; color: #fff; font-size: 13.5px; font-weight: 600; padding: 0 16px; border-radius: 8px; cursor: pointer; }
+    .add-admin-status { font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+
     .tabs { display: flex; gap: 8px; margin-bottom: 18px; background: #eaeaed; border-radius: 12px; padding: 4px; }
     .tab-btn { flex: 1; border: none; background: transparent; color: #6b6b70; font-size: 14px; font-weight: 600; padding: 10px 0; border-radius: 9px; cursor: pointer; }
     .tab-btn.active { background: #fff; color: #1c1c1e; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
@@ -75,6 +87,17 @@
 
         <div class="tab-panel active" id="tab-panel-notify">
             <div id="status-banner"></div>
+
+            <div class="admins-block">
+                <div class="section-heading" style="margin-bottom:8px;">Кто получает уведомления о заказах</div>
+                <div id="admins-list"></div>
+                <div class="add-admin-row">
+                    <input type="text" id="new-admin-username" placeholder="Юзернейм в Telegram, например ivan_petrov">
+                    <button onclick="addAdmin()">Добавить</button>
+                </div>
+                <div class="add-admin-status" id="add-admin-status"></div>
+            </div>
+
             <div class="toolbar">
                 <span class="sub" style="margin:0;" id="count-label"></span>
                 <button class="refresh-btn" onclick="loadEntries()">Обновить</button>
@@ -145,6 +168,8 @@
                 banner.textContent = '⚠️ Telegram-уведомления пока не подключены — напишите боту любое сообщение один раз, чтобы начать их получать';
             }
 
+            renderAdmins(data.admins || [], data.pending || []);
+
             const list = document.getElementById('entries-list');
             const countLabel = document.getElementById('count-label');
             countLabel.textContent = data.entries.length ? `Всего заявок: ${data.entries.length}` : '';
@@ -175,6 +200,83 @@
     }
 
     if (adminKey) loadEntries();
+
+    // --- Администраторы (кому шлём уведомления о заказах и о поступлении) ---
+    function renderAdmins(admins, pending) {
+        const wrap = document.getElementById('admins-list');
+        if (!admins.length && !pending.length) {
+            wrap.innerHTML = '<p class="sub" style="margin:0 0 4px 0;">Пока ни один администратор не подключён.</p>';
+            return;
+        }
+        const confirmedHtml = admins.map(a => `
+            <div class="admin-row">
+                <div>
+                    <div class="who">${a.username ? '@' + a.username : 'id ' + a.chatId}</div>
+                    <div class="status">Подключён</div>
+                </div>
+                <button class="admin-remove" onclick="removeAdmin(${a.chatId})">Убрать</button>
+            </div>
+        `).join('');
+        const pendingHtml = pending.map(u => `
+            <div class="admin-row pending">
+                <div>
+                    <div class="who">@${u}</div>
+                    <div class="status">Ожидает — попросите написать боту любое сообщение</div>
+                </div>
+                <button class="admin-remove" onclick="removePending('${u}')">Убрать</button>
+            </div>
+        `).join('');
+        wrap.innerHTML = confirmedHtml + pendingHtml;
+    }
+
+    async function addAdmin() {
+        const input = document.getElementById('new-admin-username');
+        const statusEl = document.getElementById('add-admin-status');
+        const username = input.value.trim();
+        if (!username) return;
+        statusEl.textContent = 'Добавляем…';
+        statusEl.style.color = '#8a8a8e';
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'add-admin', username })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Ошибка');
+            input.value = '';
+            statusEl.textContent = `Готово — теперь пусть @${username.replace(/^@/, '')} напишет боту любое сообщение, чтобы подтвердить подключение.`;
+            statusEl.style.color = '#1f7a4d';
+            renderAdmins(data.admins || [], data.pending || []);
+        } catch (e) {
+            statusEl.textContent = 'Не удалось добавить: ' + e.message;
+            statusEl.style.color = '#d9482b';
+        }
+    }
+
+    async function removeAdmin(chatId) {
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'remove-admin', chatId })
+            });
+            const data = await res.json();
+            if (data.success) renderAdmins(data.admins || [], data.pending || []);
+        } catch (e) {}
+    }
+
+    async function removePending(username) {
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'remove-pending', username })
+            });
+            const data = await res.json();
+            if (data.success) renderAdmins(data.admins || [], data.pending || []);
+        } catch (e) {}
+    }
 
     // --- Баннеры ---
     let banners = [];
