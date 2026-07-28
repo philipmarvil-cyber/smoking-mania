@@ -959,92 +959,6 @@
             }
             section.style.display = '';
             renderProductCardsInto(wrap, newest);
-            enableHorizontalDragScroll(wrap);
-        }
-
-        // Лента "Новинки" должна одновременно уметь: скроллиться сама вбок
-        // пальцем, и НЕ мешать обычному скроллу страницы вниз, даже если палец
-        // касается именно карточки. Направление жеста определяем сами по
-        // первому заметному движению — горизонталь тянет ленту (сами меняем
-        // scrollLeft), вертикаль просто ничего не делаем и отдаём скролл
-        // странице как обычно. Раньше здесь пробовали и CSS touch-action в
-        // одиночку (либо блокирует страницу, либо не даёт свайпнуть ленту —
-        // третьего варианта нет), и подмену через CSS-transform (конфликтовала
-        // с content-visibility у карточек и подгрузкой картинок) — оба раза
-        // хуже. Этот вариант — рабочий баланс.
-        function enableHorizontalDragScroll(el) {
-            if (!el || el.dataset.dragScrollBound) return;
-            el.dataset.dragScrollBound = '1';
-            let startX = 0, startY = 0, startScrollLeft = 0, direction = null;
-            let history = []; // {x, t} за последние ~120мс — для устойчивого расчёта скорости отпускания
-            let pendingLeft = null, rafId = null;
-            let momentumId = null;
-
-            function flush() {
-                rafId = null;
-                if (pendingLeft !== null) {
-                    el.scrollLeft = pendingLeft;
-                    pendingLeft = null;
-                }
-            }
-
-            function settle(startVelocity) {
-                const maxScroll = el.scrollWidth - el.clientWidth;
-                let v = startVelocity;
-                let pos = el.scrollLeft;
-                let lastTs = null;
-                function step(ts) {
-                    if (lastTs === null) lastTs = ts;
-                    const dt = Math.min(32, ts - lastTs);
-                    lastTs = ts;
-                    v *= 0.95;
-                    pos += v * dt;
-                    pos = Math.max(0, Math.min(maxScroll, pos));
-                    el.scrollLeft = pos;
-                    if (Math.abs(v) > 0.02 && pos > 0 && pos < maxScroll) {
-                        momentumId = requestAnimationFrame(step);
-                    }
-                }
-                if (Math.abs(v) > 0.02) momentumId = requestAnimationFrame(step);
-            }
-
-            el.addEventListener('touchstart', (e) => {
-                if (momentumId) { cancelAnimationFrame(momentumId); momentumId = null; }
-                const t = e.touches[0];
-                startX = t.clientX;
-                startY = t.clientY;
-                startScrollLeft = el.scrollLeft;
-                history = [{ x: t.clientX, t: performance.now() }];
-                direction = null;
-            }, { passive: true });
-            el.addEventListener('touchmove', (e) => {
-                const t = e.touches[0];
-                const dx = t.clientX - startX;
-                const dy = t.clientY - startY;
-                if (!direction && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
-                    direction = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                }
-                if (direction === 'x') {
-                    e.preventDefault();
-                    const now = performance.now();
-                    history.push({ x: t.clientX, t: now });
-                    while (history.length > 2 && now - history[0].t > 120) history.shift();
-                    pendingLeft = startScrollLeft - dx;
-                    if (rafId === null) rafId = requestAnimationFrame(flush);
-                }
-                // direction === 'y' — ничего не делаем, страница скроллится сама
-            }, { passive: false });
-            el.addEventListener('touchend', () => {
-                if (direction !== 'x') return;
-                let velocity = 0;
-                if (history.length >= 2) {
-                    const first = history[0];
-                    const last = history[history.length - 1];
-                    const dt = last.t - first.t;
-                    if (dt > 0) velocity = (last.x - first.x) / dt;
-                }
-                settle(-velocity);
-            });
         }
 
         // Полный список новинок (кнопка "Все" рядом с лентой на главной) —
@@ -1639,7 +1553,7 @@
         .section-title-row { display: flex; align-items: center; justify-content: space-between; margin: 15px 15px 10px 15px; }
         .section-title-all-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 20px; cursor: pointer; }
         .section-title-all-btn:active { opacity: 0.75; }
-        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
         .products-strip .product-card { content-visibility: visible; contain-intrinsic-size: auto; }
         .products-strip::-webkit-scrollbar { display: none; }
         .products-strip .product-card { flex: 0 0 150px; width: 150px; }
