@@ -742,16 +742,24 @@
 
             page.querySelector('#co-items-summary').onclick = () => navigateTo({ type: 'cart' });
 
-            // Плашка "Сумма заказа/Итого" зафиксирована внизу экрана и при
-            // открытой клавиатуре перекрывала поля "Промокод" и "Комментарий" —
-            // человек не видел, что печатает. Прячем плашку, пока активно любое
-            // поле ввода на этом экране, и возвращаем обратно при уходе с поля.
+            // Плашка "Сумма заказа/Итого" зафиксирована внизу экрана. Раньше при
+            // открытой клавиатуре она перекрывала поля "Промокод"/"Комментарий",
+            // и мы просто прятали её на время ввода — но тогда пропадала и
+            // кнопка "Оформить заказ", что тоже неудобно. Теперь вместо того,
+            // чтобы прятать, поднимаем плашку ровно настолько, чтобы она легла
+            // сразу над клавиатурой — сама плашка остаётся на месте и видна
+            // всегда, просто не перекрывает поле ввода снизу.
             const checkoutFooter = page.querySelector('.cart-footer');
-            if (checkoutFooter) {
-                page.querySelectorAll('.checkout-input, .checkout-textarea').forEach(el => {
-                    el.addEventListener('focus', () => { checkoutFooter.style.display = 'none'; });
-                    el.addEventListener('blur', () => { checkoutFooter.style.display = ''; });
-                });
+            if (checkoutFooter && window.visualViewport) {
+                const vv = window.visualViewport;
+                const baseBottom = 65; // совпадает с .cart-footer { bottom: 65px } в CSS — высота нижнего таббара
+                const updateFooterPosition = () => {
+                    const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+                    checkoutFooter.style.bottom = (keyboardHeight > 40 ? keyboardHeight : baseBottom) + 'px';
+                };
+                vv.addEventListener('resize', updateFooterPosition);
+                vv.addEventListener('scroll', updateFooterPosition);
+                updateFooterPosition();
             }
         }
 
