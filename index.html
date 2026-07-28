@@ -748,23 +748,34 @@
             // клавиатуру), пока клавиатура открыта, и возвращаем, как только
             // клавиатура закрылась.
             //
-            // ВАЖНО: раньше это определялось по focus/blur поля — но на
-            // некоторых клавиатурах (особенно на Android) кнопка "свернуть"
-            // прячет саму клавиатуру, НЕ снимая фокус с поля — событие blur
-            // просто не происходит, и плашка так и оставалась скрытой навсегда.
-            // Поэтому ориентируемся не на фокус, а на реальное изменение
-            // высоты видимой области экрана (там, где клавиатура правда есть
-            // или её правда нет) — это надёжно работает независимо от того,
-            // каким способом клавиатуру закрыли.
+            // ВАЖНО: определяем это не по focus/blur поля (на части клавиатур,
+            // особенно Android, кнопка "свернуть" не снимает фокус — blur
+            // просто не происходит), а по изменению высоты экрана. И не как
+            // "innerHeight минус высота видимой области" — в некоторых WebView
+            // при появлении клавиатуры сжимается вся страница целиком, а не
+            // только видимая область, и разница между этими двумя всегда
+            // около нуля. Вместо этого один раз, ДО того как клавиатура могла
+            // открыться, запоминаем "нормальную" высоту экрана и дальше
+            // сравниваем текущую высоту именно с ней.
             const checkoutFooter = page.querySelector('.cart-footer');
-            if (checkoutFooter && window.visualViewport) {
-                const vv = window.visualViewport;
+            if (checkoutFooter) {
+                const getHeight = () => (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+                const baselineHeight = getHeight();
                 const updateKeyboardState = () => {
-                    const keyboardOpen = (window.innerHeight - vv.height) > 100;
+                    const keyboardOpen = (baselineHeight - getHeight()) > 100;
                     checkoutFooter.classList.toggle('hidden-under-keyboard', keyboardOpen);
                 };
-                vv.addEventListener('resize', updateKeyboardState);
-                updateKeyboardState();
+                if (window.visualViewport) window.visualViewport.addEventListener('resize', updateKeyboardState);
+                window.addEventListener('resize', updateKeyboardState);
+
+                // На случай, если в этом WebView открытие клавиатуры вообще не
+                // меняет ни window.innerHeight, ни visualViewport (бывает) —
+                // подстраховываемся ещё и фокусом поля: скрыть точно надо сразу,
+                // как только начали печатать, даже если resize так и не придёт.
+                page.querySelectorAll('.checkout-input, .checkout-textarea').forEach(el => {
+                    el.addEventListener('focus', () => { checkoutFooter.classList.add('hidden-under-keyboard'); });
+                    el.addEventListener('blur', () => { checkoutFooter.classList.remove('hidden-under-keyboard'); });
+                });
             }
         }
 
