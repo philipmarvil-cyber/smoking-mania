@@ -40,6 +40,10 @@
     .add-admin-row { display: flex; gap: 8px; margin-top: 12px; }
     .add-admin-row input { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #e2e2e6; font-size: 14px; }
     .add-admin-row button { border: none; background: #1c1c1e; color: #fff; font-size: 13.5px; font-weight: 600; padding: 0 16px; border-radius: 8px; cursor: pointer; }
+    .notify-checks { display: flex; gap: 16px; margin-top: 10px; font-size: 13px; color: #4a4a4e; }
+    .notify-checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .admin-notify-types { font-size: 12px; color: #4a4a4e; margin-top: 4px; display: flex; gap: 12px; }
+    .admin-notify-types label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
     .add-admin-status { font-size: 12.5px; margin-top: 8px; min-height: 16px; }
 
     .tabs { display: flex; gap: 8px; margin-bottom: 18px; background: #eaeaed; border-radius: 12px; padding: 4px; }
@@ -63,7 +67,7 @@
     .banner-preview { border-radius: 12px; padding: 20px 16px; color: #fff; margin-top: 12px; font-weight: 700; background-size: cover; background-position: center; }
     .banner-preview .bp-sub { font-weight: 500; font-size: 13px; margin-top: 4px; opacity: 0.9; }
     .banner-remove-btn { margin-top: 12px; width: 100%; border: none; background: #fdf1e2; color: #9a5b0a; font-size: 13.5px; font-weight: 600; padding: 10px; border-radius: 8px; cursor: pointer; }
-    .add-banner-btn { width: 100%; border: none; background: #eaeaed; color: #1c1c1e; font-size: 14px; font-weight: 600; padding: 12px; border-radius: 10px; cursor: pointer; margin-bottom: 10px; }
+    .add-banner-btn, .add-admin-btn { width: 100%; border: none; background: #eaeaed; color: #1c1c1e; font-size: 14px; font-weight: 600; padding: 12px; border-radius: 10px; cursor: pointer; margin-bottom: 10px; }
     .save-banners-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14.5px; font-weight: 600; padding: 13px; border-radius: 10px; cursor: pointer; margin-top: 6px; }
     .banners-save-status { text-align: center; font-size: 13px; margin-top: 8px; min-height: 18px; }
 </style>
@@ -89,12 +93,16 @@
             <div id="status-banner"></div>
 
             <div class="admins-block">
-                <div class="section-heading" style="margin-bottom:8px;">Кто получает уведомления о заказах</div>
+                <div class="section-heading" style="margin-bottom:8px;">Администраторы и уведомления</div>
                 <div id="admins-list"></div>
                 <div class="add-admin-row">
                     <input type="text" id="new-admin-username" placeholder="Юзернейм в Telegram, например ivan_petrov">
-                    <button onclick="addAdmin()">Добавить</button>
                 </div>
+                <div class="notify-checks">
+                    <label><input type="checkbox" id="new-admin-orders" checked> Заказы</label>
+                    <label><input type="checkbox" id="new-admin-restock"> «Уведомить о поступлении»</label>
+                </div>
+                <button class="add-admin-btn" onclick="addAdmin()">Добавить администратора</button>
                 <div class="add-admin-status" id="add-admin-status"></div>
             </div>
 
@@ -208,25 +216,55 @@
             wrap.innerHTML = '<p class="sub" style="margin:0 0 4px 0;">Пока ни один администратор не подключён.</p>';
             return;
         }
-        const confirmedHtml = admins.map(a => `
-            <div class="admin-row">
-                <div>
-                    <div class="who">${a.username ? '@' + a.username : 'id ' + a.chatId}</div>
-                    <div class="status">Подключён</div>
+        const confirmedHtml = admins.map(a => {
+            // addedAt===null — это основной админ старого формата, для него
+            // отдельного изменения типов уведомлений на сервере пока нет
+            // (у него всегда оба) — показываем без чекбоксов.
+            const isLegacyPrimary = a.addedAt === null || a.addedAt === undefined;
+            const typesHtml = isLegacyPrimary
+                ? '<div class="admin-notify-types"><span>Заказы + «Уведомить о поступлении» (основной админ)</span></div>'
+                : `
+                    <div class="admin-notify-types">
+                        <label><input type="checkbox" ${a.notifyOrders !== false ? 'checked' : ''} onchange="updateAdminType(${a.chatId}, 'notifyOrders', this.checked)"> Заказы</label>
+                        <label><input type="checkbox" ${a.notifyRestock === true ? 'checked' : ''} onchange="updateAdminType(${a.chatId}, 'notifyRestock', this.checked)"> «Уведомить о поступлении»</label>
+                    </div>
+                `;
+            return `
+                <div class="admin-row">
+                    <div>
+                        <div class="who">${a.username ? '@' + a.username : 'id ' + a.chatId}</div>
+                        <div class="status">Подключён</div>
+                        ${typesHtml}
+                    </div>
+                    <button class="admin-remove" onclick="removeAdmin(${a.chatId})">Убрать</button>
                 </div>
-                <button class="admin-remove" onclick="removeAdmin(${a.chatId})">Убрать</button>
-            </div>
-        `).join('');
-        const pendingHtml = pending.map(u => `
-            <div class="admin-row pending">
-                <div>
-                    <div class="who">@${u}</div>
-                    <div class="status">Ожидает — попросите написать боту любое сообщение</div>
+            `;
+        }).join('');
+        const pendingHtml = pending.map(p => {
+            const types = [p.notifyOrders !== false ? 'заказы' : null, p.notifyRestock === true ? 'уведомить о поступлении' : null].filter(Boolean).join(' + ') || 'ничего не выбрано';
+            return `
+                <div class="admin-row pending">
+                    <div>
+                        <div class="who">@${p.username}</div>
+                        <div class="status">Ожидает — попросите написать боту любое сообщение (будет получать: ${types})</div>
+                    </div>
+                    <button class="admin-remove" onclick="removePending('${p.username}')">Убрать</button>
                 </div>
-                <button class="admin-remove" onclick="removePending('${u}')">Убрать</button>
-            </div>
-        `).join('');
+            `;
+        }).join('');
         wrap.innerHTML = confirmedHtml + pendingHtml;
+    }
+
+    async function updateAdminType(chatId, field, value) {
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'update-admin', chatId, [field]: value })
+            });
+            const data = await res.json();
+            if (data.success) renderAdmins(data.admins || [], data.pending || []);
+        } catch (e) {}
     }
 
     async function addAdmin() {
@@ -234,13 +272,15 @@
         const statusEl = document.getElementById('add-admin-status');
         const username = input.value.trim();
         if (!username) return;
+        const notifyOrders = document.getElementById('new-admin-orders').checked;
+        const notifyRestock = document.getElementById('new-admin-restock').checked;
         statusEl.textContent = 'Добавляем…';
         statusEl.style.color = '#8a8a8e';
         try {
             const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'add-admin', username })
+                body: JSON.stringify({ action: 'add-admin', username, notifyOrders, notifyRestock })
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.error || 'Ошибка');
