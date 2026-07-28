@@ -1718,9 +1718,10 @@
         .accordion-body { padding: 0 0 15px 0; font-size: 13.5px; line-height: 1.5; color: #4a4a4e; }
         
         /* Shop Page */
-        .banners-strip { display: flex; gap: 10px; overflow-x: auto; padding: 15px; box-sizing: border-box; scrollbar-width: none; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
-        .banners-strip::-webkit-scrollbar { display: none; }
-        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 calc(100vw - 30px); width: calc(100vw - 30px); max-width: calc(100vw - 30px); box-sizing: border-box; scroll-snap-align: start; scroll-snap-stop: always; background-size: cover; background-position: center; }
+        .banners-viewport { overflow: hidden; padding: 15px; box-sizing: border-box; touch-action: pan-y; }
+        .banners-strip { display: flex; will-change: transform; }
+        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 100%; width: 100%; box-sizing: border-box; background-size: cover; background-position: center; margin-right: 10px; }
+        .banner:last-child { margin-right: 0; }
         .banners-dots { display: flex; justify-content: center; gap: 6px; margin: -6px 0 6px 0; }
         .banners-dot { width: 6px; height: 6px; border-radius: 50%; background: #d1d1d6; transition: background 0.2s, width 0.2s; cursor: pointer; }
         .banners-dot.active { background: #82394a; width: 16px; border-radius: 3px; }
@@ -1956,7 +1957,9 @@
                 <span class="online-dot"></span>
             </a>
         </div>
-        <div class="banners-strip" id="banners-strip"><div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div></div>
+        <div class="banners-viewport" id="banners-viewport">
+            <div class="banners-strip" id="banners-strip"><div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div></div>
+        </div>
         <div class="banners-dots" id="banners-dots"></div>
 
         <div class="search-bar"><input type="text" id="search-input" placeholder="Поиск товаров" oninput="handleHomeSearch()"></div>
@@ -2146,9 +2149,11 @@
             .catch(() => {});
 
         function renderBanners(banners) {
+            const viewport = document.getElementById('banners-viewport');
             const strip = document.getElementById('banners-strip');
             const dotsWrap = document.getElementById('banners-dots');
-            if (!strip) return;
+            if (!viewport || !strip) return;
+
             strip.innerHTML = banners.map(b => {
                 const bg = b.imageUrl
                     ? `background-image: linear-gradient(135deg, ${b.color1}cc, ${b.color2}cc), url('${b.imageUrl.replace(/'/g, '')}');`
@@ -2171,34 +2176,112 @@
                     if (link) window.open(link, '_blank');
                 });
             });
-            enableHorizontalDragScroll(strip);
 
-            // Точки-навигация — показываем только если баннеров больше одного.
             if (dotsWrap) {
-                if (banners.length <= 1) {
-                    dotsWrap.innerHTML = '';
-                } else {
-                    dotsWrap.innerHTML = banners.map((_, i) => `<div class="banners-dot${i === 0 ? ' active' : ''}" data-index="${i}"></div>`).join('');
-                    dotsWrap.querySelectorAll('.banners-dot').forEach(dot => {
-                        dot.addEventListener('click', () => {
-                            const i = parseInt(dot.dataset.index, 10);
-                            strip.scrollTo({ left: i * strip.clientWidth, behavior: 'smooth' });
-                        });
-                    });
-                    let scrollTicking = false;
-                    strip.addEventListener('scroll', () => {
-                        if (scrollTicking) return;
-                        scrollTicking = true;
-                        requestAnimationFrame(() => {
-                            scrollTicking = false;
-                            const activeIndex = Math.round(strip.scrollLeft / strip.clientWidth);
-                            dotsWrap.querySelectorAll('.banners-dot').forEach((dot, i) => {
-                                dot.classList.toggle('active', i === activeIndex);
-                            });
-                        });
-                    });
-                }
+                dotsWrap.innerHTML = banners.length > 1
+                    ? banners.map((_, i) => `<div class="banners-dot${i === 0 ? ' active' : ''}" data-index="${i}"></div>`).join('')
+                    : '';
             }
+
+            setupBannerCarousel(viewport, strip, banners.length, dotsWrap);
+        }
+
+        // Карусель баннеров — раньше это была лента с нативным overflow-x:auto
+        // + scroll-snap, но у неё было два упорных бага: соседний баннер
+        // просачивался в кадр (тонкости работы padding у скроллящихся
+        // flex-контейнеров в разных браузерах отличаются) и сам свайп ощущался
+        // недостаточно плавным. Теперь скролла нет вовсе — каждый баннер это
+        // просто flex-элемент шириной 100% viewport'а, а переключение между
+        // ними — явный transform: translateX() с CSS-анимацией. Так все
+        // размеры считаются однозначно (никакого скролла — нечему "протекать"
+        // за границы), а сам жест обрабатываем вручную с сопротивлением на
+        // краях и плавной доводкой.
+        function setupBannerCarousel(viewport, strip, count, dotsWrap) {
+            // viewport и strip — стабильные DOM-узлы, они не пересоздаются между
+            // вызовами renderBanners (меняется только содержимое strip), поэтому
+            // обработчики событий достаточно повесить один раз; при повторных
+            // вызовах просто обновляем count/dotsWrap и сбрасываем на первый слайд.
+            if (viewport.dataset.carouselBound) {
+                const state = viewport._carouselState;
+                if (state) {
+                    state.count = count;
+                    state.dotsWrap = dotsWrap;
+                    state.goTo(0);
+                }
+                return;
+            }
+            viewport.dataset.carouselBound = '1';
+
+            const state = { count, dotsWrap, index: 0, dragOffset: 0 };
+            viewport._carouselState = state;
+            let width = viewport.clientWidth;
+            let startX = 0, startY = 0, direction = null;
+
+            function apply(withTransition) {
+                strip.style.transition = withTransition ? 'transform 0.3s cubic-bezier(.22,.61,.36,1)' : 'none';
+                strip.style.transform = `translateX(${-(state.index * width) + state.dragOffset}px)`;
+            }
+
+            function updateDots() {
+                if (!state.dotsWrap) return;
+                state.dotsWrap.querySelectorAll('.banners-dot').forEach((dot, i) => dot.classList.toggle('active', i === state.index));
+            }
+
+            state.goTo = function (i) {
+                state.index = Math.max(0, Math.min(state.count - 1, i));
+                state.dragOffset = 0;
+                apply(true);
+                updateDots();
+            };
+
+            viewport.addEventListener('touchstart', (e) => {
+                const t = e.touches[0];
+                startX = t.clientX;
+                startY = t.clientY;
+                direction = null;
+                state.dragOffset = 0;
+                width = viewport.clientWidth;
+            }, { passive: true });
+
+            viewport.addEventListener('touchmove', (e) => {
+                const t = e.touches[0];
+                const dx = t.clientX - startX;
+                const dy = t.clientY - startY;
+                if (!direction && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+                    direction = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+                }
+                if (direction === 'x') {
+                    e.preventDefault();
+                    // Лёгкое сопротивление на краях — на первом/последнем баннере
+                    // тянуть дальше некуда, но по чуть-чуть подаётся, как в нативных галереях.
+                    const atEdge = (state.index === 0 && dx > 0) || (state.index === state.count - 1 && dx < 0);
+                    state.dragOffset = atEdge ? dx * 0.35 : dx;
+                    apply(false);
+                }
+                // direction === 'y' — ничего не делаем, пусть страница скроллится сама
+            }, { passive: false });
+
+            viewport.addEventListener('touchend', () => {
+                if (direction !== 'x') return;
+                const threshold = width * 0.16;
+                if (state.dragOffset < -threshold && state.index < state.count - 1) state.goTo(state.index + 1);
+                else if (state.dragOffset > threshold && state.index > 0) state.goTo(state.index - 1);
+                else state.goTo(state.index);
+            });
+
+            window.addEventListener('resize', () => {
+                width = viewport.clientWidth;
+                apply(false);
+            });
+
+            if (state.dotsWrap) {
+                state.dotsWrap.addEventListener('click', (e) => {
+                    const dot = e.target.closest('.banners-dot');
+                    if (dot) state.goTo(parseInt(dot.dataset.index, 10));
+                });
+            }
+
+            apply(false);
         }
 
         // Тап куда угодно вне поля ввода убирает фокус с текущего инпута —
