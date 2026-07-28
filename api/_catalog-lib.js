@@ -449,10 +449,8 @@ export const ADMIN_CHAT_ID_KEY = 'admin-chat-id:v1'; // старый форма�
 export const ADMIN_CHAT_IDS_KEY = 'admin-chat-ids:v1'; // новый формат — список { chatId, username, addedAt }
 export const ADMIN_PENDING_USERNAMES_KEY = 'admin-pending-usernames:v1'; // юзернеймы, добавленные в личном кабинете, но ещё не написавшие боту
 
-// Единый список chat_id всех администраторов, которым нужно слать уведомления
-// о заказах и о "Уведомить о поступлении" — объединяет новый список (несколько
-// админов, добавленных через личный кабинет) со старым форматом (один
-// chat_id из самой первой версии бота), чтобы никто не пропал при миграции.
+// Единый список chat_id всех администраторов (без разбивки по типу
+// уведомлений) — используется только для диагностики (/api/kv-status).
 export async function getAllAdminChatIds() {
     const list = (await kvGetJson(ADMIN_CHAT_IDS_KEY)) || [];
     const ids = new Set(list.map(a => a.chatId));
@@ -461,10 +459,26 @@ export async function getAllAdminChatIds() {
     return [...ids];
 }
 
-// Шлёт сообщение всем администраторам разом. Ошибка отправки одному не
-// должна мешать остальным — поэтому Promise.allSettled, а не Promise.all.
-export async function sendToAllAdmins(text) {
-    const ids = await getAllAdminChatIds();
+// Список chat_id админов, которым нужно слать уведомления КОНКРЕТНОГО типа —
+// 'orders' (новый заказ) или 'restock' ("Уведомить о поступлении"). У каждого
+// админа в ADMIN_CHAT_IDS_KEY может быть свой набор notifyOrders/notifyRestock
+// (задаётся при добавлении в личном кабинете) — если поле не указано (старые
+// записи, самый первый/основной админ), по умолчанию считаем, что нужны ОБА
+// типа, чтобы никто не перестал получать уведомления при миграции.
+export async function getAdminChatIdsForType(type) {
+    const field = type === 'restock' ? 'notifyRestock' : 'notifyOrders';
+    const list = (await kvGetJson(ADMIN_CHAT_IDS_KEY)) || [];
+    const ids = new Set(list.filter(a => a[field] !== false).map(a => a.chatId));
+    const legacy = await kvGetJson(ADMIN_CHAT_ID_KEY);
+    if (legacy) ids.add(legacy); // самый первый (старого формата) админ — всегда оба типа
+    return [...ids];
+}
+
+// Шлёт сообщение всем администраторам, подписанным на этот тип уведомлений.
+// Ошибка отправки одному не должна мешать остальным — поэтому
+// Promise.allSettled, а не Promise.all.
+export async function sendToAdminsForType(type, text) {
+    const ids = await getAdminChatIdsForType(type);
     await Promise.allSettled(ids.map(id => sendTelegramMessage(id, text)));
 }
 
