@@ -1,2227 +1,518 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#ffffff">
-    <title>SMOKING MANIA</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script>
-        const tg = window.Telegram.WebApp;
-        tg.ready(); tg.expand();
-        tg.setHeaderColor('#ffffff'); tg.setBackgroundColor('#f2f2f7');
-        // Отключаем свайп-закрытие мини-аппы на всех платформах — настоящей
-        // причиной поломки скролла на Android был overscroll-behavior (уже
-        // исправлено), а не этот флаг, так что можно спокойно вернуть его
-        // как было изначально.
-        if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
-        tg.enableClosingConfirmation();
-        // ЭКСПЕРИМЕНТ: раньше здесь requestFullscreen() специально пропускался
-        // на Android — считалось, что он ломает скролл. Но реальная картина
-        // (скролл работает только над зафиксированной нижней панелью навигации,
-        // и именно в НЕполноэкранном режиме на Android виден нативный "хедер"
-        // Telegram с ручкой для свайпа-закрытия) говорит, что дело, возможно,
-        // ровно в обратном: это нативный хедер Telegram перехватывает
-        // вертикальный тач по всей высоте экрана на Android, когда мини-аппа
-        // НЕ в полноэкранном режиме. Пробуем включить fullscreen и на Android
-        // тоже — уберёт этот хедер, и тач должен полностью достаться странице.
-        try { tg.requestFullscreen(); } catch (e) {}
-        const telegramUserId = tg.initDataUnsafe?.user?.id || null;
-
-        // --- Фикс "коллапса" мини-аппы при скролле на Android ---
-        // Известная особенность Telegram Mini Apps: если документ по высоте
-        // равен вьюпорту (нечего скроллить) или scrollY ровно 0, свайп вниз
-        // Telegram интерпретирует как жест сворачивания приложения, а не как
-        // скролл контента — палец "не листает" каталог. disableVerticalSwipes()
-        // выше не всегда полностью снимает эту особенность на Android
-        // (зависит от версии клиента), поэтому добавляем ещё и эту защиту.
-        function ensureDocumentIsScrollable() {
-            const isScrollable = document.documentElement.scrollHeight > window.innerHeight;
-            document.documentElement.style.setProperty(
-                'height',
-                isScrollable ? '' : 'calc(100vh + 1px)',
-                isScrollable ? '' : 'important'
-            );
-            // Переподтверждаем на каждой отрисовке экрана (не только один раз
-            // при запуске) на случай, если Telegram сам пересматривает флаг
-            // при изменении контента.
-            if (tg.isVerticalSwipesEnabled) tg.disableVerticalSwipes();
-        }
-        function preventScrollCollapse() {
-            if (window.scrollY === 0) window.scrollTo(0, 1);
-        }
-        window.addEventListener('load', ensureDocumentIsScrollable);
-        document.addEventListener('touchstart', preventScrollCollapse, { passive: true });
-
-        // --- Состояние магазина ---
-        function escapeHtml(str) {
-            return (str || '')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
-        }
-        let allProducts = [];   // все товары, полученные со склада
-        let categories = [];    // категории (первый уровень) + их подкатегории
-        let cart = {};          // { productId: { id, name, price, img, folderId, qty } }
-        let favorites = {};     // { productId: { id, name, price, img } }
-        let checkoutFormState = {}; // сохранённые значения полей формы оформления заказа (fullName, phone, delivery, address, apt, floor, promo, comment)
-        let detailQtyValue = 1;
-        let categoryPageDefaultList = []; // текущий список товаров страницы категории (без учёта поиска) — чтобы возвращаться к нему при очистке поля поиска
-        let currentDetailProductId = null; // id товара, открытого на странице "Товар" — нужно для обновления цены при изменении корзины
-
-        // --- Скидка за объём корзины: от 10 000 ₽ — минус 10% на все позиции ---
-        const BULK_DISCOUNT_THRESHOLD = 10000;
-        const BULK_DISCOUNT_RATE = 0.10;
-
-        function getCartSubtotal() {
-            return Object.values(cart).reduce((sum, item) => sum + item.price * item.qty, 0);
-        }
-        function isBulkDiscountActive() {
-            return getCartSubtotal() >= BULK_DISCOUNT_THRESHOLD;
-        }
-        function getDiscountedUnitPrice(price) {
-            return Math.round(price * (1 - BULK_DISCOUNT_RATE));
-        }
-
-        // --- Навигация: стек экранов, чтобы системная кнопка "Назад" Telegram
-        // всегда возвращала на предыдущий именно экран, а не сразу на главную ---
-        let navStack = [{ type: 'shop' }];
-
-        function confirmAge(isAdult) {
-            const gate = document.getElementById('age-gate');
-            if (isAdult) {
-                if (gate) gate.style.display = 'none';
-                ensureDocumentIsScrollable();
-                setTimeout(ensureDocumentIsScrollable, 300);
-            } else {
-                if (tg.close) {
-                    tg.close();
-                } else if (gate) {
-                    gate.querySelector('.age-gate-card').innerHTML =
-                        '<div class="age-gate-title">Доступ запрещён</div><div class="age-gate-text"><p>Извините, этот каталог доступен только совершеннолетним пользователям.</p></div>';
-                }
-            }
-        }
-
-        function currentScreen() {
-            return navStack[navStack.length - 1];
-        }
-
-        function navigateTo(screen) {
-            if (navStack.length) {
-                navStack[navStack.length - 1].scrollY = window.scrollY;
-            }
-            navStack.push(screen);
-            renderScreen(screen);
-        }
-
-        function goBack() {
-            // Если сейчас открыт экран категории и мы спустились в drill-down
-            // (pathIds не пустой) — "назад" сперва поднимает на один уровень
-            // вложенности внутри ТОГО ЖЕ экрана категории, а не уводит на
-            // предыдущий экран в стеке навигации. Экран категории убирается
-            // из стека только когда мы уже на самом верхнем её уровне —
-            // дальше кнопка работает как обычно.
-            const top = currentScreen();
-            if (top.type === 'category' && top.pathIds && top.pathIds.length) {
-                top.pathIds = top.pathIds.slice(0, -1);
-                top.subFolderIds = null;
-                renderCategoryScreen(top);
-                return;
-            }
-            if (navStack.length <= 1) return;
-            navStack.pop();
-            renderScreen(currentScreen());
-        }
-
-        // Вызывается табами нижней навигации — сбрасывает стек до этой вкладки.
-        function switchTab(type) {
-            navStack = [{ type }];
-            renderScreen(navStack[0]);
-        }
-
-        tg.BackButton.hide();
-        tg.BackButton.onClick(() => goBack());
-
-        const NAV_TAB_INDEX = { shop: 0, favorites: 1, cart: 2, account: 3 };
-
-        function renderScreen(screen) {
-            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-
-            if (screen.type === 'shop') {
-                document.getElementById('page-shop').classList.add('active');
-                renderHome();
-            } else if (screen.type === 'favorites') {
-                document.getElementById('page-favorites').classList.add('active');
-                renderFavorites();
-            } else if (screen.type === 'cart') {
-                document.getElementById('page-cart').classList.add('active');
-                renderCart();
-            } else if (screen.type === 'account') {
-                document.getElementById('page-account').classList.add('active');
-                renderAccount();
-            } else if (screen.type === 'category') {
-                document.getElementById('page-category').classList.add('active');
-                renderCategoryScreen(screen);
-            } else if (screen.type === 'newest') {
-                document.getElementById('page-newest').classList.add('active');
-                renderNewestScreen();
-            } else if (screen.type === 'detail') {
-                document.getElementById('page-detail').classList.add('active');
-                renderProductDetail(screen.productId);
-            } else if (screen.type === 'orders') {
-                document.getElementById('page-orders').classList.add('active');
-                renderOrdersPage();
-            } else if (screen.type === 'checkout') {
-                document.getElementById('page-checkout').classList.add('active');
-                renderCheckoutScreen();
-            }
-
-            const tabIndex = NAV_TAB_INDEX[screen.type];
-            if (tabIndex !== undefined) {
-                const items = document.querySelectorAll('.nav-item');
-                if (items[tabIndex]) items[tabIndex].classList.add('active');
-            }
-
-            // Восстанавливаем позицию скролла в несколько заходов: сразу,
-            // на следующем кадре отрисовки и ещё раз чуть погодя. Один
-            // синхронный scrollTo не всегда достаточен — если высота
-            // страницы досчитывается позже (например, из-за более крупных
-            // подкатегорий/строк грамовок или картинок, которые в некоторых
-            // WebView всё равно чуть сдвигают раскладку), то один точечный
-            // scrollTo может промахнуться, и "назад" визуально бросает не
-            // туда, где пользователь был на самом деле.
-            const targetY = screen.scrollY || 0;
-            window.scrollTo(0, targetY);
-            document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', targetY > 10));
-            requestAnimationFrame(() => window.scrollTo(0, targetY));
-            ensureDocumentIsScrollable();
-            setTimeout(() => { ensureDocumentIsScrollable(); window.scrollTo(0, targetY); }, 400); // картинки товаров дорисовываются чуть позже и меняют высоту страницы
-
-            if (navStack.length > 1) {
-                tg.BackButton.show();
-            } else {
-                tg.BackButton.hide();
-            }
-        }
-
-        // --- Личный кабинет ---
-        function renderAccount() {
-            const user = tg.initDataUnsafe?.user;
-            const nameEl = document.getElementById('account-name');
-            const usernameEl = document.getElementById('account-username');
-            const avatarEl = document.getElementById('account-avatar');
-
-            if (user) {
-                nameEl.textContent = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Без имени';
-                usernameEl.textContent = user.username ? '@' + user.username : '';
-                if (user.photo_url) {
-                    avatarEl.style.backgroundImage = `url(${user.photo_url})`;
-                    avatarEl.textContent = '';
-                } else {
-                    avatarEl.style.backgroundImage = 'none';
-                    avatarEl.textContent = (user.first_name || '?').charAt(0).toUpperCase();
-                }
-            } else {
-                nameEl.textContent = 'Гость';
-                usernameEl.textContent = '';
-            }
-
-            if (tg.CloudStorage) {
-                tg.CloudStorage.getItem('phone_number', (err, value) => {
-                    if (!err && value) showConfirmedPhone(value);
-                });
-            }
-
-            const favCountEl = document.getElementById('account-fav-count');
-            const cartCountEl = document.getElementById('account-cart-count');
-            if (favCountEl) favCountEl.textContent = Object.keys(favorites).length;
-            if (cartCountEl) cartCountEl.textContent = Object.values(cart).reduce((s, i) => s + i.qty, 0);
-        }
-
-        function showConfirmedPhone(phone) {
-            document.getElementById('account-phone').textContent = phone;
-            const btn = document.getElementById('account-phone-btn');
-            if (btn) btn.style.display = 'none';
-        }
-
-        function requestPhone() {
-            if (!tg.requestContact) return;
-            tg.requestContact((shared, response) => {
-                const contact = response?.responseUnsafe?.contact;
-                if (shared && contact?.phone_number) {
-                    showConfirmedPhone(contact.phone_number);
-                    if (tg.CloudStorage) {
-                        tg.CloudStorage.setItem('phone_number', contact.phone_number, () => {});
-                    }
-                }
-            });
-        }
-
-        // --- Избранное и корзина: сохранение/загрузка через CloudStorage Telegram ---
-        function persistCart() {
-            if (tg.CloudStorage) tg.CloudStorage.setItem('cart_v1', JSON.stringify(cart), () => {});
-        }
-        function persistFavorites() {
-            if (tg.CloudStorage) tg.CloudStorage.setItem('favorites_v1', JSON.stringify(favorites), () => {});
-        }
-
-        // --- Мои заказы: список последних заказов клиента, хранится на
-        // устройстве через CloudStorage (сами статусы всегда подгружаются
-        // свежими с сервера при открытии страницы, тут только id/название). ---
-        function saveOrderLocally(orderId, orderName) {
-            if (!tg.CloudStorage || !orderId) return;
-            tg.CloudStorage.getItem('my_orders_v1', (err, value) => {
-                let list = [];
-                if (!err && value) { try { list = JSON.parse(value); } catch (e) {} }
-                list = [{ id: orderId, name: orderName }, ...list.filter(o => o.id !== orderId)].slice(0, 20);
-                tg.CloudStorage.setItem('my_orders_v1', JSON.stringify(list), () => {});
-            });
-        }
-
-        const loadedOrderDetails = {}; // кэш уже загруженных составов заказов на время сессии
-
-        // Разворачивает/сворачивает состав заказа под карточкой в "Мои заказы".
-        // Детали грузятся только один раз при первом раскрытии.
-        async function toggleOrderDetail(orderId) {
-            const detailEl = document.getElementById(`order-detail-${orderId}`);
-            if (!detailEl) return;
-
-            if (detailEl.style.display !== 'none') {
-                detailEl.style.display = 'none';
-                return;
-            }
-
-            if (loadedOrderDetails[orderId]) {
-                detailEl.innerHTML = loadedOrderDetails[orderId];
-                detailEl.style.display = 'block';
-                return;
-            }
-
-            detailEl.innerHTML = '<div class="order-detail-loading">Загружаем состав заказа…</div>';
-            detailEl.style.display = 'block';
-
-            try {
-                const response = await fetch('/api/orders', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: orderId })
-                });
-                const data = await response.json();
-                if (!response.ok || !data.success) throw new Error(data.error || 'Ошибка');
-
-                const html = data.order.positions.length
-                    ? data.order.positions.map(p => `
-                        <div class="order-detail-row">
-                            <span>${p.name} × ${p.quantity}</span>
-                            <span>${(p.price * p.quantity).toLocaleString()} ₽</span>
-                        </div>
-                    `).join('')
-                    : '<div class="order-detail-row">Список товаров пуст</div>';
-
-                loadedOrderDetails[orderId] = html;
-                detailEl.innerHTML = html;
-            } catch (e) {
-                detailEl.innerHTML = '<div class="order-detail-loading">Не удалось загрузить состав заказа</div>';
-            }
-        }
-
-        function renderOrdersPage() {
-            const container = document.getElementById('orders-content');
-            container.innerHTML = '<div class="empty-state">Загружаем заказы…</div>';
-
-            if (!tg.CloudStorage) {
-                container.innerHTML = '<div class="empty-state">Список заказов недоступен</div>';
-                return;
-            }
-
-            tg.CloudStorage.getItem('my_orders_v1', async (err, value) => {
-                let localOrders = [];
-                if (!err && value) { try { localOrders = JSON.parse(value); } catch (e) {} }
-
-                const ids = localOrders.map(o => o.id);
-                if (!ids.length && !telegramUserId) {
-                    container.innerHTML = '<div class="empty-state">Заказов пока нет</div>';
-                    return;
-                }
-
-                try {
-                    const response = await fetch('/api/orders', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ids, telegramUserId })
-                    });
-                    const data = await response.json();
-                    if (!response.ok || !data.success || !data.orders.length) {
-                        container.innerHTML = '<div class="empty-state">Заказов пока нет</div>';
-                        return;
-                    }
-                    container.innerHTML = data.orders.map(o => `
-                        <div class="order-card" id="order-card-${o.id}" data-order-id="${o.id}">
-                            <div class="order-card-top">
-                                <span class="order-card-name">Заказ №${o.name}</span>
-                                <span class="order-card-status"${o.stateColor ? ` style="background:${o.stateColor}22;color:${o.stateColor}"` : ''}>${o.stateName}</span>
-                            </div>
-                            <div class="order-card-bottom">
-                                <span>${new Date(o.moment).toLocaleDateString('ru-RU')}</span>
-                                <span>${o.sum.toLocaleString()} ₽</span>
-                            </div>
-                            <div class="order-card-detail" id="order-detail-${o.id}" style="display:none;"></div>
-                        </div>
-                    `).join('');
-
-                    // Тап по заказу — разворачивает состав (что заказали). Грузим детали
-                    // только при первом раскрытии конкретного заказа и запоминаем в памяти,
-                    // повторный тап просто открывает/закрывает уже загруженное.
-                    container.querySelectorAll('.order-card').forEach(card => {
-                        card.addEventListener('click', () => toggleOrderDetail(card.dataset.orderId));
-                    });
-                } catch (e) {
-                    container.innerHTML = '<div class="empty-state">Не удалось загрузить заказы</div>';
-                }
-            });
-        }
-        function loadCartAndFavorites(callback) {
-            if (!tg.CloudStorage) { callback && callback(); return; }
-            tg.CloudStorage.getItem('cart_v1', (err, value) => {
-                if (!err && value) { try { cart = JSON.parse(value); } catch (e) {} }
-                updateCartBadge();
-                tg.CloudStorage.getItem('favorites_v1', (err2, value2) => {
-                    if (!err2 && value2) { try { favorites = JSON.parse(value2); } catch (e) {} }
-                    callback && callback();
-                });
-            });
-        }
-
-        function updateCartBadge() {
-            const count = Object.values(cart).reduce((sum, item) => sum + item.qty, 0);
-            const badge = document.getElementById('cart-count-badge');
-            if (!badge) return;
-            if (count > 0) {
-                badge.textContent = count > 99 ? '99+' : count;
-                badge.style.display = 'flex';
-            } else {
-                badge.style.display = 'none';
-            }
-        }
-
-        function toggleFavorite(prod) {
-            if (favorites[prod.id]) {
-                delete favorites[prod.id];
-            } else {
-                favorites[prod.id] = { id: prod.id, name: prod.name, price: prod.price, img: prod.img };
-            }
-            persistFavorites();
-            document.querySelectorAll(`.fav-toggle[data-id="${prod.id}"]`).forEach(el => {
-                el.classList.toggle('active', !!favorites[prod.id]);
-            });
-            if (document.getElementById('page-favorites').classList.contains('active')) renderFavorites();
-        }
-
-        // Показывает предупреждение, когда пользователь пытается добавить в корзину
-        // больше единиц товара, чем реально есть в остатках на складе.
-        function notifyStockLimit(name, stockLimit) {
-            tg.HapticFeedback?.notificationOccurred('warning');
-            const message = stockLimit > 0
-                ? `«${name}» — в наличии осталось только ${stockLimit} шт.`
-                : `«${name}» только что раскупили.`;
-            if (tg.showPopup) {
-                tg.showPopup({ message });
-            } else {
-                alert(message);
-            }
-        }
-
-        function addToCart(prod, qty) {
-            const stockLimit = (typeof prod.stock === 'number') ? prod.stock : null;
-            const currentQty = cart[prod.id] ? cart[prod.id].qty : 0;
-            let newQty = currentQty + qty;
-            if (stockLimit !== null && newQty > stockLimit) {
-                const capped = Math.max(0, stockLimit);
-                if (capped <= currentQty) {
-                    notifyStockLimit(prod.name, stockLimit);
-                    return;
-                }
-                newQty = capped;
-                notifyStockLimit(prod.name, stockLimit);
-            }
-            if (cart[prod.id]) {
-                cart[prod.id].qty = newQty;
-            } else {
-                cart[prod.id] = { id: prod.id, name: prod.name, price: prod.price, img: prod.img, folderId: prod.folderId, qty: newQty };
-            }
-            persistCart();
-            updateCartBadge();
-            refreshPriceTiersIfVisible();
-            refreshCardPricesIfVisible();
-        }
-
-        function addToCartFromDetail(id) {
-            const prod = allProducts.find(p => p.id === id);
-            if (!prod || prod.archived) return;
-            addToCart(prod, detailQtyValue);
-            tg.HapticFeedback?.notificationOccurred('success');
-        }
-
-        function changeDetailQty(delta) {
-            const prod = allProducts.find(p => p.id === currentDetailProductId);
-            const stockLimit = (prod && typeof prod.stock === 'number') ? prod.stock : null;
-            let next = detailQtyValue + delta;
-            if (stockLimit !== null && next > stockLimit) {
-                next = stockLimit;
-                if (prod) notifyStockLimit(prod.name, stockLimit);
-            }
-            detailQtyValue = Math.max(1, next);
-            const el = document.getElementById('detail-qty');
-            if (el) el.textContent = detailQtyValue;
-            const plusBtn = document.getElementById('detail-qty-plus');
-            if (plusBtn) plusBtn.disabled = (stockLimit !== null && detailQtyValue >= stockLimit);
-        }
-
-        function updateCartQty(id, delta) {
-            if (!cart[id]) return;
-            const prod = allProducts.find(p => p.id === id);
-            const stockLimit = (prod && typeof prod.stock === 'number') ? prod.stock : null;
-            let nextQty = cart[id].qty + delta;
-            if (delta > 0 && stockLimit !== null && nextQty > stockLimit) {
-                nextQty = stockLimit;
-                notifyStockLimit(prod.name, stockLimit);
-            }
-            cart[id].qty = nextQty;
-            if (cart[id].qty <= 0) delete cart[id];
-            persistCart();
-            updateCartBadge();
-            renderCart();
-            refreshPriceTiersIfVisible();
-            refreshCardPricesIfVisible();
-        }
-
-        function removeFromCart(id) {
-            delete cart[id];
-            persistCart();
-            updateCartBadge();
-            renderCart();
-            refreshPriceTiersIfVisible();
-            refreshCardPricesIfVisible();
-        }
-
-        // Собирает id узла категории/подкатегории и ВСЕХ его потомков на
-        // любую глубину вложенности. Нужно, чтобы товары из под-подкатегорий
-        // (3-й уровень и глубже) тоже засчитывались в раздел, а не терялись.
-        function collectFolderIds(node) {
-            let ids = [node.id];
-            (node.subcategories || []).forEach(sub => {
-                ids = ids.concat(collectFolderIds(sub));
-            });
-            return ids;
-        }
-
-        // Ищет узел (категорию/подкатегорию любой глубины) по folderId в дереве.
-        function findCategoryNode(nodes, folderId) {
-            for (const node of nodes) {
-                if (node.id === folderId) return node;
-                const found = findCategoryNode(node.subcategories || [], folderId);
-                if (found) return found;
-            }
-            return null;
-        }
-
-        // Находит категорию/подкатегорию товара по folderId — для лейбла в корзине.
-        function getCategoryLabelForFolder(folderId) {
-            if (!folderId) return '';
-            for (const cat of categories) {
-                if (cat.id === folderId) return cat.name;
-                const sub = findCategoryNode(cat.subcategories, folderId);
-                if (sub) return `${cat.name} · ${sub.name}`;
-            }
-            return '';
-        }
-
-        function renderCart() {
-            const container = document.getElementById('cart-container');
-            const progressBar = document.getElementById('discount-progress-bar');
-            const items = Object.values(cart);
-            if (!items.length) {
-                container.innerHTML = '<div class="empty-state">Корзина пуста</div>';
-                if (progressBar) progressBar.innerHTML = '';
-                updateCartTotal(0);
-                return;
-            }
-            const baseSubtotal = getCartSubtotal();
-            const discountActive = baseSubtotal >= BULK_DISCOUNT_THRESHOLD;
-
-            container.innerHTML = '';
-            let grandTotal = 0;
-            items.forEach(item => {
-                const unitPrice = discountActive ? getDiscountedUnitPrice(item.price) : item.price;
-                const lineTotal = unitPrice * item.qty;
-                grandTotal += lineTotal;
-                const imgHtml = item.img ? `<img src="${item.img}" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
-                const categoryLabel = getCategoryLabelForFolder(item.folderId);
-                const row = document.createElement('div');
-                row.className = 'cart-row';
-                row.innerHTML = `
-                    <div class="cart-row-img">${imgHtml}</div>
-                    <div class="cart-row-body">
-                        <div class="cart-row-top">
-                            <div class="cart-row-category">${categoryLabel}</div>
-                            <div class="cart-row-remove" data-action="remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></div>
-                        </div>
-                        <div class="cart-row-name">${item.name}</div>
-                        <div class="cart-row-bottom">
-                            <div class="cart-row-price-block">
-                                <div class="cart-row-total">${lineTotal.toLocaleString()} ₽</div>
-                                <div class="cart-row-unit">${unitPrice.toLocaleString()} ₽ / шт</div>
-                            </div>
-                            <div class="qty-stepper small">
-                                <button data-action="dec">−</button>
-                                <span>${item.qty}</span>
-                                <button data-action="inc">+</button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                row.querySelector('[data-action="dec"]').onclick = () => updateCartQty(item.id, -1);
-                row.querySelector('[data-action="inc"]').onclick = () => updateCartQty(item.id, 1);
-                row.querySelector('[data-action="remove"]').onclick = () => removeFromCart(item.id);
-                row.querySelector('.cart-row-img').onclick = () => navigateTo({ type: 'detail', productId: item.id });
-                container.appendChild(row);
-            });
-
-            // Прогресс до скидки за объём корзины — раньше рисовался последней
-            // карточкой внутри списка и уезжал вниз при большом количестве
-            // товаров. Теперь это отдельный элемент, прилипающий сразу под
-            // шапкой ("Доставка"), и виден постоянно, независимо от скролла.
-            if (progressBar) {
-                const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - baseSubtotal);
-                const pct = Math.min(100, Math.round((baseSubtotal / BULK_DISCOUNT_THRESHOLD) * 100));
-                const savings = baseSubtotal - grandTotal;
-                progressBar.innerHTML = `
-                    <div class="discount-progress-box">
-                        <div class="discount-progress-row">
-                            <span>${discountActive ? `Скидка 10% на всю корзину активна${savings > 0 ? ` · вы экономите ${savings.toLocaleString()} ₽` : ''}` : `Ещё ${remaining.toLocaleString()} ₽ до следующей цены`}</span>
-                            <span class="discount-progress-goal">${discountActive ? '✓ применена' : 'от ' + BULK_DISCOUNT_THRESHOLD.toLocaleString() + ' ₽'}</span>
-                        </div>
-                        <div class="discount-progress-track"><div class="discount-progress-fill${discountActive ? ' full' : ''}" style="width:${pct}%"></div></div>
-                    </div>
-                `;
-            }
-
-            updateCartTotal(grandTotal);
-        }
-
-        function updateCartTotal(total) {
-            const totalEl = document.getElementById('cart-total');
-            const checkoutBtn = document.getElementById('checkout-btn');
-            if (totalEl) totalEl.textContent = total.toLocaleString() + ' ₽';
-            if (checkoutBtn) checkoutBtn.style.display = total > 0 ? 'block' : 'none';
-        }
-
-        function getSavedPhone() {
-            return new Promise(resolve => {
-                if (!tg.CloudStorage) { resolve(null); return; }
-                tg.CloudStorage.getItem('phone_number', (err, value) => {
-                    resolve(!err && value ? value : null);
-                });
-            });
-        }
-
-        function goToCheckout() {
-            if (!Object.keys(cart).length) return;
-            navigateTo({ type: 'checkout' });
-        }
-
-        // --- Экран оформления заказа: полноформатная страница (ФИО, телефон,
-        // способ доставки, адрес, оплата, промокод, комментарий) — раньше тут
-        // просто всплывал нативный запрос телефона Telegram и заказ уходил
-        // сразу же, без адреса и уточнений. ---
-        async function renderCheckoutScreen() {
-            const page = document.getElementById('page-checkout');
-            const items = Object.values(cart);
-            if (!items.length) {
-                page.innerHTML = `
-                    <div class="header"><span>Оформление заказа</span></div>
-                    <div class="checkout-content"><div class="empty-state">Корзина пуста</div></div>
-                `;
-                return;
-            }
-
-            const discountActive = isBulkDiscountActive();
-            const grandTotal = items.reduce((sum, i) => sum + (discountActive ? getDiscountedUnitPrice(i.price) : i.price) * i.qty, 0);
-
-            const user = tg.initDataUnsafe?.user;
-            if (checkoutFormState.fullName === undefined) {
-                checkoutFormState.fullName = user ? [user.first_name, user.last_name].filter(Boolean).join(' ') : '';
-            }
-            if (checkoutFormState.phone === undefined) {
-                checkoutFormState.phone = (await getSavedPhone()) || '';
-            }
-
-            const firstItem = items[0];
-            const itemImgHtml = firstItem.img
-                ? `<img src="${firstItem.img}" decoding="async">`
-                : `<span class="no-photo">Фото</span>`;
-            const itemsCountLabel = items.length === 1 ? '1 товар'
-                : (items.length >= 2 && items.length <= 4) ? `${items.length} товара` : `${items.length} товаров`;
-
-            const esc = (v) => (v || '').replace(/"/g, '&quot;');
-
-            page.innerHTML = `
-                <div class="header"><span>Оформление заказа</span></div>
-                <div class="checkout-content">
-                    <div class="checkout-section checkout-item-summary" id="co-items-summary">
-                        <div class="cart-row-img">${itemImgHtml}</div>
-                        <div class="checkout-items-label">${itemsCountLabel}</div>
-                        <div class="checkout-items-arrow">→</div>
-                    </div>
-
-                    <div class="checkout-section">
-                        <div class="checkout-label">Доставка</div>
-                        <div class="checkout-card">
-                            <div class="payment-option disabled">
-                                <div class="payment-radio checked"></div>
-                                <div class="payment-option-text">
-                                    <span>Самовывоз</span>
-                                    <div class="payment-option-subtext">г. Москва, Шипиловская улица, дом 50, корпус 1</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="checkout-section">
-                        <div class="checkout-label">Получатель</div>
-                        <div class="checkout-card">
-                            <div class="checkout-field">
-                                <label class="checkout-field-label">ФИО <span class="req">*</span></label>
-                                <input class="checkout-input" id="co-name" placeholder="Имя Фамилия" value="${esc(checkoutFormState.fullName)}">
-                            </div>
-                            <div class="checkout-field">
-                                <label class="checkout-field-label">Телефон <span class="req">*</span></label>
-                                <input class="checkout-input" id="co-phone" placeholder="+7" value="${esc(checkoutFormState.phone) || '+7'}">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="checkout-section">
-                        <div class="checkout-label">Оплата</div>
-                        <div class="checkout-card">
-                            <div class="payment-option">
-                                <div class="payment-radio checked"></div>
-                                <span>Наличными или картой при получении</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="checkout-section">
-                        <div class="checkout-card">
-                            <div class="checkout-field">
-                                <div class="promo-row">
-                                    <input class="checkout-input" id="co-promo" placeholder="Промокод" value="${esc(checkoutFormState.promo)}">
-                                    <button class="promo-apply-btn" onclick="applyPromoCode()">Применить</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="checkout-section">
-                        <div class="checkout-card">
-                            <div class="checkout-field">
-                                <textarea class="checkout-textarea" id="co-comment" placeholder="Комментарий к заказу" rows="2">${checkoutFormState.comment || ''}</textarea>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="cart-footer">
-                    <div class="cart-total-row"><span>Сумма заказа</span><span>${grandTotal.toLocaleString()} ₽</span></div>
-                    <div class="cart-total-row checkout-delivery-row"><span>Доставка</span><span>Самовывоз</span></div>
-                    <div class="cart-total-row checkout-grand-total"><span>Итого</span><span>${grandTotal.toLocaleString()} ₽</span></div>
-                    <button class="checkout-btn" id="checkout-submit-btn" onclick="submitCheckoutOrder()">Подтвердить заказ</button>
-                </div>
-            `;
-
-            page.querySelector('#co-items-summary').onclick = () => navigateTo({ type: 'cart' });
-
-            // Плашка "Сумма заказа/Итого" зафиксирована внизу экрана. При
-            // открытой клавиатуре она перекрывала поля "Промокод"/"Комментарий" —
-            // прячем её (плавно уезжает вниз, как будто скрывается под
-            // клавиатуру), пока клавиатура открыта, и возвращаем, как только
-            // клавиатура закрылась.
-            //
-            // ВАЖНО: определяем это не по focus/blur поля (на части клавиатур,
-            // особенно Android, кнопка "свернуть" не снимает фокус — blur
-            // просто не происходит), а по изменению высоты экрана. И не как
-            // "innerHeight минус высота видимой области" — в некоторых WebView
-            // при появлении клавиатуры сжимается вся страница целиком, а не
-            // только видимая область, и разница между этими двумя всегда
-            // около нуля. Вместо этого один раз, ДО того как клавиатура могла
-            // открыться, запоминаем "нормальную" высоту экрана и дальше
-            // сравниваем текущую высоту именно с ней.
-            const checkoutFooter = page.querySelector('.cart-footer');
-            if (checkoutFooter) {
-                const getHeight = () => (window.visualViewport ? window.visualViewport.height : window.innerHeight);
-                const baselineHeight = getHeight();
-                const updateKeyboardState = () => {
-                    const keyboardOpen = (baselineHeight - getHeight()) > 100;
-                    checkoutFooter.classList.toggle('hidden-under-keyboard', keyboardOpen);
-                };
-                if (window.visualViewport) window.visualViewport.addEventListener('resize', updateKeyboardState);
-                window.addEventListener('resize', updateKeyboardState);
-
-                // На случай, если в этом WebView открытие клавиатуры вообще не
-                // меняет ни window.innerHeight, ни visualViewport (бывает) —
-                // подстраховываемся ещё и фокусом поля: скрыть точно надо сразу,
-                // как только начали печатать, даже если resize так и не придёт.
-                page.querySelectorAll('.checkout-input, .checkout-textarea').forEach(el => {
-                    el.addEventListener('focus', () => { checkoutFooter.classList.add('hidden-under-keyboard'); });
-                    el.addEventListener('blur', () => { checkoutFooter.classList.remove('hidden-under-keyboard'); });
-                });
-            }
-        }
-
-        // Забирает текущие значения полей формы в checkoutFormState — чтобы не
-        // терять введённое перед отправкой заказа.
-        function captureCheckoutFormState() {
-            const get = id => document.getElementById(id)?.value ?? '';
-            checkoutFormState.fullName = get('co-name') || checkoutFormState.fullName;
-            checkoutFormState.phone = get('co-phone') || checkoutFormState.phone;
-            checkoutFormState.promo = get('co-promo') || checkoutFormState.promo;
-            checkoutFormState.comment = get('co-comment') || checkoutFormState.comment;
-        }
-
-        function applyPromoCode() {
-            const value = document.getElementById('co-promo')?.value.trim();
-            if (!value) return;
-            alert('Промокод «' + value + '» передадим менеджеру — он проверит и применит скидку, если условия подходят.');
-        }
-
-        async function submitCheckoutOrder() {
-            const items = Object.values(cart);
-            if (!items.length) return;
-
-            captureCheckoutFormState();
-            const fullName = (checkoutFormState.fullName || '').trim();
-            const phone = (checkoutFormState.phone || '').trim();
-            const promo = (checkoutFormState.promo || '').trim();
-            const comment = (checkoutFormState.comment || '').trim();
-            const deliveryLabel = 'Самовывоз';
-
-            if (!fullName) { alert('Укажите ФИО получателя'); return; }
-            if (!phone || phone.replace(/\D/g, '').length < 10) { alert('Укажите корректный номер телефона'); return; }
-
-            const btn = document.getElementById('checkout-submit-btn');
-            const originalText = btn.textContent;
-            btn.disabled = true;
-            btn.textContent = 'Оформляем...';
-
-            try {
-                const discountActive = isBulkDiscountActive();
-                const response = await fetch('/api/create-order', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        items: items.map(i => ({
-                            id: i.id,
-                            name: i.name,
-                            price: discountActive ? getDiscountedUnitPrice(i.price) : i.price,
-                            qty: i.qty
-                        })),
-                        customerName: fullName,
-                        phone,
-                        telegramUserId,
-                        deliveryMethod: deliveryLabel,
-                        address: null,
-                        promoCode: promo || null,
-                        comment: comment || null
-                    })
-                });
-                const data = await response.json();
-                if (!response.ok || !data.success) {
-                    throw new Error(data.error || 'Не удалось оформить заказ');
-                }
-
-                if (tg.CloudStorage) tg.CloudStorage.setItem('phone_number', phone, () => {});
-                cart = {};
-                persistCart();
-                updateCartBadge();
-                saveOrderLocally(data.orderId, data.orderName);
-
-                // Клиент грузит каталог только один раз при запуске мини-аппы и
-                // больше не перезапрашивает его в течение сессии — поэтому без
-                // этого шага только что оформленный заказ не был бы виден в виде
-                // "Нет в наличии" нигде на экране до перезапуска бота. Отражаем
-                // списание сразу в allProducts, тем же способом, что и сервер.
-                items.forEach(i => {
-                    const prod = allProducts.find(p => p.id === i.id);
-                    if (prod && typeof prod.stock === 'number') {
-                        prod.stock = Math.max(0, prod.stock - i.qty);
-                        prod.archived = prod.stock <= 0;
-                    }
-                });
-
-                refreshPriceTiersIfVisible();
-                refreshCardPricesIfVisible();
-                checkoutFormState = {};
-
-                document.getElementById('page-checkout').innerHTML = `
-                    <div class="header"><span>Оформление заказа</span></div>
-                    <div class="checkout-content"><div class="empty-state">Заказ ${data.orderName ? '№' + data.orderName + ' ' : ''}оформлен!<br>Мы скоро с вами свяжемся.</div></div>
-                `;
-                updateCartTotal(0);
-            } catch (e) {
-                alert('Не получилось оформить заказ: ' + e.message + '\n\nПопробуйте ещё раз или напишите в поддержку.');
-                btn.disabled = false;
-                btn.textContent = originalText;
-            }
-        }
-
-        function renderFavorites() {
-            const container = document.getElementById('favorites-container');
-            const items = Object.values(favorites);
-            if (!items.length) {
-                container.innerHTML = '<div class="empty-state">Пока нет избранных товаров</div>';
-                return;
-            }
-            container.innerHTML = '';
-            items.forEach(item => {
-                const imgHtml = item.img ? `<img src="${item.img}" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
-                const row = document.createElement('div');
-                row.className = 'fav-row';
-                row.innerHTML = `
-                    <div class="cart-row-img">${imgHtml}</div>
-                    <div class="cart-row-info">
-                        <div class="cart-row-name">${item.name}</div>
-                        <div class="cart-row-price">${item.price.toLocaleString()} ₽</div>
-                    </div>
-                    <div class="cart-row-remove" data-action="remove">✕</div>
-                `;
-                row.querySelector('.cart-row-info').onclick = () => navigateTo({ type: 'detail', productId: item.id });
-                row.querySelector('.cart-row-img').onclick = () => navigateTo({ type: 'detail', productId: item.id });
-                row.querySelector('[data-action="remove"]').onclick = () => {
-                    delete favorites[item.id];
-                    persistFavorites();
-                    renderFavorites();
-                };
-                container.appendChild(row);
-            });
-        }
-
-        // --- Главная страница: категории + новинки ---
-        function renderHome() {
-            renderHomeCategories();
-            renderHomeNewest();
-            const searchInput = document.getElementById('search-input');
-            if (searchInput && searchInput.value.trim()) {
-                handleHomeSearch();
-            } else {
-                document.getElementById('home-browse').style.display = '';
-                document.getElementById('home-search-results').style.display = 'none';
-            }
-        }
-
-        // --- Иконки для плиток категорий (контурные SVG, подбираются по ключевым словам в названии) ---
-        const CATEGORY_ICONS = {
-            leaf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16c8 2 14-4 15-13-9 1-15 7-13 15z"/><path d="M6 18c2-4 5-7 9-9"/></svg>',
-            droplet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c4 5 7 8.5 7 12a7 7 0 1 1-14 0c0-3.5 3-7 7-12z"/></svg>',
-            star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.2-5.4 3.2 1.3-6-4.6-4.1 6.1-.6z"/></svg>',
-            flame: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1 3-3 4-3 8a4 4 0 0 0 8 0c0-1-1-2-2-2 1 3-1 5-3 5a4 4 0 0 1-4-4c0-4 4-5 4-7z"/></svg>',
-            cup: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5h16"/><path d="M5 8.5c0 5.5 2.3 10 7 10s7-4.5 7-10"/></svg>',
-            shirt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4 4 7l2 3 2-1v10h8V9l2 1 2-3-4-3-2 2h-4z"/></svg>',
-            hookah: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 4h7l1 3h-9z"/><path d="M12 7v9.5"/><ellipse cx="12" cy="19" rx="6" ry="2.5"/></svg>',
-            petal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="3"/><circle cx="12" cy="16.5" r="3"/><circle cx="7.5" cy="12" r="3"/><circle cx="16.5" cy="12" r="3"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/></svg>',
-            flask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3h4"/><path d="M10.5 3v5.2c-3 2-4.5 5-4.5 7.8a6 6 0 0 0 12 0c0-2.8-1.5-5.8-4.5-7.8V3"/></svg>',
-            coal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="8" height="8" rx="1.6"/><rect x="10.5" y="5.5" width="8" height="8" rx="1.6"/><circle cx="7" cy="14" r="0.8" fill="currentColor" stroke="none"/><circle cx="14.5" cy="9.5" r="0.8" fill="currentColor" stroke="none"/></svg>',
-            mouthpiece: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="13" height="6" rx="3"/><path d="M16 10.5h3a2.5 2.5 0 0 1 0 5h-3"/></svg>',
-            tongs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3c0 6.5 1.5 9.5 1.5 14"/><path d="M16 3c0 6.5-1.5 9.5-1.5 14"/><path d="M6.5 3h3M14.5 3h3"/></svg>',
-            foil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8c4-3 12-3 16 0"/><path d="M4 13c4-3 12-3 16 0"/><path d="M4 18c4-3 12-3 16 0"/></svg>',
-            box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l8-4 8 4-8 4-8-4z"/><path d="M3 7v10l8 4 8-4V7"/><path d="M11 11v10"/></svg>'
-        };
-
-        function getCategoryIcon(name) {
-            const n = (name || '').toLowerCase();
-            if (n.includes('смес')) return CATEGORY_ICONS.petal;
-            if (n.includes('кальян')) return CATEGORY_ICONS.hookah;
-            if (n.includes('табак')) return CATEGORY_ICONS.leaf;
-            if (n.includes('жидкост')) return CATEGORY_ICONS.droplet;
-            if (n.includes('мундштук')) return CATEGORY_ICONS.mouthpiece;
-            if (n.includes('щипц')) return CATEGORY_ICONS.tongs;
-            if (n.includes('фольг') || n.includes('калауд')) return CATEGORY_ICONS.foil;
-            if (n.includes('аксессуар')) return CATEGORY_ICONS.star;
-            if (n.includes('уголь') || n.includes('угол')) return CATEGORY_ICONS.coal;
-            if (n.includes('колб')) return CATEGORY_ICONS.flask;
-            if (n.includes('чаш')) return CATEGORY_ICONS.cup;
-            if (n.includes('мерч')) return CATEGORY_ICONS.shirt;
-            return CATEGORY_ICONS.box;
-        }
-
-        function createCategoryTile(name, onClick) {
-            const tile = document.createElement('div');
-            tile.className = 'category-tile';
-            tile.innerHTML = `
-                <div class="category-tile-icon">${getCategoryIcon(name)}</div>
-                <div class="category-tile-name">${name}</div>
-            `;
-            tile.onclick = onClick;
-            return tile;
-        }
-
-        function renderHomeCategories() {
-            const wrap = document.getElementById('home-categories-container');
-            wrap.innerHTML = '';
-            categories.forEach(cat => {
-                wrap.appendChild(createCategoryTile(cat.name, () => navigateTo({ type: 'category', categoryId: cat.id })));
-            });
-        }
-
-        function renderHomeNewest() {
-            const section = document.getElementById('home-newest-section');
-            const wrap = document.getElementById('home-newest-container');
-            const newest = allProducts.filter(p => p.isNew);
-            if (!newest.length) {
-                section.style.display = 'none';
-                return;
-            }
-            section.style.display = '';
-            renderProductCardsInto(wrap, newest);
-        }
-
-        // Полный список новинок (кнопка "Все" рядом с лентой на главной) —
-        // обычная сетка в 2 колонки, тот же рендер с подгрузкой по скроллу,
-        // что и в категориях.
-        function renderNewestScreen() {
-            const newest = allProducts.filter(p => p.isNew);
-            renderProductCardsInto(document.getElementById('newest-products-container'), newest);
-        }
-
-        function handleHomeSearch() {
-            const term = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
-            const browseEl = document.getElementById('home-browse');
-            const resultsEl = document.getElementById('home-search-results');
-            if (!term) {
-                browseEl.style.display = '';
-                resultsEl.style.display = 'none';
-                return;
-            }
-            browseEl.style.display = 'none';
-            resultsEl.style.display = '';
-            const filtered = allProducts.filter(p => p.name.toLowerCase().includes(term));
-            renderProductCardsInto(document.getElementById('products-container'), filtered);
-        }
-
-        // Текущее состояние страницы категории. pathIds — путь узлов от корневой
-        // категории вниз (id каждого уровня drill-down), subFolderIds — выбранный
-        // ЛИСТОВОЙ чип на текущем уровне (без своих детей).
-        // Всё это хранится не только здесь, но и прямо на объекте экрана в
-        // navStack (screen.pathIds / screen.subFolderIds), иначе при возврате
-        // "назад" (когда renderCategoryScreen вызывается заново с тем же
-        // экраном) выбор откатывался на "Все".
-        let categoryFilterState = { cat: null, pathIds: [], subFolderIds: null };
-
-        // Спускается по дереву категорий от rootNode согласно pathIds и
-        // возвращает весь путь узлов [rootNode, ..., currentNode]. Если id
-        // из pathIds уже не существует (например, категории обновились),
-        // путь просто обрывается на последнем валидном узле.
-        function resolveCategoryPath(rootNode, pathIds) {
-            const path = [rootNode];
-            let node = rootNode;
-            for (const id of (pathIds || [])) {
-                const next = (node.subcategories || []).find(s => s.id === id);
-                if (!next) break;
-                path.push(next);
-                node = next;
-            }
-            return path;
-        }
-
-        // Хлебная крошка — переход сразу на несколько уровней вверх. Если
-        // соответствующие уровни есть в navStack (они туда попадают по мере
-        // спуска через navigateTo) — просто отрезаем всё лишнее сверху стека,
-        // чтобы "назад" продолжал вести себя предсказуемо. Если в стеке
-        // почему-то нет промежуточных уровней (например, после перезагрузки
-        // страницы) — просто перерисовываем текущий экран на месте.
-        function goUpToCategoryDepth(screen, depth) {
-            while (navStack.length > 1) {
-                const top = navStack[navStack.length - 1];
-                if (top.type === 'category' && top.categoryId === screen.categoryId && (top.pathIds || []).length > depth) {
-                    navStack.pop();
-                } else {
-                    break;
-                }
-            }
-            const top = navStack[navStack.length - 1];
-            if (top.type === 'category' && top.categoryId === screen.categoryId && (top.pathIds || []).length === depth) {
-                renderScreen(top);
-            } else {
-                screen.pathIds = (screen.pathIds || []).slice(0, depth);
-                screen.subFolderIds = null;
-                renderCategoryScreen(screen);
-            }
-        }
-
-        // --- Страница категории ---
-        // Заголовок (имя корневой категории), хлебные крошки (если спустились
-        // глубже одного уровня), поиск по всему каталогу, строка подкатегорий
-        // ТЕКУЩЕГО узла дерева (клик по разделу со своими детьми — спускается
-        // на уровень ниже и подменяет саму строку чипов; клик по листу —
-        // просто фильтрует товары) и товары.
-        function renderCategoryScreen(screen) {
-            const cat = categories.find(c => c.id === screen.categoryId);
-            const page = document.getElementById('page-category');
-            if (!cat) { page.innerHTML = ''; return; }
-
-            const path = resolveCategoryPath(cat, screen.pathIds);
-            const currentNode = path[path.length - 1];
-
-            const nodeFolderIds = collectFolderIds(currentNode);
-
-            categoryFilterState = {
-                cat,
-                pathIds: screen.pathIds || [],
-                subFolderIds: screen.subFolderIds || null
-            };
-
-            const breadcrumbHtml = path.length > 1
-                ? `<div class="breadcrumb-strip">${path.map((n, i) => {
-                    const isLast = i === path.length - 1;
-                    return isLast
-                        ? `<span class="breadcrumb-current">${n.name}</span>`
-                        : `<span class="breadcrumb-link" data-depth="${i}">${n.name}</span><span class="breadcrumb-sep">›</span>`;
-                }).join('')}</div>`
-                : '';
-
-            page.innerHTML = `
-                <div class="header" style="margin-top:0;"><span>${cat.name}</span></div>
-                <div class="search-bar"><input type="text" id="category-search-input" placeholder="Поиск товаров" oninput="handleCategorySearch()"></div>
-                ${breadcrumbHtml}
-                ${currentNode.subcategories.length ? '<div class="filter-label">Подкатегория</div><div class="subcat-strip" id="subcat-strip"></div>' : ''}
-                <div class="products-grid" id="category-products-container" style="padding:15px 12px;"></div>
-            `;
-
-            page.querySelectorAll('.breadcrumb-link').forEach(el => {
-                el.onclick = () => {
-                    const depth = parseInt(el.dataset.depth, 10);
-                    goUpToCategoryDepth(screen, depth);
-                };
-            });
-
-            if (currentNode.subcategories.length) {
-                const strip = document.getElementById('subcat-strip');
-                const allChip = document.createElement('div');
-                allChip.className = 'subcat-chip' + (categoryFilterState.subFolderIds ? '' : ' active');
-                allChip.textContent = 'Все';
-                allChip.onclick = () => { categoryFilterState.subFolderIds = null; screen.subFolderIds = null; applyCategoryFilters(allChip); };
-                strip.appendChild(allChip);
-                currentNode.subcategories.forEach(sub => {
-                    const chip = document.createElement('div');
-                    const subFolderIds = collectFolderIds(sub);
-                    const isActive = categoryFilterState.subFolderIds &&
-                        categoryFilterState.subFolderIds.length === subFolderIds.length &&
-                        categoryFilterState.subFolderIds.every(id => subFolderIds.includes(id));
-                    chip.className = 'subcat-chip' + (isActive ? ' active' : '');
-                    chip.textContent = sub.name + (sub.subcategories.length ? ' ›' : '');
-                    if (sub.subcategories.length) {
-                        // У раздела есть свои подразделы — спуск на уровень
-                        // ниже теперь отдельный шаг в navStack (через
-                        // navigateTo), а не перерисовка на месте. Так
-                        // телеграмовская кнопка "назад" после захода внутрь
-                        // товара (или после нескольких спусков подряд)
-                        // возвращает на ОДИН уровень вверх по дереву, а не
-                        // сразу выкидывает из категории целиком.
-                        chip.onclick = () => {
-                            navigateTo({
-                                type: 'category',
-                                categoryId: screen.categoryId,
-                                pathIds: [...(screen.pathIds || []), sub.id],
-                                subFolderIds: null
-                            });
-                        };
-                    } else {
-                        // Лист — просто фильтруем товары на месте, без спуска
-                        // и без нового шага в истории "назад".
-                        chip.onclick = () => { categoryFilterState.subFolderIds = subFolderIds; screen.subFolderIds = subFolderIds; applyCategoryFilters(chip); };
-                    }
-                    strip.appendChild(chip);
-                });
-            }
-
-            const baseFolderIds = categoryFilterState.subFolderIds || nodeFolderIds;
-            const initialList = allProducts.filter(p => baseFolderIds.includes(p.folderId));
-            categoryPageDefaultList = initialList;
-            renderProductCardsInto(document.getElementById('category-products-container'), initialList);
-        }
-
-        // Пересчитывает список товаров из выбранной подкатегории (в рамках
-        // текущего узла drill-down) и подсвечивает активный чип.
-        function applyCategoryFilters(chipEl) {
-            document.querySelectorAll('#subcat-strip .subcat-chip').forEach(c => c.classList.remove('active'));
-            chipEl.classList.add('active');
-
-            const { cat, pathIds, subFolderIds } = categoryFilterState;
-            const currentNode = resolveCategoryPath(cat, pathIds).pop();
-            const baseFolderIds = subFolderIds || collectFolderIds(currentNode);
-            const list = allProducts.filter(p => baseFolderIds.includes(p.folderId));
-
-            categoryPageDefaultList = list;
-            const searchInput = document.getElementById('category-search-input');
-            if (searchInput) searchInput.value = '';
-            renderProductCardsInto(document.getElementById('category-products-container'), list);
-        }
-
-        // Поиск внутри категории — с небольшой задержкой (debounce), чтобы не
-        // перестраивать всю сетку карточек на каждое нажатие клавиши подряд:
-        // на больших категориях это и было заметным источником подтормаживаний.
-        let categorySearchDebounce = null;
-        function handleCategorySearch() {
-            clearTimeout(categorySearchDebounce);
-            categorySearchDebounce = setTimeout(() => {
-                const term = (document.getElementById('category-search-input')?.value || '').trim().toLowerCase();
-                const container = document.getElementById('category-products-container');
-                if (!term) {
-                    renderProductCardsInto(container, categoryPageDefaultList);
-                    return;
-                }
-                const filtered = allProducts.filter(p => p.name.toLowerCase().includes(term));
-                renderProductCardsInto(container, filtered);
-            }, 250);
-        }
-
-        // --- Карточки товаров (переиспользуется на главной, в поиске, в категориях) ---
-        // Уникальный токен текущего рендера — если пока идёт порционная
-        // отрисовка большого списка пользователь успел уйти на другой экран
-        // или переключить фильтр, оставшиеся порции старого рендера должны
-        // молча остановиться, а не дописываться поверх нового контейнера.
-        let productRenderToken = 0;
-
-        function renderProductCardsInto(container, list) {
-            const myToken = ++productRenderToken;
-            container.innerHTML = '';
-            if (!list.length) {
-                container.innerHTML = '<div class="empty-state">Ничего не найдено</div>';
-                return;
-            }
-            // Сначала товары в наличии, потом те, которых нет в наличии
-            const sortedList = [...list].sort((a, b) => (a.archived === b.archived) ? 0 : (a.archived ? 1 : -1));
-
-            function buildCard(prod) {
-                const isFav = !!favorites[prod.id];
-                const priceOrBadgeHtml = prod.archived
-                    ? `<div class="oos-badge">Нет в наличии</div>`
-                    : renderCardPriceHtml(prod);
-                const imgHtml = prod.img ? `<img src="${prod.img}" data-full-src="${prod.img}&size=full" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
-                const newBadgeHtml = prod.isNew ? `<div class="new-badge">NEW</div>` : '';
-                const actionBtnHtml = prod.archived
-                    ? `<button class="notify-btn" data-id="${prod.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M9.7 21a2 2 0 0 0 4.6 0"/></svg>Уведомить</button>`
-                    : `<button class="add-to-cart-card-btn" data-id="${prod.id}"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M1 1h4l2.6 13.4a2 2 0 0 0 2 1.6h9.8a2 2 0 0 0 2-1.6L23 6H6"/></svg>В корзину</button>`;
-                const card = document.createElement('div');
-                card.className = 'product-card' + (prod.archived ? ' out-of-stock' : '');
-                card.dataset.id = prod.id;
-                card.innerHTML = `
-                    <div class="product-image-container" data-pid="${prod.id}">
-                        ${imgHtml}
-                        ${newBadgeHtml}
-                        <div class="fav-toggle ${isFav ? 'active' : ''}" data-id="${prod.id}"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.6 8.4 2 4.8 5.4 4.1 7.6 3.6 9.8 4.6 12 7c2.2-2.4 4.4-3.4 6.6-2.9 3.4.7 4.8 4.3 3.4 7.6C19.5 16.3 12 21 12 21z"/></svg></div>
-                    </div>
-                    ${priceOrBadgeHtml}
-                    <div class="product-title">${prod.name}</div>
-                    ${actionBtnHtml}
-                `;
-                card.addEventListener('click', () => navigateTo({ type: 'detail', productId: prod.id }));
-                card.querySelector('.fav-toggle').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    toggleFavorite(prod);
-                });
-                const addBtnEl = card.querySelector('.add-to-cart-card-btn');
-                if (addBtnEl) {
-                    addBtnEl.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        addToCart(prod, 1);
-                        tg.HapticFeedback?.notificationOccurred('success');
-                    });
-                }
-                const notifyEl = card.querySelector('.notify-btn');
-                if (notifyEl) {
-                    notifyEl.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        notifyWhenAvailable(prod);
-                    });
-                }
-
-                // Карточка сразу показывает миниатюру (лёгкая, обычно уже в кэше),
-                // а качественную версию догружает в фоне и бесшовно подменяет —
-                // так сетка остаётся такой же быстрой, как раньше, но со временем
-                // "дозревает" до чёткой картинки, не тормозя открытие категории.
-                // Откладываем через requestIdleCallback — если в этот момент человек
-                // как раз свайпает (например, ленту "Новинки"), запуск декодирования
-                // десятков картинок одновременно с жестом и вызывал те самые лаги.
-                const cardImgEl = card.querySelector('.product-image-container img');
-                if (cardImgEl && cardImgEl.dataset.fullSrc) {
-                    const upgrade = () => {
-                        const preload = new Image();
-                        preload.onload = () => { cardImgEl.src = cardImgEl.dataset.fullSrc; };
-                        preload.src = cardImgEl.dataset.fullSrc;
-                    };
-                    if ('requestIdleCallback' in window) requestIdleCallback(upgrade, { timeout: 2000 });
-                    else setTimeout(upgrade, 300);
-                }
-
-                return card;
-            }
-
-            // Раньше тут были requestAnimationFrame-порции, которые всё равно
-            // очень быстро (пара секунд) строили ВЕСЬ список в DOM целиком —
-            // для обычной категории это незаметно, но "Кальянные смеси"
-            // (тысячи позиций с учётом всех вложенных подкатегорий) в итоге
-            // получала тысячи живых карточек (картинки + несколько SVG-иконок
-            // на каждой) сразу после открытия. Само открытие переставало
-            // "виснуть", но ПОСЛЕДУЮЩИЙ скролл лагал и на iPhone, и на Android —
-            // именно от размера DOM, а не от того, как он строился. Теперь
-            // рендерим по одной порции и достраиваем следующую только когда
-            // пользователь реально долистал почти до конца — DOM растёт
-            // настолько, насколько человек реально пролистал, а не сразу
-            // весь список наперёд.
-            const CHUNK_SIZE = 24;
-            let index = 0;
-            let chunkObserver = null;
-            let sentinel = null;
-
-            function renderNextChunk() {
-                if (myToken !== productRenderToken) { if (chunkObserver) chunkObserver.disconnect(); return; }
-                if (sentinel) { sentinel.remove(); sentinel = null; }
-                const fragment = document.createDocumentFragment();
-                const end = Math.min(index + CHUNK_SIZE, sortedList.length);
-                for (; index < end; index++) {
-                    fragment.appendChild(buildCard(sortedList[index]));
-                }
-                container.appendChild(fragment);
-                if (index < sortedList.length) {
-                    sentinel = document.createElement('div');
-                    sentinel.className = 'grid-load-sentinel';
-                    container.appendChild(sentinel);
-                    if (!chunkObserver) {
-                        chunkObserver = new IntersectionObserver((entries) => {
-                            if (entries[0].isIntersecting) renderNextChunk();
-                        }, { rootMargin: '800px 0px' }); // с запасом вперёд, чтобы догрузка была не заметна на глаз
-                    }
-                    chunkObserver.observe(sentinel);
-                } else if (chunkObserver) {
-                    chunkObserver.disconnect();
-                }
-            }
-            renderNextChunk();
-        }
-
-        // Кнопка "Уведомить" на карточке товара не в наличии — подписывает
-        // пользователя на разовое сообщение в Telegram, когда sync-catalog
-        // в следующий раз увидит, что товар снова есть в наличии.
-        function notifyWhenAvailable(prod) {
-            tg.HapticFeedback?.notificationOccurred('success');
-            const message = `Сообщим, когда «${prod.name}» появится в наличии.`;
-            if (tg.showPopup) {
-                tg.showPopup({ message });
-            } else {
-                alert(message);
-            }
-            // Раньше тут был ранний return при отсутствии telegramUserId — это
-            // тихо блокировало сам запрос целиком (заявка не сохранялась и
-            // администратор ничего не получал, даже когда telegramUserId по
-            // какой-то причине не пришёл от Telegram). Подписка полезна и без
-            // id, поэтому отправляем в любом случае.
-            const tgUser = tg.initDataUnsafe?.user;
-            const fullName = tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') : null;
-            fetch('/api/notify-restock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    productId: prod.id,
-                    telegramUserId: telegramUserId || null,
-                    name: fullName,
-                    username: tgUser?.username || null
-                })
-            }).catch(() => {});
-        }
-
-        // Компактный блок цены на карточке товара (главная/категория/поиск):
-        // текущая действующая цена + вторая цена (базовая или "от N ₽") и
-        // подсказка сколько ещё нужно докинуть в корзину до скидки 10%.
-        function renderCardPriceHtml(prod) {
-            const discounted = getDiscountedUnitPrice(prod.price);
-            const active = isBulkDiscountActive();
-            const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - getCartSubtotal());
-            const mainPrice = active ? discounted : prod.price;
-            const subLine = active
-                ? `<span class="price-old">${prod.price.toLocaleString()} ₽</span>`
-                : `<span class="price-hint">${discounted.toLocaleString()} ₽ от ${BULK_DISCOUNT_THRESHOLD.toLocaleString()} ₽</span>`;
-            const noteLine = active
-                ? `Скидка −10% уже применена`
-                : `ещё ${remaining.toLocaleString()} ₽ до −10%`;
-            return `
-                <div class="product-price-block" data-pricebox="${prod.id}">
-                    <div class="product-price-row">
-                        <span class="product-price">${mainPrice.toLocaleString()} ₽</span>
-                        ${subLine}
-                    </div>
-                    <div class="product-price-note">${noteLine}</div>
-                </div>
-            `;
-        }
-
-        // Обновляет цену на всех сейчас отрисованных карточках (главная, категория,
-        // поиск) без перерисовки всей сетки — вызывается при любом изменении корзины.
-        function refreshCardPricesIfVisible() {
-            document.querySelectorAll('[data-pricebox]').forEach(el => {
-                const id = el.dataset.pricebox;
-                const prod = allProducts.find(p => p.id === id);
-                if (!prod || prod.archived) return;
-                el.outerHTML = renderCardPriceHtml(prod);
-            });
-        }
-
-        // Блок "Базовая цена / цена от 10 000 ₽" + динамическая подсказка —
-        // используется на странице товара, обновляется при любом изменении корзины.
-        function renderPriceTiersHtml(price) {
-            const discounted = getDiscountedUnitPrice(price);
-            const subtotal = getCartSubtotal();
-            const active = subtotal >= BULK_DISCOUNT_THRESHOLD;
-            const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - subtotal);
-            const noteText = active
-                ? `Скидка уже действует — сейчас ${discounted.toLocaleString()} ₽/шт`
-                : `Сейчас ${price.toLocaleString()} ₽/шт · корзина ещё на ${remaining.toLocaleString()} ₽ — и будет ${discounted.toLocaleString()} ₽/шт`;
-            return `
-                <div class="price-tiers-box">
-                    <div class="price-tier-row"><span>Базовая цена</span><span class="price-tier-value${active ? ' struck' : ''}">${price.toLocaleString()} ₽</span></div>
-                    <div class="price-tier-row"><span>Корзина от ${BULK_DISCOUNT_THRESHOLD.toLocaleString()} ₽</span><span class="price-tier-value${active ? ' active' : ''}">${discounted.toLocaleString()} ₽</span></div>
-                </div>
-                <div class="price-tier-note">${noteText}</div>
-            `;
-        }
-
-        // Обновляет блок цены на открытой сейчас странице товара, не перерисовывая
-        // всю страницу — вызывается при любом изменении корзины.
-        function refreshPriceTiersIfVisible() {
-            if (!currentDetailProductId) return;
-            if (!document.getElementById('page-detail')?.classList.contains('active')) return;
-            const wrap = document.getElementById('price-tiers-wrap');
-            const prod = allProducts.find(p => p.id === currentDetailProductId);
-            if (wrap && prod) wrap.innerHTML = renderPriceTiersHtml(prod.price);
-        }
-
-        function renderProductDetail(id) {
-            const prod = allProducts.find(p => p.id === id);
-            if (!prod) return;
-            currentDetailProductId = id;
-            detailQtyValue = 1;
-            const detailPage = document.getElementById('page-detail');
-            // Миниатюра почти всегда уже в кэше браузера (человек только что видел
-            // её в сетке товаров) — показываем её сразу же, не дожидаясь оригинала.
-            // Оригинал (крупнее и потому медленнее) догружается в фоне и подменяет
-            // картинку, как только будет готов — без видимого "пустого" ожидания.
-            const fullImgUrl = prod.img ? `${prod.img}&size=full` : '';
-            const imgHtml = prod.img
-                ? `<img src="${prod.img}" data-full-src="${fullImgUrl}" id="detail-main-img" decoding="async">`
-                : `<span class="no-photo">Тут скоро будет фото</span>`;
-            const isFav = !!favorites[prod.id];
-            const hasStockLimit = typeof prod.stock === 'number';
-            const stockNoteHtml = (hasStockLimit && !prod.archived && prod.stock <= 5)
-                ? `<div class="stock-note">Осталось всего ${prod.stock} шт.</div>`
-                : '';
-            const plusDisabled = (hasStockLimit && detailQtyValue >= prod.stock) ? ' disabled' : '';
-            const actionHtml = prod.archived
-                ? `
-                    <div class="oos-badge" style="margin-bottom:16px;">Нет в наличии</div>
-                    <button class="add-to-cart-btn" onclick="notifyWhenAvailable(allProducts.find(p => p.id === '${prod.id}'))">Уведомить о поступлении</button>
-                `
-                : `
-                    <div class="qty-stepper">
-                        <button onclick="changeDetailQty(-1)">−</button>
-                        <span id="detail-qty">1</span>
-                        <button id="detail-qty-plus" onclick="changeDetailQty(1)"${plusDisabled}>+</button>
-                    </div>
-                    <button class="add-to-cart-btn" onclick="addToCartFromDetail('${prod.id}')">Добавить в корзину</button>
-                `;
-            detailPage.innerHTML = `
-                <div class="header" style="margin-top: 0;">
-                    <span>Товар</span>
-                </div>
-                <div class="product-detail-content">
-                    <div class="product-main-img${prod.archived ? ' out-of-stock' : ''}" data-pid="${prod.id}">
-                        ${imgHtml}
-                        ${prod.isNew ? '<div class="new-badge">NEW</div>' : ''}
-                        <div class="fav-toggle detail-fav ${isFav ? 'active' : ''}" data-id="${prod.id}"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.7-10-9.3C.6 8.4 2 4.8 5.4 4.1 7.6 3.6 9.8 4.6 12 7c2.2-2.4 4.4-3.4 6.6-2.9 3.4.7 4.8 4.3 3.4 7.6C19.5 16.3 12 21 12 21z"/></svg></div>
-                    </div>
-                    <div class="product-info-box">
-                        <div class="detail-title">${prod.name}</div>
-                        <div id="price-tiers-wrap">${renderPriceTiersHtml(prod.price)}</div>
-                        ${stockNoteHtml}
-                        ${actionHtml}
-                        <div class="accordion" id="description-accordion-toggle">Описание <span>▼</span></div>
-                        <div class="accordion-body" id="description-accordion-body" style="display:none;">${prod.description ? escapeHtml(prod.description).replace(/\n/g, '<br>') : 'Описание пока не добавлено.'}</div>
-                    </div>
-                </div>
-            `;
-            detailPage.querySelector('.fav-toggle').addEventListener('click', () => toggleFavorite(prod));
-
-            const descToggle = detailPage.querySelector('#description-accordion-toggle');
-            const descBody = detailPage.querySelector('#description-accordion-body');
-            descToggle.addEventListener('click', () => {
-                const isOpen = descBody.style.display !== 'none';
-                descBody.style.display = isOpen ? 'none' : 'block';
-                descToggle.classList.toggle('open', !isOpen);
-            });
-
-            const mainImgEl = detailPage.querySelector('#detail-main-img');
-            const fullUrl = mainImgEl?.dataset.fullSrc;
-            if (mainImgEl && fullUrl) {
-                const preload = new Image();
-                preload.onload = () => {
-                    // Если пока грузился оригинал человек уже ушёл с этой страницы
-                    // товара (открыл другой товар/экран) — подменять src незачем.
-                    if (currentDetailProductId !== id) return;
-                    mainImgEl.src = fullUrl;
-                    mainImgEl.classList.add('img-upgraded');
-                };
-                preload.src = fullUrl;
-            }
-        }
-    </script>
-    <style>
-        html {
-            background-color: #f2f2f7;
-            margin: 0;
-            min-height: 100%; /* было height: 100% — жёстко зажимало html ровно во весь экран, из-за чего на Android скролл переставал работать, как только контент становился выше экрана (сама страница пыталась "остаться" ровно в 100% и не признавала переполнение) */
-            overflow-x: hidden;
-            touch-action: pan-y; /* явно разрешаем вертикальный тач-скролл — на некоторых Android WebView это иначе остаётся неоднозначным и браузер его не запускает */
-        }
-        /* Основные стили */
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-            margin: 0; 
-            background-color: #f2f2f7; 
-            color: #1c1c1e; 
-            padding-bottom: 80px; 
-            /* Раньше стояло overscroll-behavior: none — именно оно полностью блокировало скролл на Android Chrome/Telegram (баг конкретных версий этого свойства), подтверждено тестом. Без него всё работает нормально. */ 
-            box-sizing: border-box; 
-            overflow-x: hidden;
-            width: 100%;
-            touch-action: pan-y;
-        }
-        
-        /* Стили для шапки: увеличенный отступ сверху и центрирование */
-        .header { 
-            display: flex; 
-            justify-content: center; 
-            align-items: flex-end; 
-            box-sizing: border-box;
-            min-height: calc(135px + env(safe-area-inset-top));
-            padding-top: calc(env(safe-area-inset-top) + 15px);
-            padding-right: 20px;
-            padding-bottom: 16px;
-            padding-left: 20px;
-            background: transparent; 
-            font-weight: 700; 
-            font-size: 18px; 
-            position: sticky; /* Возвращено обратно — настоящей причиной бага со скроллом на Android был overscroll-behavior (см. ниже), не это свойство. */
-            top: 0;
-            z-index: 1000;
-            border-bottom: 1px solid transparent;
-            transition: background-color 0.25s ease, border-color 0.25s ease;
-        }
-        .header.scrolled {
-            background: #fff;
-            border-bottom: 1px solid #e5e5ea;
-        }
-
-        /* Стили для кнопки поддержки внутри шапки (справа), прижата к низу шапки */
-        .support-header-btn {
-            position: absolute;
-            right: 20px;
-            bottom: 16px;
-            background: #000;
-            color: white;
-            width: 34px;
-            height: 34px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-decoration: none;
-            font-size: 18px;
-            font-weight: 700;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-            transition: transform 0.1s ease;
-            cursor: pointer;
-            border: none;
-        }
-        .support-header-btn:active {
-            transform: scale(0.92);
-        }
-        .online-dot {
-            position: absolute;
-            top: -1px;
-            right: -1px;
-            width: 11px;
-            height: 11px;
-            background: #34c759;
-            border-radius: 50%;
-            border: 2px solid #fff;
-            box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.7);
-            animation: pulse-dot 1.6s infinite;
-        }
-        @keyframes pulse-dot {
-            0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.6); }
-            70% { box-shadow: 0 0 0 6px rgba(52, 199, 89, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
-        }
-
-        /* Категории (плитки) на главной и на странице категории */
-        .section-title { margin: 15px 15px 10px 15px; font-weight: 700; }
-        .section-title-row { display: flex; align-items: center; justify-content: space-between; margin: 15px 15px 10px 15px; }
-        .section-title-all-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 20px; cursor: pointer; }
-        .section-title-all-btn:active { opacity: 0.75; }
-        .products-strip { display: flex; gap: 12px; overflow-x: auto; padding: 0 12px 5px 12px; box-sizing: border-box; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; }
-        .products-strip * { touch-action: pan-x pan-y; }
-        .products-strip .product-card { content-visibility: visible; contain-intrinsic-size: auto; }
-        .products-strip::-webkit-scrollbar { display: none; }
-        .products-strip .product-card { flex: 0 0 150px; width: 150px; }
-        .products-strip .grid-load-sentinel { flex: 0 0 1px; }
-        .category-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 12px 5px 12px; box-sizing: border-box; }
-.category-tile {
-    width: auto;
-    height: 78px;
-    border-radius: 14px;
-    background: linear-gradient(135deg, #4a4e56 0%, #2b2e34 100%);
-    color: #fff;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 10px 12px;
-    box-sizing: border-box;
-    cursor: pointer;
-}
-.category-tile:active { opacity: 0.85; }
-.category-tile-icon { width: 20px; height: 20px; color: #fff; }
-.category-tile-icon svg { width: 100%; height: 100%; }
-.category-tile-name { font-size: 11.5px; font-weight: 700; line-height: 1.15; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-
-        /* Search Bar */
-        .search-bar { padding: 0 15px 10px 15px; }
-        .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
-
-        /* Горизонтальная строка подкатегорий на странице категории */
-        .subcat-strip { display: flex; gap: 8px; overflow-x: auto; padding: 0 15px 14px 15px; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
-        .subcat-strip * { touch-action: pan-x; }
-        .subcat-strip::-webkit-scrollbar { display: none; }
-        .subcat-chip { flex: 0 0 auto; padding: 8px 16px; border-radius: 20px; background: #eaeaed; color: #1c1c1e; font-size: 13.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
-        .subcat-chip.active { background: #1c1c1e; color: #fff; }
-        .filter-label { padding: 0 15px 6px 15px; font-size: 12px; font-weight: 700; color: #9a9a9e; text-transform: uppercase; letter-spacing: 0.03em; }
-        .breadcrumb-strip { padding: 0 15px 12px 15px; font-size: 13px; color: #8a8a8e; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
-        .breadcrumb-link { cursor: pointer; color: #007aff; font-weight: 600; }
-        .breadcrumb-sep { padding: 0 4px; color: #c7c7cc; }
-        .breadcrumb-current { font-weight: 700; color: #1c1c1e; }
-        
-        /* Product Detail */
-        .product-detail-content { padding: 15px; }
-        .product-main-img { background: #fff; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 15px; position: relative; }
-        .product-main-img img { max-width: 100%; height: 300px; object-fit: contain; }
-        .product-info-box { background: #fff; border-radius: 16px; padding: 20px; }
-        .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
-        .price-tiers-box { background: #f8f8fa; border-radius: 14px; overflow: hidden; margin-bottom: 10px; }
-        .price-tier-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; font-size: 14px; color: #6b6b70; }
-        .price-tier-row + .price-tier-row { border-top: 1px solid #ececef; }
-        .price-tier-value { font-size: 17px; font-weight: 700; color: #1c1c1e; }
-        .price-tier-value.struck { text-decoration: line-through; color: #9a9a9e; font-weight: 600; font-size: 15px; }
-        .price-tier-value.active { color: #2f8f4e; }
-        .price-tier-note { font-size: 12.5px; color: #8a8a8e; padding: 0 2px; margin-bottom: 16px; line-height: 1.4; }
-        .accordion { border-top: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; font-weight: 500; font-size: 14px; cursor: pointer; }
-        .accordion span { transition: transform 0.2s ease; }
-        .accordion.open span { transform: rotate(180deg); }
-        .accordion-body { padding: 0 0 15px 0; font-size: 13.5px; line-height: 1.5; color: #4a4a4e; }
-        
-        /* Shop Page */
-        .banners-viewport { overflow: hidden; padding: 15px; box-sizing: border-box; touch-action: pan-y; }
-        .banners-strip { display: flex; will-change: transform; }
-        .banner { background: linear-gradient(135deg, #82394a 0%, #5a2530 100%); color: #fff; padding: 34px 20px; border-radius: 16px; flex: 0 0 100%; width: 100%; box-sizing: border-box; background-size: cover; background-position: center; margin-right: 10px; }
-        .banner:last-child { margin-right: 0; }
-        .banners-dots { display: flex; justify-content: center; gap: 6px; margin: -6px 0 6px 0; }
-        .banners-dot { width: 6px; height: 6px; border-radius: 50%; background: #d1d1d6; transition: background 0.2s, width 0.2s; cursor: pointer; }
-        .banners-dot.active { background: #82394a; width: 16px; border-radius: 3px; }
-        .banner-sub { font-weight: 500; font-size: 13px; margin-top: 6px; opacity: 0.9; }
-        .banner-cta { display: inline-block; margin-top: 14px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: #fff; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 20px; cursor: pointer; }
-        .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 12px; box-sizing: border-box; }
-        .grid-load-sentinel { grid-column: 1 / -1; height: 1px; }
-        .product-card { content-visibility: auto; contain-intrinsic-size: 280px; }
-        .product-card { background: #fff; border-radius: 20px; padding: 14px 14px 16px 14px; cursor: pointer; min-width: 0; overflow: hidden; box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,0.04); display: flex; flex-direction: column; }
-        .product-image-container { aspect-ratio: 1 / 1; height: auto; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; position: relative; }
-        .product-card img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .no-photo { color: #c7c7cc; font-size: 11px; text-align: center; padding: 6px; line-height: 1.25; }
-        .oos-badge { display: inline-block; font-size: 12px; font-weight: 600; color: #8e8e93; background: #eef0f2; padding: 6px 12px; border-radius: 20px; margin-bottom: 8px; }
-        .new-badge { position: absolute; top: 4px; left: 4px; background: #34c759; color: #fff; font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 6px; z-index: 2; letter-spacing: 0.3px; }
-        .product-title { font-size: 14px; line-height: 1.3; word-break: break-word; margin-bottom: 10px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-        .product-price-block { margin-bottom: 8px; }
-        .product-price-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-        .product-price { font-weight: 700; font-size: 20px; color: #1c1c1e; }
-        .product-price .price-prefix { font-weight: 500; font-size: 13px; color: #8e8e93; margin-right: 3px; }
-        .product-price-note { font-size: 10.5px; color: #8a8a8e; margin-top: 2px; line-height: 1.25; }
-        .price-old { font-size: 12px; color: #9a9a9e; text-decoration: line-through; font-weight: 600; }
-        .price-hint { font-size: 10.5px; color: #2f8f4e; font-weight: 700; }
-        .empty-state { text-align: center; color: #8e8e93; padding: 60px 20px; font-size: 14px; grid-column: 1 / -1; }
-
-        /* Товар не в наличии: приглушаем карточку серым и даём кнопку "Уведомить" */
-        .product-card.out-of-stock { background: #f7f7f8; }
-        .product-card.out-of-stock .product-title { color: #9a9a9e; }
-        .notify-btn { width: 100%; border: none; background: #eef0f2; color: #6b6f76; font-size: 14px; font-weight: 600; padding: 12px 0; border-radius: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: auto; }
-        .notify-btn:active { opacity: 0.75; }
-        .notify-btn svg { width: 15px; height: 15px; }
-        .add-to-cart-card-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14px; font-weight: 600; padding: 12px 0; border-radius: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: auto; }
-        .add-to-cart-card-btn:active { opacity: 0.8; }
-        .add-to-cart-card-btn svg { width: 15px; height: 15px; }
-        .product-main-img.out-of-stock { background: #e9e9ec; }
-
-        /* Favorite heart toggle */
-        .fav-toggle { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.95); display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,0.12); cursor: pointer; }
-        .fav-toggle svg { width: 16px; height: 16px; fill: none; stroke: #8e8e93; stroke-width: 2; }
-        .fav-toggle.active svg { fill: #e0245e; stroke: #e0245e; }
-        .detail-fav { top: 14px; right: 14px; width: 34px; height: 34px; }
-        .detail-fav svg { width: 18px; height: 18px; }
-
-        /* Qty stepper + add to cart */
-        .qty-stepper { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
-        .qty-stepper button { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #e5e5ea; background: #fff; font-size: 18px; font-weight: 600; cursor: pointer; }
-        .qty-stepper button:disabled { opacity: 0.35; cursor: not-allowed; }
-        .stock-note { font-size: 12.5px; color: #d9822b; font-weight: 600; margin-bottom: 12px; }
-        .qty-stepper span { font-size: 16px; font-weight: 700; min-width: 20px; text-align: center; }
-        .qty-stepper.small { gap: 10px; margin: 4px 0 0 0; }
-        .qty-stepper.small button { width: 24px; height: 24px; font-size: 14px; }
-        .add-to-cart-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; margin-bottom: 10px; }
-        .add-to-cart-btn:active { opacity: 0.8; }
-
-        /* Cart & Favorites lists */
-        .cart-content, .favorites-content { padding: 15px; padding-bottom: 140px; }
-        .cart-row, .fav-row { background: #fff; border-radius: 14px; padding: 12px; display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
-        .cart-row-img { width: 64px; height: 64px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #f8f8f8; border-radius: 10px; overflow: hidden; cursor: pointer; }
-        .cart-row-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .cart-row-img .no-photo { font-size: 9px; padding: 2px; }
-        .cart-row-info { flex: 1; cursor: pointer; }
-        .cart-row-price { font-size: 13px; color: #6b2d38; font-weight: 700; }
-        .cart-row-body { flex: 1; min-width: 0; }
-        .cart-row-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 2px; }
-        .cart-row-category { font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #9a9a9e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .cart-row-remove { color: #c7c7cc; font-size: 16px; cursor: pointer; padding: 2px; flex-shrink: 0; }
-        .cart-row-remove svg { width: 17px; height: 17px; display: block; }
-        .cart-row-name { font-size: 14px; font-weight: 700; margin-bottom: 8px; line-height: 1.25; }
-        .cart-row-bottom { display: flex; justify-content: space-between; align-items: center; }
-        .cart-row-total { font-size: 16px; font-weight: 700; color: #1c1c1e; }
-        .cart-row-unit { font-size: 11.5px; color: #9a9a9e; margin-top: 1px; }
-
-        .discount-progress-box { background: #fff; border-radius: 14px; padding: 14px 16px; margin-top: 4px; }
-        .discount-progress-sticky { position: sticky; top: calc(135px + env(safe-area-inset-top)); z-index: 850; background: #f2f2f7; padding: 0 15px; }
-        .discount-progress-sticky:empty { padding: 0; }
-        .discount-progress-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
-        .discount-progress-goal { color: #2f8f4e; font-weight: 700; }
-        .discount-progress-track { height: 6px; border-radius: 3px; background: #ececef; overflow: hidden; }
-        .discount-progress-fill { height: 100%; border-radius: 3px; background: #34c759; transition: width 0.3s ease; }
-        .discount-progress-fill.full { background: #2f8f4e; }
-
-        .cart-footer { position: fixed; left: 0; right: 0; bottom: 65px; background: #fff; border-top: 1px solid #e5e5ea; padding: 14px 15px calc(14px + env(safe-area-inset-bottom)) 15px; z-index: 900; transition: transform 0.2s ease; }
-        .cart-footer.hidden-under-keyboard { transform: translateY(100%); }
-        .cart-total-row { display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; margin-bottom: 10px; }
-        .cart-total-row.checkout-delivery-row { font-weight: 500; color: #8e8e93; }
-        .cart-total-row.checkout-grand-total { font-size: 17px; padding-top: 10px; border-top: 1px solid #ececef; }
-        .checkout-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; }
-        .checkout-btn:active { opacity: 0.8; }
-        .checkout-btn:disabled { opacity: 0.6; }
-
-        /* Оформление заказа */
-        .checkout-content { padding: 15px; padding-bottom: 260px; }
-        .checkout-section { margin-bottom: 20px; }
-        .checkout-label { font-size: 15px; font-weight: 700; margin: 0 2px 10px 2px; }
-        .checkout-item-summary { background: #fff; border-radius: 16px; padding: 10px 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-        .checkout-items-label { flex: 1; font-size: 14px; font-weight: 700; }
-        .checkout-items-arrow { color: #c7c7cc; font-size: 18px; }
-
-        .checkout-card { background: #fff; border-radius: 16px; padding: 2px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-        .checkout-field { padding: 12px 0; }
-        .checkout-field + .checkout-field { border-top: 1px solid #f0f0f2; }
-        .checkout-field-label { display: block; font-size: 12.5px; color: #9a9a9e; margin-bottom: 4px; }
-        .checkout-field-label .req { color: #ff3b30; }
-        .checkout-field-hint { font-size: 12px; color: #9a9a9e; line-height: 1.35; margin-top: 5px; }
-        .checkout-row-2 { display: flex; gap: 16px; padding: 12px 0; }
-        .checkout-row-2 + .checkout-field, .checkout-field + .checkout-row-2 { border-top: 1px solid #f0f0f2; }
-        .checkout-row-2 .checkout-field { flex: 1; padding: 0; border: none !important; }
-        .checkout-input, .checkout-textarea { width: 100%; border: none; outline: none; background: transparent; font-family: inherit; font-size: 16px; font-weight: 600; color: #1c1c1e; padding: 0; box-sizing: border-box; }
-        .checkout-input::placeholder, .checkout-textarea::placeholder { color: #c7c7cc; font-weight: 500; }
-        .checkout-textarea { resize: none; }
-
-        .checkout-secondary-btn { width: 100%; border: none; background: #eaeaed; color: #6b6b70; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; cursor: pointer; margin-top: 10px; }
-        .checkout-secondary-btn:active { opacity: 0.75; }
-
-        .payment-option { display: flex; align-items: center; gap: 12px; padding: 14px 0; font-size: 15px; font-weight: 600; cursor: pointer; }
-        .payment-option-text { display: flex; flex-direction: column; gap: 3px; }
-        .payment-option-subtext { font-size: 12.5px; font-weight: 500; color: #9a9a9e; }
-        .payment-option + .payment-option { border-top: 1px solid #f0f0f2; }
-        .payment-radio { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; border: 2px solid #d1d1d6; box-sizing: border-box; position: relative; }
-        .payment-radio.checked { border-color: #1c1c1e; }
-        .payment-radio.checked::after { content: ''; position: absolute; top: 3px; left: 3px; width: 10px; height: 10px; border-radius: 50%; background: #1c1c1e; }
-        .payment-add-icon { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: #eaeaed; color: #6b6b70; display: flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; }
-        .payment-option.disabled { color: #c7c7cc; cursor: default; }
-        .payment-option.disabled .payment-add-icon { opacity: 0.6; }
-
-        .promo-row { display: flex; gap: 10px; align-items: center; }
-        .promo-row .checkout-input { flex: 1; }
-        .promo-apply-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 14px; font-weight: 700; padding: 0 18px; height: 40px; border-radius: 12px; cursor: pointer; white-space: nowrap; }
-        .promo-apply-btn:active { opacity: 0.75; }
-
-        /* Account Page */
-        .account-content { padding: 15px; }
-        .account-card { background: #fff; border-radius: 16px; padding: 20px; text-align: center; margin-bottom: 15px; }
-        .account-avatar { width: 64px; height: 64px; border-radius: 50%; background: #000 center/cover no-repeat; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; margin: 0 auto 12px auto; }
-        .account-name { font-size: 17px; font-weight: 700; }
-        .account-username { font-size: 13px; color: #8e8e93; margin-top: 2px; }
-        .account-phone-label { font-size: 13px; color: #8e8e93; text-align: left; }
-        .account-phone-value { font-size: 16px; font-weight: 600; text-align: left; margin: 6px 0 16px 0; }
-        .account-phone-btn { width: 100%; border: none; background: #000; color: #fff; font-size: 14px; font-weight: 600; padding: 13px; border-radius: 12px; cursor: pointer; }
-        .account-credit { text-align: center; font-size: 10px; color: #d4d4d8; margin-top: 18px; cursor: pointer; }
-        .account-phone-btn:active { opacity: 0.8; }
-        .account-link-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-top: 1px solid #f0f0f0; font-size: 14px; cursor: pointer; }
-        .account-link-row:first-child { border-top: none; }
-        .account-link-row .count { color: #8e8e93; }
-        .orders-content { padding: 15px; }
-        .order-card { background: #fff; border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; cursor: pointer; }
-        .order-card-detail { margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0f0f2; }
-        .order-detail-row { display: flex; justify-content: space-between; font-size: 13.5px; color: #4a4a4e; padding: 4px 0; }
-        .order-detail-loading { font-size: 13px; color: #9a9a9e; padding: 4px 0; }
-        .order-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
-        .order-card-name { font-weight: 700; font-size: 14.5px; }
-        .order-card-status { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px; background: #f2f2f7; color: #636366; white-space: nowrap; }
-        .order-card-bottom { display: flex; justify-content: space-between; font-size: 13px; color: #8e8e93; }
-        
-        .nav-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 65px; background: #fff; display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #e5e5ea; z-index: 1000; padding-bottom: env(safe-area-inset-bottom); }
-        .nav-item { text-align: center; font-size: 11px; color: #8e8e93; cursor: pointer; flex: 1; }
-        .nav-item.active { color: #6b2d38; font-weight: 600; }
-        .nav-item svg { width: 24px; height: 24px; display: block; margin: 0 auto 2px; fill: currentColor; }
-        .nav-icon-wrap { position: relative; display: block; width: 24px; margin: 0 auto 2px; }
-        .nav-icon-wrap svg { margin: 0; display: block; }
-        .cart-badge { position: absolute; top: -4px; right: -9px; background: #e0245e; color: #fff; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 8px; display: none; align-items: center; justify-content: center; padding: 0 4px; }
-        .page { display: none; touch-action: pan-y; }
-        /* На всякий случай явно на КАЖДОМ элементе, а не только на
-           html/body/.page — на некоторых Android-браузерах touch-action
-           не всегда корректно "просачивается" через дерево предков,
-           особенно для SVG-иконок (сердечко избранного, иконки категорий) —
-           именно они есть в плашках категорий и карточках товаров, но их
-           нет в ещё пустом контейнере "Новинки", что и объясняло разницу. */
-        * { touch-action: pan-y; }
-        .page.active { display: block; }
-
-        /* Age verification overlay */
-        .age-gate-overlay {
-            position: fixed;
-            inset: 0;
-            background: #7d7d82;
-            z-index: 5000;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: flex-end;
-            box-sizing: border-box;
-        }
-        .age-gate-logo {
-            color: #1c1c1e;
-            font-size: 34px;
-            font-weight: 900;
-            letter-spacing: 1px;
-            text-align: center;
-            margin: auto auto 24px auto;
-            padding: 0 20px;
-        }
-        .age-gate-card {
-            background: #fff;
-            border-radius: 20px 20px 0 0;
-            padding: 24px 20px calc(20px + env(safe-area-inset-bottom)) 20px;
-            width: 100%;
-            max-width: 480px;
-            box-sizing: border-box;
-        }
-        .age-gate-title { font-size: 19px; font-weight: 700; text-align: center; margin-bottom: 14px; }
-        .age-gate-text { font-size: 13px; color: #3a3a3c; line-height: 1.5; max-height: 38vh; overflow-y: auto; margin-bottom: 18px; }
-        .age-gate-text p { margin: 0 0 10px 0; }
-        .age-gate-buttons { display: flex; gap: 10px; }
-        .age-gate-btn-yes { flex: 1; border: none; background: #1c1c1e; color: #fff; font-weight: 700; font-size: 13px; padding: 14px 8px; border-radius: 12px; cursor: pointer; }
-        .age-gate-btn-no { flex: 1; border: none; background: #e5e5ea; color: #1c1c1e; font-weight: 700; font-size: 13px; padding: 14px 8px; border-radius: 12px; cursor: pointer; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Личный кабинет — Уведомления о поступлении</title>
+<style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f4f6; color: #1c1c1e; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px 16px; }
+    h1 { font-size: 20px; margin: 0 0 4px 0; }
+    .sub { color: #8a8a8e; font-size: 13.5px; margin: 0 0 24px 0; }
+
+    .gate { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .gate input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #e2e2e6; font-size: 15px; margin-bottom: 12px; }
+    .gate button, .refresh-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14.5px; font-weight: 600; padding: 12px; border-radius: 10px; cursor: pointer; }
+    .error { color: #d9482b; font-size: 13.5px; margin-top: 10px; }
+
+    .status-banner { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 12px; font-size: 13.5px; margin-bottom: 16px; }
+    .status-banner.ok { background: #e7f7ee; color: #1f7a4d; }
+    .status-banner.warn { background: #fdf1e2; color: #9a5b0a; }
+
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .refresh-btn { width: auto; padding: 9px 16px; font-size: 13.5px; }
+
+    .entry { background: #fff; border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .entry-product { font-weight: 700; font-size: 14.5px; margin-bottom: 4px; }
+    .entry-who { font-size: 13px; color: #4a4a4e; margin-bottom: 4px; }
+    .entry-time { font-size: 11.5px; color: #9a9a9e; }
+    .empty { text-align: center; color: #9a9a9e; padding: 40px 20px; font-size: 14px; }
+
+    .admins-block { background: #fff; border-radius: 14px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .admin-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f2; font-size: 14px; }
+    .admin-row:last-of-type { border-bottom: none; }
+    .admin-row .who { font-weight: 600; }
+    .admin-row .status { font-size: 12px; color: #9a9a9e; }
+    .admin-row.pending .status { color: #9a5b0a; }
+    .admin-remove { border: none; background: #fdf1e2; color: #9a5b0a; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+    .add-admin-row { display: flex; gap: 8px; margin-top: 12px; }
+    .add-admin-row input { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #e2e2e6; font-size: 14px; }
+    .add-admin-row button { border: none; background: #1c1c1e; color: #fff; font-size: 13.5px; font-weight: 600; padding: 0 16px; border-radius: 8px; cursor: pointer; }
+    .notify-checks { display: flex; gap: 16px; margin-top: 10px; font-size: 13px; color: #4a4a4e; }
+    .notify-checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .admin-notify-types { font-size: 12px; color: #4a4a4e; margin-top: 4px; display: flex; gap: 12px; }
+    .admin-notify-types label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    .add-admin-status { font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+
+    .catalog-sync-block { background: #fff; border-radius: 14px; padding: 18px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .catalog-sync-info { font-size: 12.5px; color: #8a8a8e; margin-bottom: 12px; }
+    .sync-catalog-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14.5px; font-weight: 600; padding: 14px; border-radius: 10px; cursor: pointer; }
+    .sync-catalog-btn:disabled { opacity: 0.6; cursor: default; }
+    .catalog-sync-status { font-size: 13px; margin-top: 10px; min-height: 18px; }
+
+    .tabs { display: flex; gap: 8px; margin-bottom: 18px; background: #eaeaed; border-radius: 12px; padding: 4px; }
+    .tab-btn { flex: 1; border: none; background: transparent; color: #6b6b70; font-size: 14px; font-weight: 600; padding: 10px 0; border-radius: 9px; cursor: pointer; }
+    .tab-btn.active { background: #fff; color: #1c1c1e; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .section-heading { font-size: 16px; font-weight: 700; margin: 0 0 12px 0; }
+    .banner-edit { background: #fff; border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .banner-edit label { display: block; font-size: 12.5px; color: #8a8a8e; margin: 10px 0 4px 0; }
+    .banner-edit label:first-child { margin-top: 0; }
+    .banner-edit input[type="text"], .banner-edit input[type="url"] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #e2e2e6; font-size: 14px; }
+    .banner-edit .color-row { display: flex; gap: 10px; }
+    .banner-edit .color-row > div { flex: 1; }
+    .banner-edit input[type="color"] { width: 100%; height: 38px; padding: 2px; border-radius: 8px; border: 1px solid #e2e2e6; }
+    .image-upload-row { display: flex; gap: 8px; align-items: center; }
+    .image-upload-row input[type="url"] { flex: 1; }
+    .upload-btn { border: none; background: #eaeaed; color: #1c1c1e; font-size: 13px; font-weight: 600; padding: 10px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+    .upload-hint { font-size: 11.5px; color: #9a9a9e; margin-top: 4px; }
+    .banner-preview { border-radius: 12px; padding: 20px 16px; color: #fff; margin-top: 12px; font-weight: 700; background-size: cover; background-position: center; }
+    .banner-preview .bp-sub { font-weight: 500; font-size: 13px; margin-top: 4px; opacity: 0.9; }
+    .banner-remove-btn { margin-top: 12px; width: 100%; border: none; background: #fdf1e2; color: #9a5b0a; font-size: 13.5px; font-weight: 600; padding: 10px; border-radius: 8px; cursor: pointer; }
+    .add-banner-btn, .add-admin-btn { width: 100%; border: none; background: #eaeaed; color: #1c1c1e; font-size: 14px; font-weight: 600; padding: 12px; border-radius: 10px; cursor: pointer; margin-bottom: 10px; }
+    .save-banners-btn { width: 100%; border: none; background: #1c1c1e; color: #fff; font-size: 14.5px; font-weight: 600; padding: 13px; border-radius: 10px; cursor: pointer; margin-top: 6px; }
+    .banners-save-status { text-align: center; font-size: 13px; margin-top: 8px; min-height: 18px; }
+</style>
 </head>
 <body>
+<div class="wrap">
+    <h1>Уведомления о поступлении</h1>
+    <p class="sub">Кто и о каком товаре просил сообщить, когда он снова появится в наличии</p>
 
-    <div id="age-gate" class="age-gate-overlay">
-        <div class="age-gate-logo">SMOKING MANIA</div>
-        <div class="age-gate-card">
-            <div class="age-gate-title">Уведомление</div>
-            <div class="age-gate-text">
-                <p>Это приложение — каталог, предназначенный исключительно для совершеннолетних граждан Российской Федерации (18+), интересующихся табачной продукцией и аксессуарами для курения.</p>
-                <p>Каталог не является рекламой. Его цель — предоставить ограниченному кругу лиц достоверную информацию о потребительских свойствах и характеристиках табачной продукции в соответствии с пунктами 1 и 2 статьи 10 Закона РФ «О защите прав потребителей».</p>
-                <p><strong>Внимание!</strong> Лицам, не достигшим 18 лет, доступ запрещён (ст. 20 ФЗ №15-ФЗ «Об охране здоровья граждан от воздействия окружающего табачного дыма…» и ч. 7 ст. 15.1 ФЗ №149-ФЗ «Об информации…»).</p>
-                <p>Дистанционная торговля табачной продукцией не осуществляется в соответствии с требованиями законодательства РФ (ФЗ №15-ФЗ от 23.02.2013 и ФЗ №149-ФЗ от 27.07.2006).</p>
-                <p>Для продолжения подтвердите, что вам исполнилось 18 лет.</p>
-            </div>
-            <div class="age-gate-buttons">
-                <button class="age-gate-btn-yes" onclick="confirmAge(true)">Мне исполнилось 18 лет</button>
-                <button class="age-gate-btn-no" onclick="confirmAge(false)">Мне нет 18 лет</button>
-            </div>
-        </div>
+    <div id="gate-screen" class="gate">
+        <input type="password" id="key-input" placeholder="Ключ доступа">
+        <button onclick="tryLoad()">Войти</button>
+        <div class="error" id="gate-error" style="display:none;"></div>
     </div>
 
-    <!-- Главная -->
-    <div id="page-shop" class="page active">
-        <div class="header">
-            <span>SMOKING MANIA</span>
-            <a href="https://t.me/smokingmaniasup" class="support-header-btn" target="_blank">
-                <svg viewBox="0 0 24 24" width="17" height="17" fill="white"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
-                <span class="online-dot"></span>
-            </a>
+    <div id="content-screen" style="display:none;">
+        <div class="tabs">
+            <button class="tab-btn active" id="tab-btn-notify" onclick="switchTab('notify')">Уведомления</button>
+            <button class="tab-btn" id="tab-btn-banners" onclick="switchTab('banners')">Баннеры</button>
+            <button class="tab-btn" id="tab-btn-catalog" onclick="switchTab('catalog')">Каталог</button>
         </div>
-        <div class="banners-viewport" id="banners-viewport">
-            <div class="banners-strip" id="banners-strip"><div class="banner"><h3>Бесплатная доставка от 10.000 ₽</h3></div></div>
-        </div>
-        <div class="banners-dots" id="banners-dots"></div>
 
-        <div class="search-bar"><input type="text" id="search-input" placeholder="Поиск товаров" oninput="handleHomeSearch()"></div>
+        <div class="tab-panel active" id="tab-panel-notify">
+            <div id="status-banner"></div>
 
-        <div id="home-browse">
-            <div class="section-title">Категории</div>
-            <div class="category-grid" id="home-categories-container"></div>
-
-            <div id="home-newest-section">
-                <div class="section-title-row">
-                    <div class="section-title" style="margin:0;">Новинки</div>
-                    <button class="section-title-all-btn" onclick="navigateTo({type:'newest'})">Все</button>
+            <div class="admins-block">
+                <div class="section-heading" style="margin-bottom:8px;">Администраторы и уведомления</div>
+                <div id="admins-list"></div>
+                <div class="add-admin-row">
+                    <input type="text" id="new-admin-username" placeholder="Юзернейм в Telegram, например ivan_petrov">
                 </div>
-                <div class="products-strip" id="home-newest-container"></div>
-            </div>
-        </div>
-
-        <div id="home-search-results" style="display:none;">
-            <div class="products-grid" id="products-container"></div>
-        </div>
-    </div>
-
-    <!-- Страница категории/подкатегории (наполняется динамически) -->
-    <div id="page-category" class="page"></div>
-    <div id="page-newest" class="page">
-        <div class="header" style="margin-top:0;"><span>Новинки</span></div>
-        <div class="products-grid" id="newest-products-container" style="padding:15px 12px;"></div>
-    </div>
-
-    <!-- Остальные страницы -->
-    <div id="page-detail" class="page"></div>
-    <div id="page-favorites" class="page">
-        <div class="header"><span>Избранное</span></div>
-        <div class="favorites-content" id="favorites-container"><div class="empty-state">Загрузка...</div></div>
-    </div>
-    <div id="page-cart" class="page">
-        <div class="header"><span>Корзина</span></div>
-        <div class="discount-progress-sticky" id="discount-progress-bar"></div>
-        <div class="cart-content" id="cart-container"><div class="empty-state">Загрузка...</div></div>
-        <div class="cart-footer">
-            <div class="cart-total-row"><span>Сумма заказа</span><span id="cart-total">0 ₽</span></div>
-            <button class="checkout-btn" id="checkout-btn" onclick="goToCheckout()" style="display:none;">Оформить заказ</button>
-        </div>
-    </div>
-    <div id="page-checkout" class="page"></div>
-    <div id="page-account" class="page">
-        <div class="header"><span>Аккаунт</span></div>
-        <div class="account-content">
-            <div class="account-card">
-                <div class="account-avatar" id="account-avatar"></div>
-                <div class="account-name" id="account-name">—</div>
-                <div class="account-username" id="account-username"></div>
-            </div>
-            <div class="account-card">
-                <div class="account-phone-label">Номер телефона</div>
-                <div class="account-phone-value" id="account-phone">Не подтверждён</div>
-                <button class="account-phone-btn" id="account-phone-btn" onclick="requestPhone()">Подтвердить номер через Telegram</button>
-            </div>
-            <div class="account-card" style="text-align:left;">
-                <div class="account-link-row" onclick="navigateTo({type:'orders'})">
-                    <span>Мои заказы</span>
-                    <span class="count">→</span>
+                <div class="notify-checks">
+                    <label><input type="checkbox" id="new-admin-orders" checked> Заказы</label>
+                    <label><input type="checkbox" id="new-admin-restock"> «Уведомить о поступлении»</label>
                 </div>
-                <div class="account-link-row" onclick="switchTab('favorites')">
-                    <span>Избранное</span>
-                    <span class="count" id="account-fav-count">0</span>
-                </div>
-                <div class="account-link-row" onclick="switchTab('cart')">
-                    <span>Корзина</span>
-                    <span class="count" id="account-cart-count">0</span>
-                </div>
-                <div class="account-link-row" onclick="window.open('https://t.me/smokingmaniasup','_blank')">
-                    <span>Написать в поддержку</span>
-                    <span class="count">→</span>
-                </div>
+                <button class="add-admin-btn" onclick="addAdmin()">Добавить администратора</button>
+                <div class="add-admin-status" id="add-admin-status"></div>
             </div>
-            <div class="account-credit" onclick="window.open('https://t.me/Kiriyan6','_blank')">Бот создан пользователем @Kiriyan6</div>
-        </div>
-    </div>
 
-    <div id="page-orders" class="page">
-        <div class="header"><span>Мои заказы</span></div>
-        <div class="orders-content" id="orders-content"></div>
-    </div>
-
-    <!-- Навигация -->
-    <div class="nav-bar">
-        <div class="nav-item active" onclick="switchTab('shop')">
-            <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>Магазин
-        </div>
-        <div class="nav-item" onclick="switchTab('favorites')">
-            <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>Избранное
-        </div>
-        <div class="nav-item" onclick="switchTab('cart')">
-            <div class="nav-icon-wrap">
-                <svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>
-                <span class="cart-badge" id="cart-count-badge"></span>
+            <div class="toolbar">
+                <span class="sub" style="margin:0;" id="count-label"></span>
+                <button class="refresh-btn" onclick="loadEntries()">Обновить</button>
             </div>
-            Корзина
+            <div id="entries-list"></div>
         </div>
-        <div class="nav-item" onclick="switchTab('account')">
-            <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>Аккаунт
+
+        <div class="tab-panel" id="tab-panel-banners">
+            <div class="section-heading">Баннеры на главной</div>
+            <p class="sub" style="margin-top:-6px;">Листаются свайпом на главной странице бота. Картинка необязательна — можно оставить просто цветной градиент.</p>
+            <button class="add-banner-btn" onclick="addBanner()">+ Добавить баннер</button>
+            <div id="banners-list"></div>
+            <button class="save-banners-btn" onclick="saveBanners()">Сохранить баннеры</button>
+            <div class="banners-save-status" id="banners-save-status"></div>
+        </div>
+
+        <div class="tab-panel" id="tab-panel-catalog">
+            <div class="section-heading">Обновление каталога</div>
+            <p class="sub" style="margin-top:-6px;">Каталог сам подтягивается из МойСклад раз в сутки по расписанию. Если добавили/изменили товары и не хотите ждать — обновите вручную прямо здесь.</p>
+            <div class="catalog-sync-block">
+                <div id="catalog-sync-info" class="catalog-sync-info"></div>
+                <button class="sync-catalog-btn" id="sync-catalog-btn" onclick="syncCatalogNow()">Обновить каталог сейчас</button>
+                <div class="catalog-sync-status" id="catalog-sync-status"></div>
+            </div>
         </div>
     </div>
+</div>
 
-    <script>
-        // --- Мгновенная загрузка: сначала рисуем каталог из localStorage,
-        // потом в фоне обновляем данные с сервера. ---
-        const LOCAL_CATALOG_KEY = 'catalog_cache_v2';
+<script>
+    function switchTab(name) {
+        document.getElementById('tab-panel-notify').classList.toggle('active', name === 'notify');
+        document.getElementById('tab-panel-banners').classList.toggle('active', name === 'banners');
+        document.getElementById('tab-panel-catalog').classList.toggle('active', name === 'catalog');
+        document.getElementById('tab-btn-notify').classList.toggle('active', name === 'notify');
+        document.getElementById('tab-btn-banners').classList.toggle('active', name === 'banners');
+        document.getElementById('tab-btn-catalog').classList.toggle('active', name === 'catalog');
+    }
 
-        // Эти категории убраны из витрины полностью (по просьбе) — их товары
-        // остаются доступны через поиск и на главной, но плитки категорий нет.
-        // Скрытые категории (и товары в них, на любой глубине вложенности)
-        // теперь полностью исключаются на сервере (см. HIDDEN_CATEGORY_NAMES
-        // в api/_catalog-lib.js) — сервер просто не присылает их вообще, ни
-        // в products, ни в categories. Раньше это же пытались делать здесь,
-        // на фронте, но по неполному списку и только для прямых подкатегорий,
-        // из-за чего товары более глубоко вложенных или забытых в списке
-        // категорий всё равно просачивались в поиск.
-        function applyCatalog(data) {
-            allProducts = (data.products || []).map(prod => ({
-                id: prod.id,
-                name: prod.name,
-                price: prod.price || 0,
-                img: prod.img || '',
-                description: prod.description || '',
-                archived: !!prod.outOfStock,
-                folderId: prod.folderId || null,
-                isNew: !!prod.isNew,
-                stock: (typeof prod.stock === 'number') ? prod.stock : null // null = учёт остатков выключен в МойСклад — лимита нет
-            }));
-            categories = data.categories || [];
-            renderScreen(currentScreen());
+    // Ручное обновление каталога — та же синхронизация, что раньше запускали,
+    // открывая /api/sync-catalog отдельной ссылкой в браузере. Теперь это
+    // просто кнопка в личном кабинете.
+    async function syncCatalogNow() {
+        const btn = document.getElementById('sync-catalog-btn');
+        const statusEl = document.getElementById('catalog-sync-status');
+        btn.disabled = true;
+        btn.textContent = 'Обновляем… это может занять минуту';
+        statusEl.textContent = '';
+        try {
+            const res = await fetch('/api/sync-catalog');
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Ошибка синхронизации');
+            statusEl.innerHTML = `
+                ✅ Готово — товаров: <b>${data.products}</b>, категорий: <b>${data.categories}</b>,
+                новых: <b>${data.newItems}</b>${data.restockedProducts ? `, снова в наличии: <b>${data.restockedProducts}</b>` : ''}
+            `;
+            statusEl.style.color = '#1f7a4d';
+            document.getElementById('catalog-sync-info').textContent = 'Последнее обновление: только что';
+        } catch (e) {
+            statusEl.textContent = 'Не удалось обновить: ' + e.message;
+            statusEl.style.color = '#d9482b';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Обновить каталог сейчас';
         }
+    }
+</script>
 
-        function loadShopData() {
-            // 1. Мгновенно: локальная копия с прошлого визита
-            let hadLocal = false;
-            try {
-                const cached = localStorage.getItem(LOCAL_CATALOG_KEY);
-                if (cached) {
-                    applyCatalog(JSON.parse(cached));
-                    hadLocal = true;
-                }
-            } catch (e) {}
+<script>
+    // Ключ хранится только в sessionStorage — переживает обновление страницы,
+    // но не сохраняется постоянно на устройстве.
+    let adminKey = sessionStorage.getItem('admin-panel-key') || '';
 
-            // 2. В фоне: свежие данные с сервера
-            fetch('/api/get-data')
-                .then(r => r.json())
-                .then(data => {
-                    if (data.error) {
-                        if (!hadLocal) showLoadError(data.error);
-                        return;
-                    }
-                    try { localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(data)); } catch (e) {}
-                    applyCatalog(data);
-                })
-                .catch(e => {
-                    if (!hadLocal) showLoadError(e.message);
-                });
-        }
+    function fmtTime(ts) {
+        return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
 
-        function showLoadError(message) {
-            const container = document.getElementById('home-categories-container');
-            if (container) {
-                container.style.display = 'block';
-                container.innerHTML = `<div class="empty-state" style="grid-column:auto;">Не удалось загрузить каталог.<br>${message || ''}</div>`;
+    function tryLoad() {
+        adminKey = document.getElementById('key-input').value.trim();
+        if (!adminKey) return;
+        sessionStorage.setItem('admin-panel-key', adminKey);
+        loadEntries();
+    }
+
+    async function loadEntries() {
+        const errEl = document.getElementById('gate-error');
+        errEl.style.display = 'none';
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`);
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                sessionStorage.removeItem('admin-panel-key');
+                document.getElementById('gate-screen').style.display = '';
+                document.getElementById('content-screen').style.display = 'none';
+                errEl.textContent = data.error || 'Не удалось загрузить данные';
+                errEl.style.display = '';
+                return;
             }
-            const newestSection = document.getElementById('home-newest-section');
-            if (newestSection) newestSection.style.display = 'none';
-        }
 
-        loadCartAndFavorites(() => {
-            loadShopData();
-        });
+            document.getElementById('gate-screen').style.display = 'none';
+            document.getElementById('content-screen').style.display = '';
 
-        // Баннеры на главной — настраиваются в личном кабинете админа,
-        // листаются свайпом. Пока не загрузились (или админ ничего не
-        // настроил), на странице уже стоит баннер по умолчанию — не мигаем
-        // пустотой.
-        fetch('/api/banners')
-            .then(r => r.json())
-            .then(data => {
-                if (data.success && Array.isArray(data.banners) && data.banners.length) {
-                    renderBanners(data.banners);
-                }
-            })
-            .catch(() => {});
+            const banner = document.getElementById('status-banner');
+            if (data.adminConnected) {
+                banner.className = 'status-banner ok';
+                banner.textContent = '✅ Telegram-уведомления подключены — новые заявки будут приходить вам в бот';
+            } else {
+                banner.className = 'status-banner warn';
+                banner.textContent = '⚠️ Telegram-уведомления пока не подключены — напишите боту любое сообщение один раз, чтобы начать их получать';
+            }
 
-        function renderBanners(banners) {
-            const viewport = document.getElementById('banners-viewport');
-            const strip = document.getElementById('banners-strip');
-            const dotsWrap = document.getElementById('banners-dots');
-            if (!viewport || !strip) return;
+            renderAdmins(data.admins || [], data.pending || []);
 
-            strip.innerHTML = banners.map(b => {
-                const bg = b.imageUrl
-                    ? `background-image: linear-gradient(135deg, ${b.color1}cc, ${b.color2}cc), url('${b.imageUrl.replace(/'/g, '')}');`
-                    : `background-image: linear-gradient(135deg, ${b.color1 || '#82394a'}, ${b.color2 || '#5a2530'});`;
-                const btn = b.buttonText
-                    ? `<div class="banner-cta" data-link="${(b.buttonLink || '').replace(/"/g, '&quot;')}">${b.buttonText}</div>`
-                    : '';
+            const list = document.getElementById('entries-list');
+            const countLabel = document.getElementById('count-label');
+            countLabel.textContent = data.entries.length ? `Всего заявок: ${data.entries.length}` : '';
+
+            if (!data.entries.length) {
+                list.innerHTML = '<div class="empty">Пока никто не нажимал «Уведомить»</div>';
+                return;
+            }
+
+            list.innerHTML = data.entries.map(e => {
+                const whoParts = [];
+                if (e.name) whoParts.push(e.name);
+                if (e.username) whoParts.push(`@${e.username}`);
+                if (e.telegramUserId) whoParts.push(`id ${e.telegramUserId}`);
+                const who = whoParts.length ? whoParts.join(' · ') : 'Неизвестный пользователь';
                 return `
-                    <div class="banner" style="${bg}">
-                        <h3>${b.text || ''}</h3>
-                        ${b.subtext ? `<div class="banner-sub">${b.subtext}</div>` : ''}
-                        ${btn}
+                    <div class="entry">
+                        <div class="entry-product">${e.productName}</div>
+                        <div class="entry-who">${who}</div>
+                        <div class="entry-time">${fmtTime(e.at)}</div>
                     </div>
                 `;
             }).join('');
-            strip.querySelectorAll('.banner-cta').forEach(el => {
-                el.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const link = el.dataset.link;
-                    if (link) window.open(link, '_blank');
-                });
-            });
-
-            if (dotsWrap) {
-                dotsWrap.innerHTML = banners.length > 1
-                    ? banners.map((_, i) => `<div class="banners-dot${i === 0 ? ' active' : ''}" data-index="${i}"></div>`).join('')
-                    : '';
-            }
-
-            setupBannerCarousel(viewport, strip, banners.length, dotsWrap);
+        } catch (e) {
+            errEl.textContent = 'Ошибка сети';
+            errEl.style.display = '';
         }
+    }
 
-        // Карусель баннеров — раньше это была лента с нативным overflow-x:auto
-        // + scroll-snap, но у неё было два упорных бага: соседний баннер
-        // просачивался в кадр (тонкости работы padding у скроллящихся
-        // flex-контейнеров в разных браузерах отличаются) и сам свайп ощущался
-        // недостаточно плавным. Теперь скролла нет вовсе — каждый баннер это
-        // просто flex-элемент шириной 100% viewport'а, а переключение между
-        // ними — явный transform: translateX() с CSS-анимацией. Так все
-        // размеры считаются однозначно (никакого скролла — нечему "протекать"
-        // за границы), а сам жест обрабатываем вручную с сопротивлением на
-        // краях и плавной доводкой.
-        function setupBannerCarousel(viewport, strip, count, dotsWrap) {
-            // viewport и strip — стабильные DOM-узлы, они не пересоздаются между
-            // вызовами renderBanners (меняется только содержимое strip), поэтому
-            // обработчики событий достаточно повесить один раз; при повторных
-            // вызовах просто обновляем count/dotsWrap и сбрасываем на первый слайд.
-            if (viewport.dataset.carouselBound) {
-                const state = viewport._carouselState;
-                if (state) {
-                    state.count = count;
-                    state.dotsWrap = dotsWrap;
-                    state.goTo(0);
-                }
-                return;
-            }
-            viewport.dataset.carouselBound = '1';
+    if (adminKey) loadEntries();
 
-            const state = { count, dotsWrap, index: 0, dragOffset: 0 };
-            viewport._carouselState = state;
-            let width = viewport.clientWidth;
-            let startX = 0, startY = 0, direction = null;
+    // --- Администраторы (кому шлём уведомления о заказах и о поступлении) ---
+    function renderAdmins(admins, pending) {
+        const wrap = document.getElementById('admins-list');
+        if (!admins.length && !pending.length) {
+            wrap.innerHTML = '<p class="sub" style="margin:0 0 4px 0;">Пока ни один администратор не подключён.</p>';
+            return;
+        }
+        const confirmedHtml = admins.map(a => {
+            // addedAt===null — это основной админ старого формата, для него
+            // отдельного изменения типов уведомлений на сервере пока нет
+            // (у него всегда оба) — показываем без чекбоксов.
+            const isLegacyPrimary = a.addedAt === null || a.addedAt === undefined;
+            const typesHtml = isLegacyPrimary
+                ? '<div class="admin-notify-types"><span>Заказы + «Уведомить о поступлении» (основной админ)</span></div>'
+                : `
+                    <div class="admin-notify-types">
+                        <label><input type="checkbox" ${a.notifyOrders !== false ? 'checked' : ''} onchange="updateAdminType(${a.chatId}, 'notifyOrders', this.checked)"> Заказы</label>
+                        <label><input type="checkbox" ${a.notifyRestock === true ? 'checked' : ''} onchange="updateAdminType(${a.chatId}, 'notifyRestock', this.checked)"> «Уведомить о поступлении»</label>
+                    </div>
+                `;
+            return `
+                <div class="admin-row">
+                    <div>
+                        <div class="who">${a.username ? '@' + a.username : 'id ' + a.chatId}</div>
+                        <div class="status">Подключён</div>
+                        ${typesHtml}
+                    </div>
+                    <button class="admin-remove" onclick="removeAdmin(${a.chatId})">Убрать</button>
+                </div>
+            `;
+        }).join('');
+        const pendingHtml = pending.map(p => {
+            const types = [p.notifyOrders !== false ? 'заказы' : null, p.notifyRestock === true ? 'уведомить о поступлении' : null].filter(Boolean).join(' + ') || 'ничего не выбрано';
+            return `
+                <div class="admin-row pending">
+                    <div>
+                        <div class="who">@${p.username}</div>
+                        <div class="status">Ожидает — попросите написать боту любое сообщение (будет получать: ${types})</div>
+                    </div>
+                    <button class="admin-remove" onclick="removePending('${p.username}')">Убрать</button>
+                </div>
+            `;
+        }).join('');
+        wrap.innerHTML = confirmedHtml + pendingHtml;
+    }
 
-            function apply(withTransition) {
-                strip.style.transition = withTransition ? 'transform 0.3s cubic-bezier(.22,.61,.36,1)' : 'none';
-                strip.style.transform = `translateX(${-(state.index * width) + state.dragOffset}px)`;
-            }
+    async function updateAdminType(chatId, field, value) {
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'update-admin', chatId, [field]: value })
+            });
+            const data = await res.json();
+            if (data.success) renderAdmins(data.admins || [], data.pending || []);
+        } catch (e) {}
+    }
 
-            function updateDots() {
-                if (!state.dotsWrap) return;
-                state.dotsWrap.querySelectorAll('.banners-dot').forEach((dot, i) => dot.classList.toggle('active', i === state.index));
-            }
+    async function addAdmin() {
+        const input = document.getElementById('new-admin-username');
+        const statusEl = document.getElementById('add-admin-status');
+        const username = input.value.trim();
+        if (!username) return;
+        const notifyOrders = document.getElementById('new-admin-orders').checked;
+        const notifyRestock = document.getElementById('new-admin-restock').checked;
+        statusEl.textContent = 'Добавляем…';
+        statusEl.style.color = '#8a8a8e';
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'add-admin', username, notifyOrders, notifyRestock })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Ошибка');
+            input.value = '';
+            statusEl.textContent = `Готово — теперь пусть @${username.replace(/^@/, '')} напишет боту любое сообщение, чтобы подтвердить подключение.`;
+            statusEl.style.color = '#1f7a4d';
+            renderAdmins(data.admins || [], data.pending || []);
+        } catch (e) {
+            statusEl.textContent = 'Не удалось добавить: ' + e.message;
+            statusEl.style.color = '#d9482b';
+        }
+    }
 
-            state.goTo = function (i) {
-                state.index = Math.max(0, Math.min(state.count - 1, i));
-                state.dragOffset = 0;
-                apply(true);
-                updateDots();
+    async function removeAdmin(chatId) {
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'remove-admin', chatId })
+            });
+            const data = await res.json();
+            if (data.success) renderAdmins(data.admins || [], data.pending || []);
+        } catch (e) {}
+    }
+
+    async function removePending(username) {
+        try {
+            const res = await fetch(`/api/notify-log?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'remove-pending', username })
+            });
+            const data = await res.json();
+            if (data.success) renderAdmins(data.admins || [], data.pending || []);
+        } catch (e) {}
+    }
+
+    // --- Баннеры ---
+    let banners = [];
+
+    function blankBanner() {
+        return { id: `banner-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text: '', subtext: '', color1: '#82394a', color2: '#5a2530', imageUrl: '', buttonText: '', buttonLink: '' };
+    }
+
+    async function loadBanners() {
+        try {
+            const res = await fetch('/api/banners');
+            const data = await res.json();
+            banners = (data.success && Array.isArray(data.banners)) ? data.banners : [];
+        } catch (e) {
+            banners = [];
+        }
+        renderBannersList();
+    }
+
+    function addBanner() {
+        banners.push(blankBanner());
+        renderBannersList();
+    }
+
+    function removeBanner(id) {
+        banners = banners.filter(b => b.id !== id);
+        renderBannersList();
+    }
+
+    // Свой файл-картинка: сжимаем на клиенте (иначе большие фото с телефона
+    // легко весят по несколько МБ каждое — это и долго грузится в самом боте,
+    // и быстро упрётся в лимиты хранилища KV) и сохраняем как data URL прямо
+    // в самом баннере — отдельное файловое хранилище тут не нужно.
+    function handleImageUpload(id, file) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const MAX_W = 900;
+                const scale = Math.min(1, MAX_W / img.width);
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(img.width * scale);
+                canvas.height = Math.round(img.height * scale);
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                updateBannerField(id, 'imageUrl', dataUrl);
+                const urlInput = document.getElementById(`url-${id}`);
+                if (urlInput) urlInput.value = '(своя загруженная картинка)';
             };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
 
-            viewport.addEventListener('touchstart', (e) => {
-                const t = e.touches[0];
-                startX = t.clientX;
-                startY = t.clientY;
-                direction = null;
-                state.dragOffset = 0;
-                width = viewport.clientWidth;
-            }, { passive: true });
+    function updateBannerField(id, field, value) {
+        const b = banners.find(x => x.id === id);
+        if (b) b[field] = value;
+        renderBannerPreview(id);
+    }
 
-            viewport.addEventListener('touchmove', (e) => {
-                const t = e.touches[0];
-                const dx = t.clientX - startX;
-                const dy = t.clientY - startY;
-                if (!direction && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
-                    direction = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                }
-                if (direction === 'x') {
-                    e.preventDefault();
-                    // Лёгкое сопротивление на краях — на первом/последнем баннере
-                    // тянуть дальше некуда, но по чуть-чуть подаётся, как в нативных галереях.
-                    const atEdge = (state.index === 0 && dx > 0) || (state.index === state.count - 1 && dx < 0);
-                    state.dragOffset = atEdge ? dx * 0.35 : dx;
-                    apply(false);
-                }
-                // direction === 'y' — ничего не делаем, пусть страница скроллится сама
-            }, { passive: false });
+    function renderBannerPreview(id) {
+        const b = banners.find(x => x.id === id);
+        const el = document.getElementById(`preview-${id}`);
+        if (!b || !el) return;
+        el.style.background = b.imageUrl
+            ? `linear-gradient(135deg, ${b.color1}cc, ${b.color2}cc), url('${b.imageUrl.replace(/'/g, '')}')`
+            : `linear-gradient(135deg, ${b.color1}, ${b.color2})`;
+        el.innerHTML = `${b.text || 'Текст баннера'}${b.subtext ? `<div class="bp-sub">${b.subtext}</div>` : ''}`;
+    }
 
-            viewport.addEventListener('touchend', () => {
-                if (direction !== 'x') return;
-                const threshold = width * 0.16;
-                if (state.dragOffset < -threshold && state.index < state.count - 1) state.goTo(state.index + 1);
-                else if (state.dragOffset > threshold && state.index > 0) state.goTo(state.index - 1);
-                else state.goTo(state.index);
-            });
-
-            window.addEventListener('resize', () => {
-                width = viewport.clientWidth;
-                apply(false);
-            });
-
-            if (state.dotsWrap) {
-                state.dotsWrap.addEventListener('click', (e) => {
-                    const dot = e.target.closest('.banners-dot');
-                    if (dot) state.goTo(parseInt(dot.dataset.index, 10));
-                });
-            }
-
-            apply(false);
+    function renderBannersList() {
+        const list = document.getElementById('banners-list');
+        if (!banners.length) {
+            list.innerHTML = '<p class="sub">Баннеров пока нет — будет использован баннер по умолчанию.</p>';
+            return;
         }
+        list.innerHTML = banners.map(b => `
+            <div class="banner-edit">
+                <label>Текст</label>
+                <input type="text" value="${(b.text || '').replace(/"/g, '&quot;')}" oninput="updateBannerField('${b.id}','text',this.value)">
+                <label>Подпись (необязательно)</label>
+                <input type="text" value="${(b.subtext || '').replace(/"/g, '&quot;')}" oninput="updateBannerField('${b.id}','subtext',this.value)">
+                <div class="color-row">
+                    <div>
+                        <label>Цвет 1</label>
+                        <input type="color" value="${b.color1 || '#82394a'}" oninput="updateBannerField('${b.id}','color1',this.value)">
+                    </div>
+                    <div>
+                        <label>Цвет 2</label>
+                        <input type="color" value="${b.color2 || '#5a2530'}" oninput="updateBannerField('${b.id}','color2',this.value)">
+                    </div>
+                </div>
+                <label>Картинка-фон (необязательно)</label>
+                <div class="image-upload-row">
+                    <input type="url" value="${(b.imageUrl || '').startsWith('data:') ? '(своя загруженная картинка)' : (b.imageUrl || '').replace(/"/g, '&quot;')}" placeholder="https://... или загрузите файл" oninput="updateBannerField('${b.id}','imageUrl',this.value)" id="url-${b.id}">
+                    <button class="upload-btn" onclick="document.getElementById('file-${b.id}').click()">Загрузить</button>
+                    <input type="file" accept="image/*" id="file-${b.id}" style="display:none;" onchange="handleImageUpload('${b.id}', this.files[0])">
+                </div>
+                <div class="upload-hint">Своя картинка сохраняется прямо в баннере — большие фото автоматически уменьшаются.</div>
+                <label>Текст кнопки (необязательно)</label>
+                <input type="text" value="${(b.buttonText || '').replace(/"/g, '&quot;')}" placeholder="Например: Подробнее" oninput="updateBannerField('${b.id}','buttonText',this.value)">
+                <label>Куда ведёт кнопка (ссылка)</label>
+                <input type="url" value="${(b.buttonLink || '').replace(/"/g, '&quot;')}" placeholder="https://..." oninput="updateBannerField('${b.id}','buttonLink',this.value)">
+                <div class="banner-preview" id="preview-${b.id}"></div>
+                <button class="banner-remove-btn" onclick="removeBanner('${b.id}')">Удалить баннер</button>
+            </div>
+        `).join('');
+        banners.forEach(b => renderBannerPreview(b.id));
+    }
 
-        // Тап куда угодно вне поля ввода убирает фокус с текущего инпута —
-        // раньше ничего не вызывало blur(), и клавиатура оставалась открытой,
-        // даже когда человек явно закончил вводить текст и тапал по пустому
-        // месту экрана.
-        document.addEventListener('click', (e) => {
-            const active = document.activeElement;
-            const isTextField = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
-            if (isTextField && !e.target.closest('input, textarea')) {
-                active.blur();
-            }
-        });
+    async function saveBanners() {
+        const statusEl = document.getElementById('banners-save-status');
+        statusEl.textContent = 'Сохраняем…';
+        statusEl.style.color = '#8a8a8e';
+        try {
+            const res = await fetch(`/api/banners?key=${encodeURIComponent(adminKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ banners })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Ошибка сохранения');
+            statusEl.textContent = 'Сохранено ✓';
+            statusEl.style.color = '#1f7a4d';
+        } catch (e) {
+            statusEl.textContent = 'Не удалось сохранить: ' + e.message;
+            statusEl.style.color = '#d9482b';
+        }
+    }
 
-        window.addEventListener('scroll', () => {
-            const scrolled = window.scrollY > 10;
-            document.querySelectorAll('.header').forEach(h => h.classList.toggle('scrolled', scrolled));
-        });
-    </script>
+    loadBanners();
+
+    // Показываем время последней синхронизации каталога сразу при открытии
+    // (до нажатия кнопки) — берём из общей диагностики, она публичная,
+    // отдельный ключ доступа не нужен.
+    fetch('/api/kv-status')
+        .then(r => r.json())
+        .then(data => {
+            const info = document.getElementById('catalog-sync-info');
+            if (!info) return;
+            const syncedAt = data?.cachedCatalog?.syncedAt;
+            info.textContent = syncedAt
+                ? `Последнее обновление: ${new Date(syncedAt).toLocaleString('ru-RU')}`
+                : 'Пока ни разу не синхронизировалось';
+        })
+        .catch(() => {});
+
+</script>
 </body>
 </html>
