@@ -376,17 +376,25 @@ export async function loadCatalogData() {
         // /api/product-image сам сходит в МойСклад с токеном и отдаст готовый файл.
         const imageRow = product.images?.rows?.[0];
         const hasPhoto = !!imageRow;
+        const miniHref = hasPhoto ? (imageRow.miniature?.downloadHref || '') : '';
         // Оригинал сюда больше не кладём: при массовой синхронизации
         // (expand=images) МойСклад его в этом ответе не отдаёт — только
         // миниатюру. Полноразмерное фото для страницы товара теперь всегда
         // добывается отдельно, точечным запросом (см. api/product-image.js).
-        if (hasPhoto) imageHrefs[product.id] = imageRow.miniature?.downloadHref || '';
+        if (hasPhoto) imageHrefs[product.id] = miniHref;
+        // "Версия" картинки в URL: меняется сама, когда в МойСклад реально
+        // заменили фото (ссылка на файл стала другой) — раньше вместо этого
+        // в index.html был зашит один и тот же статичный "&v=3" на все товары
+        // и на все времена, поэтому браузер/CDN у тех, кто уже открывал
+        // карточку, продолжали показывать старую картинку из своего
+        // 7-дневного кэша даже после замены фото в МойСклад.
+        const imgVer = shortHash(miniHref);
 
         return {
             id: product.id,
             name: product.name,
             price: (product.salePrices?.[0]?.value || 0) / 100,
-            img: hasPhoto ? `/api/product-image?id=${product.id}` : '',
+            img: hasPhoto ? `/api/product-image?id=${product.id}&v=${imgVer}` : '',
             description: product.description || '',
             folderId,
             stock: stock === null ? null : Math.max(0, stock), // доступное количество; null = учёт остатков выключен в МойСклад
@@ -410,6 +418,21 @@ export async function loadCatalogData() {
 export function extractId(href) {
     if (!href) return null;
     return href.split('/').pop().split('?')[0];
+}
+
+// Короткий детерминированный хэш строки — используется как "версия" картинки
+// товара в её URL (см. loadCatalogData). Ссылка МойСклад на файл содержит
+// собственный id этого файла, и когда в МойСклад заменяют фото товара —
+// старое изображение удаляется и подгружается новое, с другим id файла,
+// то есть с другой ссылкой. Поэтому хэш от этой ссылки меняется ровно тогда,
+// когда реально поменялась картинка — и никогда просто так.
+export function shortHash(str) {
+    if (!str) return '0';
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+        h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+    }
+    return (h >>> 0).toString(36);
 }
 
 // МойСклад хранит цвет статуса заказа как целое число (decimal RGB) —
