@@ -1207,7 +1207,7 @@
                 const priceOrBadgeHtml = prod.archived
                     ? `<div class="oos-badge">Нет в наличии</div>`
                     : renderCardPriceHtml(prod);
-                const imgHtml = prod.img ? `<img src="${prod.img}" data-full-src="${prod.img}&size=full&v=3" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
+                const imgHtml = prod.img ? `<img src="${prod.img}" data-full-src="${prod.img}&size=full" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;
                 const newBadgeHtml = prod.isNew ? `<div class="new-badge">NEW</div>` : '';
                 const actionBtnHtml = prod.archived
                     ? `<button class="notify-btn" data-id="${prod.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M9.7 21a2 2 0 0 0 4.6 0"/></svg>Уведомить</button>`
@@ -1415,7 +1415,7 @@
             // её в сетке товаров) — показываем её сразу же, не дожидаясь оригинала.
             // Оригинал (крупнее и потому медленнее) догружается в фоне и подменяет
             // картинку, как только будет готов — без видимого "пустого" ожидания.
-            const fullImgUrl = prod.img ? `${prod.img}&size=full&v=3` : '';
+            const fullImgUrl = prod.img ? `${prod.img}&size=full` : '';
             const imgHtml = prod.img
                 ? `<img src="${prod.img}" data-full-src="${fullImgUrl}" id="detail-main-img" decoding="async">`
                 : `<span class="no-photo">Тут скоро будет фото</span>`;
@@ -2006,6 +2006,7 @@
                 name: prod.name,
                 price: prod.price || 0,
                 img: prod.img || '',
+                description: prod.description || '',
                 archived: !!prod.outOfStock,
                 folderId: prod.folderId || null,
                 isNew: !!prod.isNew,
