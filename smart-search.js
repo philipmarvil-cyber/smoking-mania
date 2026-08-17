@@ -26,6 +26,20 @@
         'мятный': ['mint', 'мята']
     };
 
+    const BRAND_ALIASES = {
+        'дарксайд': 'darkside',
+        'дарк сайд': 'darkside',
+        'мастхэв': 'musthave',
+        'маст хэв': 'musthave',
+        'мустхэв': 'musthave',
+        'блэкберн': 'blackburn',
+        'блекберн': 'blackburn',
+        'трофимов': 'trofimoff',
+        'трофимофф': 'trofimoff',
+        'дуфт': 'duft',
+        'спектрум': 'spectrum'
+    };
+
     const RU_TO_EN_KEYS = {
         'й':'q','ц':'w','у':'e','к':'r','е':'t','н':'y','г':'u','ш':'i','щ':'o','з':'p','х':'[','ъ':']',
         'ф':'a','ы':'s','в':'d','а':'f','п':'g','р':'h','о':'j','л':'k','д':'l','ж':';','э':"'",
@@ -71,13 +85,24 @@
         });
     }
 
+    function applyBrandAliases(value) {
+        let result = normalize(value);
+        for (const [from, to] of Object.entries(BRAND_ALIASES)) {
+            if (result.includes(from)) result = result.split(from).join(to);
+        }
+        return normalize(result);
+    }
+
     function queryVariants(value) {
         const normalized = normalize(value);
         if (!normalized) return [];
+        const branded = applyBrandAliases(normalized);
         const swapped = normalize(swapKeyboardLayout(value));
+        const swappedBranded = applyBrandAliases(swapped);
         const latin = normalize(transliterateRu(normalized));
+        const brandedLatin = normalize(transliterateRu(branded));
         const swappedLatin = normalize(transliterateRu(swapped));
-        return [...new Set([normalized, swapped, latin, swappedLatin].filter(Boolean))];
+        return [...new Set([normalized, branded, swapped, swappedBranded, latin, brandedLatin, swappedLatin].filter(Boolean))];
     }
 
     function boundedDamerauLevenshtein(a, b, maxDistance = 2) {
@@ -166,10 +191,10 @@
         };
 
         index.nameTokens.forEach(t => scoreAgainst(rawToken, t, 1));
-        index.descriptionTokens.forEach(t => scoreAgainst(rawToken, t, 0.42));
+        index.descriptionTokens.forEach(t => scoreAgainst(rawToken, t, 0.28));
         if (latinToken) {
             index.nameLatinTokens.forEach(t => scoreAgainst(latinToken, t, 0.92));
-            index.descriptionLatinTokens.forEach(t => scoreAgainst(latinToken, t, 0.35));
+            index.descriptionLatinTokens.forEach(t => scoreAgainst(latinToken, t, 0.24));
         }
         return best;
     }
@@ -192,8 +217,8 @@
             if (queryLatin && index.nameLatin === queryLatin) score = Math.max(score, 920);
             if (queryLatin && index.nameLatin.startsWith(queryLatin)) score = Math.max(score, 840);
             if (queryLatin && index.nameLatin.includes(queryLatin)) score = Math.max(score, 760);
-            if (index.description.includes(query)) score = Math.max(score, 360);
-            if (queryLatin && index.descriptionLatin.includes(queryLatin)) score = Math.max(score, 320);
+            if (index.description.includes(query)) score = Math.max(score, 250);
+            if (queryLatin && index.descriptionLatin.includes(queryLatin)) score = Math.max(score, 225);
 
             const groups = tokenGroups(query);
             if (groups.length) {
@@ -266,6 +291,60 @@
         }, 180);
     };
 
+    function sortProductsFreshFirst(source) {
+        return (source || [])
+            .map((prod, originalIndex) => ({ prod, originalIndex }))
+            .sort((a, b) => {
+                const aNew = !!a.prod.isNew;
+                const bNew = !!b.prod.isNew;
+                if (aNew !== bNew) return aNew ? -1 : 1;
+                if (aNew && bNew) {
+                    const byFreshness = (Number(b.prod.firstSeenAt) || 0) - (Number(a.prod.firstSeenAt) || 0);
+                    if (byFreshness) return byFreshness;
+                }
+                return a.originalIndex - b.originalIndex;
+            })
+            .map(item => item.prod);
+    }
+
+    // applyCatalog intentionally keeps the storefront object compact and used to
+    // discard the exact first-seen timestamp. Preserve it after the normal mapping
+    // so categories can put the freshest NEW items first without touching search relevance.
+    const originalApplyCatalog = typeof window.applyCatalog === 'function' ? window.applyCatalog : null;
+    if (originalApplyCatalog) {
+        window.applyCatalog = function applyCatalogWithFreshness(data) {
+            originalApplyCatalog(data);
+            const rawById = new Map((data?.products || []).map(prod => [prod.id, prod]));
+            allProducts.forEach(prod => {
+                prod.firstSeenAt = Number(rawById.get(prod.id)?.firstSeenAt) || 0;
+            });
+            // The original applyCatalog renders once before firstSeenAt is copied.
+            // Redraw the current screen once so the user immediately gets correct ordering.
+            if (typeof currentScreen === 'function' && typeof renderScreen === 'function') {
+                renderScreen(currentScreen());
+            }
+        };
+    }
+
+    const originalRenderProductCardsInto = typeof window.renderProductCardsInto === 'function'
+        ? window.renderProductCardsInto
+        : null;
+    if (originalRenderProductCardsInto) {
+        window.renderProductCardsInto = function renderProductCardsWithFreshness(container, list) {
+            const id = container?.id || '';
+            const categorySearchActive = id === 'category-products-container' &&
+                !!document.getElementById('category-search-input')?.value?.trim();
+            const shouldSortFresh = id === 'home-newest-container' ||
+                id === 'newest-products-container' ||
+                (id === 'category-products-container' && !categorySearchActive);
+            return originalRenderProductCardsInto(
+                container,
+                shouldSortFresh ? sortProductsFreshFirst(list) : list
+            );
+        };
+    }
+
     // Exposed only for smoke tests in CI / browser console diagnostics.
     window.__smartProductSearch = searchProducts;
+    window.__sortProductsFreshFirst = sortProductsFreshFirst;
 })();

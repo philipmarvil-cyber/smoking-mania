@@ -21,7 +21,7 @@ const FIRST_SEEN_KEY = 'product-first-seen:v1';
 const IMAGE_HREFS_KEY = 'image-hrefs:v1';
 const BASELINE = 0;
 
-const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней
+const NEW_THRESHOLD_MS = 20 * 24 * 60 * 60 * 1000; // 20 дней
 
 // Единый список полностью скрытых категорий — не показываются в каталоге
 // И не должны находиться через поиск. Раньше это исключение делалось в
@@ -399,7 +399,8 @@ export async function loadCatalogData() {
             folderId,
             stock: stock === null ? null : Math.max(0, stock), // доступное количество; null = учёт остатков выключен в МойСклад
             outOfStock: stock === null ? false : stock <= 0,
-            isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS
+            isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS,
+            firstSeenAt: seenAt === BASELINE ? 0 : seenAt
         };
     });
 
