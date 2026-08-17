@@ -1,4 +1,4 @@
-name: Sync gallery catalog once
+name: Finalize gallery update
 
 on:
   push:
@@ -10,23 +10,34 @@ permissions:
   contents: write
 
 jobs:
-  sync:
+  finalize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Sync production catalog
+      - name: Bump gallery script version
         run: |
-          curl --fail --silent --show-error --max-time 90 \
-            'https://smoking-mania-1-jql8ka5cw-smoking-mania.vercel.app/api/sync-catalog' \
-            -o /tmp/sync.json
-          cat /tmp/sync.json
-          grep -q '"success":true' /tmp/sync.json
-      - name: Remove one-time workflow
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          old = '/storefront-enhancements.js?v=20260817a'
+          new = '/storefront-enhancements.js?v=20260817b'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('gallery script tag not found')
+          p.write_text(s, encoding='utf-8')
+          PY
+          node --check storefront-enhancements.js
+          node --input-type=module --check < api/product-images.js
+          git diff --check
+      - name: Commit cleanup
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git rm .github/workflows/sync-gallery-once.yml
-          git commit -m 'Complete gallery catalog sync'
+          git add index.html
+          git commit -m 'Finalize gallery loading fallback'
           git push origin HEAD:main
