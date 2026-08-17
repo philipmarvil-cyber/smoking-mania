@@ -18,7 +18,13 @@ const DEFAULT_BANNERS = [
         color2: '#5a2530',
         imageUrl: '',
         buttonText: '',
-        buttonLink: ''
+        buttonLink: '',
+        targetType: 'none',
+        targetProductId: '',
+        targetCategoryId: '',
+        targetPathIds: [],
+        targetLabel: '',
+        targetUrl: ''
     }
 ];
 
@@ -50,23 +56,37 @@ async function handlePost(req, res) {
             return;
         }
         // Простая защита от совсем мусорных данных — оставляем только ожидаемые поля.
-        const cleaned = banners.slice(0, 10).map((b, i) => ({
-            id: String(b.id || `banner-${Date.now()}-${i}`),
-            text: String(b.text || '').slice(0, 120),
-            subtext: String(b.subtext || '').slice(0, 160),
-            color1: String(b.color1 || '#82394a').slice(0, 20),
-            color2: String(b.color2 || '#5a2530').slice(0, 20),
-            imageUrl: String(b.imageUrl || '').slice(0, 900000), // с запасом под data:-URL загруженной картинки (обычная ссылка тоже поместится)
-            buttonText: String(b.buttonText || '').slice(0, 40),
-            buttonLink: String(b.buttonLink || '').slice(0, 500),
-            enabled: b.enabled !== false,
-            badge: String(b.badge || '').slice(0, 40),
-            textTheme: b.textTheme === 'dark' ? 'dark' : 'light',
-            align: b.align === 'center' ? 'center' : 'left',
-            height: ['compact', 'regular', 'large'].includes(b.height) ? b.height : 'regular',
-            overlay: Math.max(0, Math.min(0.75, Number(b.overlay) || 0)),
-            backgroundPosition: ['left', 'center', 'right'].includes(b.backgroundPosition) ? b.backgroundPosition : 'center'
-        }));
+        const cleaned = banners.slice(0, 10).map((b, i) => {
+            const allowedTargetTypes = ['none', 'product', 'category', 'external'];
+            const targetType = allowedTargetTypes.includes(b.targetType)
+                ? b.targetType
+                : (b.buttonLink ? 'external' : 'none');
+            const targetUrl = String(b.targetUrl || (targetType === 'external' ? b.buttonLink || '' : '')).slice(0, 500);
+            return {
+                id: String(b.id || `banner-${Date.now()}-${i}`),
+                text: String(b.text || '').slice(0, 120),
+                subtext: String(b.subtext || '').slice(0, 160),
+                color1: String(b.color1 || '#82394a').slice(0, 20),
+                color2: String(b.color2 || '#5a2530').slice(0, 20),
+                imageUrl: String(b.imageUrl || '').slice(0, 900000), // с запасом под data:-URL загруженной картинки (обычная ссылка тоже поместится)
+                buttonText: String(b.buttonText || '').slice(0, 40),
+                // buttonLink оставляем для обратной совместимости со старыми клиентами.
+                buttonLink: String(targetType === 'external' ? (targetUrl || b.buttonLink || '') : '').slice(0, 500),
+                enabled: b.enabled !== false,
+                badge: String(b.badge || '').slice(0, 40),
+                textTheme: b.textTheme === 'dark' ? 'dark' : 'light',
+                align: b.align === 'center' ? 'center' : 'left',
+                height: ['compact', 'regular', 'large'].includes(b.height) ? b.height : 'regular',
+                overlay: Math.max(0, Math.min(0.75, Number(b.overlay) || 0)),
+                backgroundPosition: ['left', 'center', 'right'].includes(b.backgroundPosition) ? b.backgroundPosition : 'center',
+                targetType,
+                targetProductId: String(b.targetProductId || '').slice(0, 80),
+                targetCategoryId: String(b.targetCategoryId || '').slice(0, 80),
+                targetPathIds: Array.isArray(b.targetPathIds) ? b.targetPathIds.slice(0, 10).map(id => String(id).slice(0, 80)) : [],
+                targetLabel: String(b.targetLabel || '').slice(0, 240),
+                targetUrl
+            };
+        });
         await kvSetJson(BANNERS_KEY, cleaned);
         res.status(200).json({ success: true, banners: cleaned });
     } catch (e) {
