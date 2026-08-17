@@ -11,6 +11,10 @@
         .replace(/'/g, '&#039;');
 
     function normalizeBanner(b = {}) {
+        const allowedTargetTypes = ['none', 'product', 'category', 'external'];
+        const targetType = allowedTargetTypes.includes(b.targetType)
+            ? b.targetType
+            : (b.buttonLink ? 'external' : 'none');
         return {
             ...b,
             enabled: b.enabled !== false,
@@ -19,7 +23,13 @@
             align: b.align === 'center' ? 'center' : 'left',
             height: ['compact', 'regular', 'large'].includes(b.height) ? b.height : 'regular',
             overlay: Number.isFinite(Number(b.overlay)) ? Math.max(0, Math.min(.75, Number(b.overlay))) : .28,
-            backgroundPosition: ['left', 'center', 'right'].includes(b.backgroundPosition) ? b.backgroundPosition : 'center'
+            backgroundPosition: ['left', 'center', 'right'].includes(b.backgroundPosition) ? b.backgroundPosition : 'center',
+            targetType,
+            targetProductId: String(b.targetProductId || ''),
+            targetCategoryId: String(b.targetCategoryId || ''),
+            targetPathIds: Array.isArray(b.targetPathIds) ? b.targetPathIds.map(String) : [],
+            targetLabel: String(b.targetLabel || ''),
+            targetUrl: String(b.targetUrl || b.buttonLink || '')
         };
     }
 
@@ -28,18 +38,8 @@
         const style = document.createElement('style');
         style.id = 'home-banners-modern-style';
         style.textContent = `
-            /*
-             * Геометрия карусели намеренно устроена так, чтобы внешний размер
-             * КАЖДОГО слайда был ровно 100% viewport. Раньше боковой padding был
-             * у самого viewport, а setupBannerCarousel считал шаг через
-             * viewport.clientWidth — на iOS это давало разницу между шириной
-             * баннера и шагом transform, из-за чего соседний слайд выглядывал.
-             *
-             * Теперь viewport не имеет горизонтального padding. У карточки
-             * ширина calc(100% - 12px) + по 6px margin с каждой стороны = ровно
-             * 100%. Поэтому свайп снова попадает пиксель-в-пиксель, а между
-             * баннерами во время жеста остаётся аккуратный зазор 12px.
-             */
+            /* Каждый слайд занимает ровно 100% viewport: карточка имеет
+               ширину calc(100% - 12px) и по 6px margin с каждой стороны. */
             .banners-viewport {
                 padding:12px 0 14px !important;
                 margin:0 6px !important;
@@ -69,6 +69,8 @@
                 box-shadow:0 7px 20px rgba(45,28,31,.10);
                 border:1px solid rgba(255,255,255,.14);
             }
+            .banner.hero-banner.clickable { cursor:pointer; }
+            .banner.hero-banner.clickable:active { transform:scale(.996); }
             .banner.hero-banner::before { content:''; position:absolute; inset:0; z-index:-1; background:var(--hero-overlay,rgba(0,0,0,.28)); }
             .banner.hero-banner.dark-text::before { background:var(--hero-overlay-light,rgba(255,255,255,.34)); }
             .hero-banner.compact { min-height:138px; }
@@ -106,6 +108,61 @@
         return `background-image:linear-gradient(135deg,${b.color1 || '#82394a'},${b.color2 || '#5a2530'});background-position:center;`;
     }
 
+    function bannerHasTarget(b) {
+        if (b.targetType === 'product') return !!b.targetProductId;
+        if (b.targetType === 'category') return !!b.targetCategoryId;
+        if (b.targetType === 'external') return !!b.targetUrl;
+        return false;
+    }
+
+    function showUnavailable(message) {
+        try {
+            if (window.Telegram?.WebApp?.showAlert) window.Telegram.WebApp.showAlert(message);
+        } catch (e) {}
+    }
+
+    function openBannerTarget(b) {
+        if (!b || !bannerHasTarget(b)) return;
+
+        if (b.targetType === 'product') {
+            const exists = Array.isArray(allProducts) && allProducts.some(product => String(product.id) === b.targetProductId);
+            if (!exists) {
+                showUnavailable('Этот товар сейчас недоступен в каталоге.');
+                return;
+            }
+            if (typeof navigateTo === 'function') navigateTo({ type: 'detail', productId: b.targetProductId });
+            return;
+        }
+
+        if (b.targetType === 'category') {
+            const rootExists = Array.isArray(categories) && categories.some(category => String(category.id) === b.targetCategoryId);
+            if (!rootExists) {
+                showUnavailable('Эта категория сейчас недоступна.');
+                return;
+            }
+            if (typeof navigateTo === 'function') {
+                navigateTo({
+                    type: 'category',
+                    categoryId: b.targetCategoryId,
+                    pathIds: Array.isArray(b.targetPathIds) ? [...b.targetPathIds] : [],
+                    subFolderIds: null
+                });
+            }
+            return;
+        }
+
+        if (b.targetType === 'external') {
+            const url = String(b.targetUrl || '').trim();
+            if (!/^https?:\/\//i.test(url)) return;
+            try {
+                if (window.Telegram?.WebApp?.openLink) window.Telegram.WebApp.openLink(url);
+                else window.open(url, '_blank');
+            } catch (e) {
+                window.open(url, '_blank');
+            }
+        }
+    }
+
     function configureAutoplay(viewport) {
         if (!viewport) return;
 
@@ -132,20 +189,12 @@
             }, AUTOPLAY_MS);
         };
 
-        // renderBanners может вызываться повторно. Сами обработчики вешаем
-        // единожды, а schedule всегда читает актуальный viewport._carouselState.
         if (!viewport.dataset.bannerAutoplayBound) {
             viewport.dataset.bannerAutoplayBound = '1';
-
-            // Пока человек держит палец на баннере, карусель не двигается сама.
             viewport.addEventListener('touchstart', clearTimer, { passive: true });
             viewport.addEventListener('touchend', schedule, { passive: true });
             viewport.addEventListener('touchcancel', schedule, { passive: true });
-
-            // Клик по точке/кнопке тоже считается ручным взаимодействием:
-            // следующий автоматический переход только через полные 5 секунд.
             viewport.addEventListener('click', schedule, { passive: true });
-
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden) clearTimer();
                 else schedule();
@@ -154,6 +203,45 @@
 
         viewport._bannerAutoplaySchedule = schedule;
         schedule();
+    }
+
+    function bindBannerTarget(element, banner) {
+        if (!element || !bannerHasTarget(banner)) return;
+        element.classList.add('clickable');
+
+        let startX = 0;
+        let startY = 0;
+        let dragged = false;
+        element.addEventListener('touchstart', e => {
+            const touch = e.touches?.[0];
+            if (!touch) return;
+            startX = touch.clientX;
+            startY = touch.clientY;
+            dragged = false;
+        }, { passive: true });
+        element.addEventListener('touchmove', e => {
+            const touch = e.touches?.[0];
+            if (!touch) return;
+            if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) dragged = true;
+        }, { passive: true });
+        element.addEventListener('click', e => {
+            if (dragged) {
+                dragged = false;
+                e.preventDefault();
+                return;
+            }
+            if (e.target.closest('.banner-cta')) return;
+            openBannerTarget(banner);
+        });
+
+        const button = element.querySelector('.banner-cta');
+        if (button) {
+            button.addEventListener('click', e => {
+                e.stopPropagation();
+                if (dragged) { dragged = false; return; }
+                openBannerTarget(banner);
+            });
+        }
     }
 
     function renderModernBanners(input) {
@@ -182,16 +270,12 @@
                         ${b.badge ? `<div class="hero-banner-badge">${esc(b.badge)}</div>` : ''}
                         <h3>${esc(b.text || '')}</h3>
                         ${b.subtext ? `<div class="banner-sub">${esc(b.subtext)}</div>` : ''}
-                        ${b.buttonText ? `<button class="banner-cta" type="button" data-link="${esc(b.buttonLink || '')}">${esc(b.buttonText)}</button>` : ''}
+                        ${b.buttonText ? `<button class="banner-cta" type="button">${esc(b.buttonText)}</button>` : ''}
                     </div>
                 </div>`;
         }).join('');
 
-        strip.querySelectorAll('.banner-cta').forEach(button => button.addEventListener('click', e => {
-            e.stopPropagation();
-            const link = button.dataset.link;
-            if (link) window.open(link, '_blank');
-        }));
+        [...strip.querySelectorAll('.hero-banner')].forEach((element, index) => bindBannerTarget(element, banners[index]));
 
         if (dotsWrap) {
             dotsWrap.innerHTML = banners.length > 1
