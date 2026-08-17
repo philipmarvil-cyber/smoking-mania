@@ -1,0 +1,33 @@
+name: Enable card image quality
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/enable-card-quality.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate quality loader
+        run: node --check card-quality.js
+      - name: Connect quality loader
+        run: |
+          python -c "from pathlib import Path; p=Path('index.html'); s=p.read_text(encoding='utf-8'); old='    <script src=\"/storefront-enhancements.js?v=20260817b\"></script>\n</body>'; new='    <script src=\"/storefront-enhancements.js?v=20260817b\"></script>\n    <script src=\"/card-quality.js?v=20260817a\"></script>\n</body>'; assert old in s or '/card-quality.js?v=20260817a' in s; p.write_text(s.replace(old,new,1),encoding='utf-8')"
+          grep -q 'card-quality.js?v=20260817a' index.html
+          git diff --check
+      - name: Commit clean result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/enable-card-quality.yml
+          git add index.html card-quality.js
+          git commit -m 'Restore crisp visible product card images'
+          git push origin HEAD:main
