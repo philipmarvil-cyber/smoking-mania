@@ -1,105 +1,78 @@
-// Прокси-картинка товара из МойСклад.
-// Ссылки МойСклад (downloadHref) требуют заголовок Authorization — браузер не может
-// подставить его в <img src>, поэтому раньше вместо фото показывались "битые картинки"
-// (те самые кубики). Этот эндпоинт сам ходит в МойСклад с токеном, забирает байты
-// и отдаёт их браузеру уже как обычный файл, без всякой авторизации с его стороны.
-//
-// ВАЖНО: раньше ссылка на файл (если её не было в персональном 7-дневном кэше)
-// добывалась отдельным живым запросом GET /entity/product/{id}/images на КАЖДЫЙ
-// показ картинки нового/непрокэшированного товара. При одновременной загрузке
-// каталога у многих пользователей это давало всплеск таких запросов — именно
-// он и привёл к ограничению доступа к API со стороны МойСклад. Теперь ссылки на
-// картинки ВСЕХ товаров собираются разом при полной синхронизации (см.
-// loadCatalogData) и лежат одной картой в KV — сюда идём в первую очередь, и
-// живой запрос к МойСклад делаем только для товаров, которых в этой карте
-// почему-то ещё нет (например, совсем новый товар между синхронизациями).
+// Versioned image proxy for MoySklad. Product cards use only the light
+// miniature. Full images (including gallery images #2/#3) are resolved
+// lazily on the product page and their href list is cached in KV.
 import { API, fetchJson, fetchBinary, kvGetJson, kvSetJson, getImageHrefsMap } from './_catalog-lib.js';
 
-const HREF_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 дней — сама ссылка на файл в МойСклад стабильна
+const HREF_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export default async function handler(req, res) {
     const id = (req.query.id || '').replace(/[^a-f0-9-]/gi, '');
-    if (!id) {
-        res.status(400).send('Не указан id товара');
-        return;
-    }
+    if (!id) return res.status(400).send('Не указан id товара');
+
     const wantFull = req.query.size === 'full';
-    // "v" приходит из каталога (см. loadCatalogData/shortHash) и меняется
-    // сам, когда в МойСклад реально заменили фото товара. Раньше кэш
-    // полноразмерной картинки был ключом только по id товара — и когда
-    // фото меняли, старая ссылка (а с ней и старые байты) продолжала
-    // отдаваться из этого кэша ещё до 7 дней, даже после того как общий
-    // каталог уже обновился. Включаем версию в ключ кэша: для новой
-    // картинки это гарантированно новый ключ, то есть кэш-промах и свежий
-    // запрос к МойСклад, а старые записи просто протухнут сами по себе.
-    const v = (req.query.v || '0').replace(/[^a-z0-9]/gi, '').slice(0, 20) || '0';
+    const index = Math.max(0, Math.min(49, parseInt(req.query.index || '0', 10) || 0));
+    const v = (req.query.v || '0').replace(/[^a-z0-9]/gi, '').slice(0, 30) || '0';
 
     try {
         let href = null;
 
         if (wantFull) {
-            // ВАЖНО: при массовой синхронизации (expand=images на списке
-            // товаров) МойСклад отдаёт по картинке только miniature — поля
-            // оригинала там нет, даже если исходное фото весит 1080×1080 и
-            // больше. Раньше "full" бралось именно из этого массового ответа
-            // и по факту оказывалось той же миниатюрой. Теперь оригинал
-            // всегда добывается отдельным точечным запросом по конкретному
-            // товару (там это поле есть надёжно) — с кэшем на 7 дней, чтобы
-            // не дёргать МойСклад повторно при каждом открытии карточки.
-            const cacheKey = `imgfull2:${id}:${v}`;
+            // Один metadata-запрос получает ссылки СРАЗУ на все фото товара.
+            // Свайп ко 2/3 фото не создаёт новый запрос метаданных к МойСклад.
+            const cacheKey = `imgfull3:${id}:${v}`;
             const cached = await kvGetJson(cacheKey);
-            if (cached && (Date.now() - cached.at) < HREF_TTL_MS) {
-                href = cached.href || null;
-            } else {
-                const data = await fetchJson(`${API}/entity/product/${id}/images?limit=1`);
-                const row = data?.rows?.[0];
-                // ВАЖНО: ссылка на оригинал изображения лежит в row.meta.downloadHref,
-                // а НЕ в row.downloadHref (это поле почти всегда пустое) — из-за этой
-                // путаницы "full" вообще всё это время незаметно откатывался на
-                // миниатюру, сколько бы других вещей (кэш, версии URL) мы ни правили.
-                href = row?.meta?.downloadHref || row?.miniature?.downloadHref || null;
-                await kvSetJson(cacheKey, { href: href || '', at: Date.now() });
+            let hrefs = (cached && (Date.now() - cached.at) < HREF_TTL_MS && Array.isArray(cached.hrefs))
+                ? cached.hrefs
+                : null;
+
+            if (!hrefs) {
+                const data = await fetchJson(`${API}/entity/product/${id}/images?limit=100`);
+                hrefs = (data?.rows || []).map(row =>
+                    row?.meta?.downloadHref || row?.miniature?.downloadHref || ''
+                ).filter(Boolean);
+                await kvSetJson(cacheKey, { hrefs, at: Date.now() });
             }
+            href = hrefs[index] || null;
         } else {
+            // Первая миниатюра почти всегда уже собрана массовой синхронизацией.
             const hrefMap = await getImageHrefsMap();
-            const entry = hrefMap.hasOwnProperty(id) ? hrefMap[id] : null;
-            if (entry && typeof entry === 'object') href = entry.mini || null;
-            else if (typeof entry === 'string') href = entry || null;
+            const entry = Object.prototype.hasOwnProperty.call(hrefMap, id) ? hrefMap[id] : null;
+            if (entry && typeof entry === 'object') {
+                href = (Array.isArray(entry.minis) ? entry.minis[index] : null)
+                    || (index === 0 ? entry.mini : null)
+                    || null;
+            } else if (typeof entry === 'string' && index === 0) {
+                href = entry;
+            }
 
-            if (href === null) {
-                // Товара нет в карте — редкий случай (совсем новый товар
-                // между синхронизациями). Идём в МойСклад напрямую, кэшируем
-                // на 7 дней.
-                const cacheKey = `imghref:${id}`;
+            // Редкий fallback: товара/фото ещё нет в массовой карте.
+            if (!href) {
+                const cacheKey = `imghrefs2:${id}`;
                 const cached = await kvGetJson(cacheKey);
-                if (cached && (Date.now() - cached.at) < HREF_TTL_MS) {
-                    href = cached.mini || null;
-                } else {
-                    const data = await fetchJson(`${API}/entity/product/${id}/images?limit=1`);
-                    const mini = data?.rows?.[0]?.miniature?.downloadHref || '';
-                    await kvSetJson(cacheKey, { mini, at: Date.now() });
-                    href = mini || null;
+                let minis = (cached && (Date.now() - cached.at) < HREF_TTL_MS && Array.isArray(cached.minis))
+                    ? cached.minis
+                    : null;
+                if (!minis) {
+                    const data = await fetchJson(`${API}/entity/product/${id}/images?limit=100`);
+                    minis = (data?.rows || []).map(row => row?.miniature?.downloadHref || '').filter(Boolean);
+                    await kvSetJson(cacheKey, { minis, at: Date.now() });
                 }
+                href = minis[index] || null;
             }
         }
 
-        if (!href) {
-            res.status(404).send('У товара нет фото');
-            return;
-        }
+        if (!href) return res.status(404).send('У товара нет фото');
 
         const { buffer, contentType } = await fetchBinary(href);
         res.setHeader('Content-Type', contentType);
-        // Кэш на CDN Vercel — повторные запросы этой же картинки от любых пользователей
-        // не будут повторно ходить в МойСклад целую неделю.
-        // max-age — кэш в самом браузере/WebView телефона (было только s-maxage,
-        // а это работает лишь для CDN; без max-age при повторном заходе телефон
-        // всё равно каждый раз ходил в сеть за уже виденной картинкой).
-        res.setHeader('Cache-Control', 'public, max-age=604800, s-maxage=604800, stale-while-revalidate=2592000');
-        res.setHeader('X-Ms-Image-Variant', wantFull ? 'full' : 'mini');
+        // v меняется вместе с фото, поэтому versioned URL можно кэшировать
+        // агрессивно и в Telegram WebView, и на Vercel CDN.
+        res.setHeader('Cache-Control', 'public, max-age=2592000, s-maxage=31536000, stale-while-revalidate=2592000, immutable');
+        res.setHeader('X-Ms-Image-Variant', wantFull ? `full-${index}` : `mini-${index}`);
         res.setHeader('X-Ms-Image-Bytes', String(buffer.length));
         res.status(200).send(buffer);
     } catch (e) {
+        console.error('[product-image]', e?.message);
         res.status(500).send('Не удалось получить фото');
     }
 }
