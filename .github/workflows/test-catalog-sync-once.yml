@@ -1,0 +1,49 @@
+name: Test catalog sync once
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-catalog-sync-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Call production catalog sync once
+        id: sync
+        shell: bash
+        run: |
+          set +e
+          curl -sS --max-time 65 \
+            -o /tmp/sync-body.json \
+            -w '%{http_code} %{time_total}' \
+            'https://smoking-mania-1-i2e4fxjut-smoking-mania.vercel.app/api/sync-catalog' \
+            > /tmp/sync-meta.txt
+          CURL_EXIT=$?
+          set -e
+          echo "curl_exit=$CURL_EXIT"
+          echo "meta=$(cat /tmp/sync-meta.txt)"
+          echo 'body:'
+          cat /tmp/sync-body.json || true
+          echo
+          HTTP=$(awk '{print $1}' /tmp/sync-meta.txt)
+          TIME=$(awk '{print $2}' /tmp/sync-meta.txt)
+          echo "http=$HTTP" >> "$GITHUB_OUTPUT"
+          echo "time=$TIME" >> "$GITHUB_OUTPUT"
+          test "$CURL_EXIT" -eq 0
+          test "$HTTP" = "200"
+          node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync('/tmp/sync-body.json','utf8'));if(!d.success)process.exit(1);console.log('products='+d.products,'categories='+d.categories,'durationMs='+d.durationMs)"
+      - name: Remove one-time workflow
+        if: always()
+        run: |
+          rm -f .github/workflows/test-catalog-sync-once.yml
+          git config user.name "philipmarvil-cyber"
+          git config user.email "philipmarvil@gmail.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Remove one-time catalog sync check"
+          git push
