@@ -1,0 +1,133 @@
+name: Refine search and newest ordering
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/refine-search-newest.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply focused changes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          catalog = Path('api/_catalog-lib.js')
+          text = catalog.read_text(encoding='utf-8')
+          old = "const NEW_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 дней"
+          new = "const NEW_THRESHOLD_MS = 20 * 24 * 60 * 60 * 1000; // 20 дней"
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('NEW_THRESHOLD_MS pattern not found')
+
+          old = "            isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS\n"
+          new = "            isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS,\n            firstSeenAt: seenAt === BASELINE ? 0 : seenAt\n"
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif 'firstSeenAt: seenAt === BASELINE ? 0 : seenAt' not in text:
+              raise SystemExit('isNew product mapping pattern not found')
+          catalog.write_text(text, encoding='utf-8')
+
+          search = Path('smart-search.js')
+          text = search.read_text(encoding='utf-8')
+
+          brand_block = """    const BRAND_ALIASES = {\n        'дарксайд': 'darkside',\n        'дарк сайд': 'darkside',\n        'мастхэв': 'musthave',\n        'маст хэв': 'musthave',\n        'мустхэв': 'musthave',\n        'блэкберн': 'blackburn',\n        'блекберн': 'blackburn',\n        'трофимов': 'trofimoff',\n        'трофимофф': 'trofimoff',\n        'дуфт': 'duft',\n        'спектрум': 'spectrum'\n    };\n\n"""
+          marker = "    const RU_TO_EN_KEYS = {"
+          if 'const BRAND_ALIASES' not in text:
+              if marker not in text:
+                  raise SystemExit('RU_TO_EN_KEYS marker not found')
+              text = text.replace(marker, brand_block + marker, 1)
+
+          old_query = """    function queryVariants(value) {\n        const normalized = normalize(value);\n        if (!normalized) return [];\n        const swapped = normalize(swapKeyboardLayout(value));\n        const latin = normalize(transliterateRu(normalized));\n        const swappedLatin = normalize(transliterateRu(swapped));\n        return [...new Set([normalized, swapped, latin, swappedLatin].filter(Boolean))];\n    }\n"""
+          new_query = """    function applyBrandAliases(value) {\n        let result = normalize(value);\n        for (const [from, to] of Object.entries(BRAND_ALIASES)) {\n            if (result.includes(from)) result = result.split(from).join(to);\n        }\n        return normalize(result);\n    }\n\n    function queryVariants(value) {\n        const normalized = normalize(value);\n        if (!normalized) return [];\n        const branded = applyBrandAliases(normalized);\n        const swapped = normalize(swapKeyboardLayout(value));\n        const swappedBranded = applyBrandAliases(swapped);\n        const latin = normalize(transliterateRu(normalized));\n        const brandedLatin = normalize(transliterateRu(branded));\n        const swappedLatin = normalize(transliterateRu(swapped));\n        return [...new Set([normalized, branded, swapped, swappedBranded, latin, brandedLatin, swappedLatin].filter(Boolean))];\n    }\n"""
+          if old_query in text:
+              text = text.replace(old_query, new_query, 1)
+          elif 'function applyBrandAliases' not in text:
+              raise SystemExit('queryVariants pattern not found')
+
+          # Description remains useful for tastes/characteristics, but it must not
+          # outrank a brand/name match. Reduce only description weights.
+          text = text.replace("scoreAgainst(rawToken, t, 0.42)", "scoreAgainst(rawToken, t, 0.28)")
+          text = text.replace("scoreAgainst(latinToken, t, 0.35)", "scoreAgainst(latinToken, t, 0.24)")
+          text = text.replace("score = Math.max(score, 360);", "score = Math.max(score, 250);")
+          text = text.replace("score = Math.max(score, 320);", "score = Math.max(score, 225);")
+
+          freshness_block = """    function sortProductsFreshFirst(source) {\n        return (source || [])\n            .map((prod, originalIndex) => ({ prod, originalIndex }))\n            .sort((a, b) => {\n                const aNew = !!a.prod.isNew;\n                const bNew = !!b.prod.isNew;\n                if (aNew !== bNew) return aNew ? -1 : 1;\n                if (aNew && bNew) {\n                    const byFreshness = (Number(b.prod.firstSeenAt) || 0) - (Number(a.prod.firstSeenAt) || 0);\n                    if (byFreshness) return byFreshness;\n                }\n                return a.originalIndex - b.originalIndex;\n            })\n            .map(item => item.prod);\n    }\n\n    // applyCatalog intentionally keeps the storefront object compact and used to\n    // discard the exact first-seen timestamp. Preserve it after the normal mapping\n    // so categories can put the freshest NEW items first without touching search relevance.\n    const originalApplyCatalog = typeof window.applyCatalog === 'function' ? window.applyCatalog : null;\n    if (originalApplyCatalog) {\n        window.applyCatalog = function applyCatalogWithFreshness(data) {\n            originalApplyCatalog(data);\n            const rawById = new Map((data?.products || []).map(prod => [prod.id, prod]));\n            allProducts.forEach(prod => {\n                prod.firstSeenAt = Number(rawById.get(prod.id)?.firstSeenAt) || 0;\n            });\n            // The original applyCatalog renders once before firstSeenAt is copied.\n            // Redraw the current screen once so the user immediately gets correct ordering.\n            if (typeof currentScreen === 'function' && typeof renderScreen === 'function') {\n                renderScreen(currentScreen());\n            }\n        };\n    }\n\n    const originalRenderProductCardsInto = typeof window.renderProductCardsInto === 'function'\n        ? window.renderProductCardsInto\n        : null;\n    if (originalRenderProductCardsInto) {\n        window.renderProductCardsInto = function renderProductCardsWithFreshness(container, list) {\n            const id = container?.id || '';\n            const categorySearchActive = id === 'category-products-container' &&\n                !!document.getElementById('category-search-input')?.value?.trim();\n            const shouldSortFresh = id === 'home-newest-container' ||\n                id === 'newest-products-container' ||\n                (id === 'category-products-container' && !categorySearchActive);\n            return originalRenderProductCardsInto(\n                container,\n                shouldSortFresh ? sortProductsFreshFirst(list) : list\n            );\n        };\n    }\n\n"""
+          marker = "    // Exposed only for smoke tests in CI / browser console diagnostics.\n"
+          if 'function sortProductsFreshFirst' not in text:
+              if marker not in text:
+                  raise SystemExit('diagnostics marker not found')
+              text = text.replace(marker, freshness_block + marker, 1)
+
+          old_export = "    window.__smartProductSearch = searchProducts;\n"
+          new_export = "    window.__smartProductSearch = searchProducts;\n    window.__sortProductsFreshFirst = sortProductsFreshFirst;\n"
+          if old_export in text and '__sortProductsFreshFirst' not in text:
+              text = text.replace(old_export, new_export, 1)
+          search.write_text(text, encoding='utf-8')
+
+          index = Path('index.html')
+          text = index.read_text(encoding='utf-8')
+          text = text.replace('/smart-search.js?v=20260817', '/smart-search.js?v=20260817b')
+          index.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate changes
+        shell: bash
+        run: |
+          node --check smart-search.js
+          node --input-type=module --check < api/_catalog-lib.js
+          git diff --check
+          cat > /tmp/test-search.js <<'JS'
+          global.window = global;
+          global.document = { getElementById() { return null; } };
+          global.renderProductCardsInto = () => {};
+          global.allProducts = [];
+          global.categoryPageDefaultList = [];
+          require(process.cwd() + '/smart-search.js');
+
+          const products = [
+            { name: 'Табак Trofimoff Burley', description: 'Для любителей профиля Darkside', isNew: false },
+            { name: 'Табак DARKSIDE CORE COSMOS', description: 'Табак для кальяна', isNew: false },
+            { name: 'Kent Blue', description: 'Синие сигареты', isNew: false }
+          ];
+          const top = q => global.__smartProductSearch(products, q)[0]?.name;
+          if (top('дарксайд') !== 'Табак DARKSIDE CORE COSMOS') throw new Error('дарксайд ranking failed: ' + top('дарксайд'));
+          if (top('darkside') !== 'Табак DARKSIDE CORE COSMOS') throw new Error('darkside ranking failed: ' + top('darkside'));
+          if (top('кент синий') !== 'Kent Blue') throw new Error('kent ranking failed: ' + top('кент синий'));
+
+          const fresh = global.__sortProductsFreshFirst([
+            { name:'Old regular', isNew:false, firstSeenAt:0 },
+            { name:'New 10d', isNew:true, firstSeenAt:100 },
+            { name:'New today', isNew:true, firstSeenAt:200 },
+            { name:'Regular 2', isNew:false, firstSeenAt:0 }
+          ]).map(p => p.name).join('|');
+          if (fresh !== 'New today|New 10d|Old regular|Regular 2') throw new Error('freshness sort failed: ' + fresh);
+          console.log('Search and freshness tests passed');
+          JS
+          node /tmp/test-search.js
+          grep -q "20 \* 24 \* 60 \* 60 \* 1000" api/_catalog-lib.js
+          grep -q "firstSeenAt" api/_catalog-lib.js
+          grep -q "smart-search.js?v=20260817b" index.html
+
+      - name: Commit final refinement and remove installer
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/refine-search-newest.yml
+          git add smart-search.js api/_catalog-lib.js index.html
+          git commit -m 'Refine search and newest ordering'
+          git push origin HEAD:main
