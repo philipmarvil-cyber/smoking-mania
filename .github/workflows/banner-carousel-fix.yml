@@ -1,0 +1,40 @@
+name: Banner carousel fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/banner-carousel-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate banner script
+        run: node --check home-banners.js
+      - name: Bump banner script version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          old = '/home-banners.js?v=20260817a'
+          new = '/home-banners.js?v=20260817b'
+          if old not in s and new not in s:
+              raise SystemExit('home-banners script tag not found')
+          p.write_text(s.replace(old, new), encoding='utf-8')
+          PY
+      - name: Commit clean result
+        run: |
+          rm -f .github/workflows/banner-carousel-fix.yml
+          git config user.name "philipmarvil-cyber"
+          git config user.email "philipmarvil@gmail.com"
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m "Polish mobile banner carousel"
+          git push
