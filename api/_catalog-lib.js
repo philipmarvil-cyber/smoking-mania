@@ -374,27 +374,33 @@ export async function loadCatalogData() {
         // не может подставить его в <img src>, поэтому раньше вместо фото показывались
         // "битые картинки" (кубики). Отдаём фронту не сам downloadHref, а свой прокси-урл:
         // /api/product-image сам сходит в МойСклад с токеном и отдаст готовый файл.
-        const imageRow = product.images?.rows?.[0];
-        const hasPhoto = !!imageRow;
-        const miniHref = hasPhoto ? (imageRow.miniature?.downloadHref || '') : '';
+        const imageRows = product.images?.rows || [];
+        const imageCount = Number(product.images?.meta?.size) || imageRows.length;
+        const miniHrefs = imageRows
+            .map(row => row?.miniature?.downloadHref || '')
+            .filter(Boolean);
+        const hasPhoto = miniHrefs.length > 0;
+        const miniHref = hasPhoto ? miniHrefs[0] : '';
         // Оригинал сюда больше не кладём: при массовой синхронизации
         // (expand=images) МойСклад его в этом ответе не отдаёт — только
         // миниатюру. Полноразмерное фото для страницы товара теперь всегда
         // добывается отдельно, точечным запросом (см. api/product-image.js).
-        if (hasPhoto) imageHrefs[product.id] = miniHref;
+        if (hasPhoto) imageHrefs[product.id] = { mini: miniHref, minis: miniHrefs };
         // "Версия" картинки в URL: меняется сама, когда в МойСклад реально
         // заменили фото (ссылка на файл стала другой) — раньше вместо этого
         // в index.html был зашит один и тот же статичный "&v=3" на все товары
         // и на все времена, поэтому браузер/CDN у тех, кто уже открывал
         // карточку, продолжали показывать старую картинку из своего
         // 7-дневного кэша даже после замены фото в МойСклад.
-        const imgVer = shortHash(miniHref);
+        const imgVer = shortHash([product.updated || '', imageCount, ...miniHrefs].join('|'));
 
         return {
             id: product.id,
             name: product.name,
             price: (product.salePrices?.[0]?.value || 0) / 100,
             img: hasPhoto ? `/api/product-image?id=${product.id}&v=${imgVer}` : '',
+            imageCount: hasPhoto ? Math.max(1, imageCount) : 0,
+            imageVersion: imgVer,
             description: product.description || '',
             folderId,
             stock: stock === null ? null : Math.max(0, stock), // доступное количество; null = учёт остатков выключен в МойСклад

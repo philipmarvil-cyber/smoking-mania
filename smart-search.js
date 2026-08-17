@@ -307,36 +307,14 @@
             .map(item => item.prod);
     }
 
-    // applyCatalog intentionally keeps the storefront object compact and used to
-    // discard the exact first-seen timestamp. Preserve it after the normal mapping
-    // so categories can put the freshest NEW items first without touching search relevance.
-    const originalApplyCatalog = typeof window.applyCatalog === 'function' ? window.applyCatalog : null;
-    if (originalApplyCatalog) {
-        window.applyCatalog = function applyCatalogWithFreshness(data) {
-            originalApplyCatalog(data);
-            const rawById = new Map((data?.products || []).map(prod => [prod.id, prod]));
-            allProducts.forEach(prod => {
-                prod.firstSeenAt = Number(rawById.get(prod.id)?.firstSeenAt) || 0;
-            });
-            // The original applyCatalog renders once before firstSeenAt is copied.
-            // Redraw the current screen once so the user immediately gets correct ordering.
-            if (typeof currentScreen === 'function' && typeof renderScreen === 'function') {
-                renderScreen(currentScreen());
-            }
-        };
-    }
-
     const originalRenderProductCardsInto = typeof window.renderProductCardsInto === 'function'
         ? window.renderProductCardsInto
         : null;
     if (originalRenderProductCardsInto) {
         window.renderProductCardsInto = function renderProductCardsWithFreshness(container, list) {
             const id = container?.id || '';
-            const categorySearchActive = id === 'category-products-container' &&
-                !!document.getElementById('category-search-input')?.value?.trim();
             const shouldSortFresh = id === 'home-newest-container' ||
-                id === 'newest-products-container' ||
-                (id === 'category-products-container' && !categorySearchActive);
+                id === 'newest-products-container';
             return originalRenderProductCardsInto(
                 container,
                 shouldSortFresh ? sortProductsFreshFirst(list) : list
