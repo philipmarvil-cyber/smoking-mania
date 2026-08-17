@@ -158,14 +158,21 @@
         const btn = document.getElementById('sync-catalog-btn');
         const statusEl = document.getElementById('catalog-sync-status');
         btn.disabled = true;
-        btn.textContent = 'Обновляем… это может занять минуту';
+        btn.textContent = 'Обновляем каталог…';
         statusEl.textContent = '';
+        const startedAt = Date.now();
         try {
-            const res = await fetch('/api/sync-catalog');
-            const data = await res.json();
-            if (!res.ok || !data.success) throw new Error(data.error || 'Ошибка синхронизации');
+            const res = await fetch(`/api/sync-catalog?key=${encodeURIComponent(adminKey)}`, { method: 'POST' });
+            const raw = await res.text();
+            let data = null;
+            try { data = JSON.parse(raw); } catch (e) {}
+            if (!res.ok || !data?.success) {
+                if (res.status === 504) throw new Error('Vercel остановил синхронизацию по таймауту. Повторно нажимать сразу не нужно.');
+                throw new Error(data?.error || `Ошибка синхронизации (HTTP ${res.status})`);
+            }
+            const seconds = ((Number(data.durationMs) || (Date.now() - startedAt)) / 1000).toFixed(1);
             statusEl.innerHTML = `
-                ✅ Готово — товаров: <b>${data.products}</b>, категорий: <b>${data.categories}</b>,
+                ✅ Готово за <b>${seconds} сек.</b> — товаров: <b>${data.products}</b>, категорий: <b>${data.categories}</b>,
                 новых: <b>${data.newItems}</b>${data.restockedProducts ? `, снова в наличии: <b>${data.restockedProducts}</b>` : ''}
             `;
             statusEl.style.color = '#1f7a4d';

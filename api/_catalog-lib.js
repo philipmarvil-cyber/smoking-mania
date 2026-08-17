@@ -315,12 +315,30 @@ export async function refreshAllStock() {
 // сотни отдельных запросов за картинками.
 // =====================================================================
 export async function loadCatalogData() {
-    const [productRows, folderRows, stockRows, firstSeenStored] = await Promise.all([
-        fetchAllRows(`${API}/entity/product?limit=100&expand=images&filter=archived=false`),
+    // ВАЖНО: раньше здесь был expand=images. По правилам МойСклад любой
+    // список с expand ограничен 100 сущностями на страницу. На 7000+ товарах
+    // это превращалось примерно в 70 страниц только товаров и периодически
+    // упиралось в 60-секундный лимит Vercel. Сам список товаров можно получать
+    // по 1000 на страницу; поле images без expand всё равно содержит meta.size.
+    // Сами href картинок берём из прежнего KV-кэша, а для новых/изменённых
+    // товаров существующий /api/product-image лениво запросит /images один раз
+    // и закэширует результат. Так полный sync больше не тащит тысячи картинок.
+    const [productRows, folderRows, stockRows, firstSeenStored, previousCatalog, previousImageHrefsRaw] = await Promise.all([
+        fetchAllRows(`${API}/entity/product?limit=1000&filter=archived=false`),
         fetchAllRows(`${API}/entity/productfolder?limit=1000`),
         fetchAllRows(`${API}/report/stock/all?limit=1000`).catch(() => []),
-        kvGetJson(FIRST_SEEN_KEY)
+        kvGetJson(FIRST_SEEN_KEY),
+        kvGetCatalog(),
+        kvGetJson(IMAGE_HREFS_KEY)
     ]);
+
+    const previousProducts = new Map(
+        (previousCatalog?.products || []).map(product => [product.id, product])
+    );
+    const previousImageHrefs = previousImageHrefsRaw && typeof previousImageHrefsRaw === 'object'
+        ? previousImageHrefsRaw
+        : {};
+    const previousSyncedAt = Number(previousCatalog?.syncedAt) || 0;
 
     // Товары скрытых категорий (HIDDEN_CATEGORY_NAMES, любая глубина
     // вложенности) исключаем целиком, ещё до всего остального — чтобы они
@@ -328,10 +346,6 @@ export async function loadCatalogData() {
     const hiddenFolderIds = getHiddenFolderIds(folderRows);
     const visibleProductRows = productRows.filter(p => {
         const folderId = extractId(p.productFolder?.meta?.href);
-        // Товар без назначенной категории раньше всё равно попадал в
-        // allProducts на фронте — не виден ни в одной категории, но
-        // "протекал" в "Новинки" на главной и в поиск. Пока в МойСклад не
-        // назначена категория — товар в боте вообще не должен появляться.
         if (!folderId) return false;
         return !hiddenFolderIds.has(folderId);
     });
@@ -339,11 +353,6 @@ export async function loadCatalogData() {
     const stockById = {};
     stockRows.forEach(row => {
         const id = extractId(row.meta?.href);
-        // "quantity" в отчёте МойСклад — это уже ДОСТУПНОЕ количество
-        // (остаток − резерв + ожидание), а не просто физический остаток.
-        // Именно оно должно определять "нет в наличии" на витрине —
-        // иначе зарезервированный при заказе товар продолжал бы выглядеть
-        // доступным, пока склад физически его не спишет.
         if (id) stockById[id] = row.quantity ?? row.stock ?? 0;
     });
     const stockReportHasData = stockRows.length > 0;
@@ -354,8 +363,6 @@ export async function loadCatalogData() {
     const updatedFirstSeen = {};
     const imageHrefs = {};
 
-    // Компактный формат: только те поля, которые реально использует фронтенд.
-    // Полные объекты МойСклад весят в ~20 раз больше и тормозят загрузку.
     const products = visibleProductRows.map(product => {
         const folderId = extractId(product.productFolder?.meta?.href);
         const stock = stockById.hasOwnProperty(product.id)
@@ -370,40 +377,44 @@ export async function loadCatalogData() {
         }
         updatedFirstSeen[product.id] = seenAt;
 
-        // ВАЖНО: downloadHref из МойСклад требует заголовок Authorization — браузер
-        // не может подставить его в <img src>, поэтому раньше вместо фото показывались
-        // "битые картинки" (кубики). Отдаём фронту не сам downloadHref, а свой прокси-урл:
-        // /api/product-image сам сходит в МойСклад с токеном и отдаст готовый файл.
-        const imageRows = product.images?.rows || [];
-        const imageCount = Number(product.images?.meta?.size) || imageRows.length;
-        const miniHrefs = imageRows
-            .map(row => row?.miniature?.downloadHref || '')
-            .filter(Boolean);
-        const hasPhoto = miniHrefs.length > 0;
-        const miniHref = hasPhoto ? miniHrefs[0] : '';
-        // Оригинал сюда больше не кладём: при массовой синхронизации
-        // (expand=images) МойСклад его в этом ответе не отдаёт — только
-        // миниатюру. Полноразмерное фото для страницы товара теперь всегда
-        // добывается отдельно, точечным запросом (см. api/product-image.js).
-        if (hasPhoto) imageHrefs[product.id] = { mini: miniHref, minis: miniHrefs };
-        // "Версия" картинки в URL: меняется сама, когда в МойСклад реально
-        // заменили фото (ссылка на файл стала другой) — раньше вместо этого
-        // в index.html был зашит один и тот же статичный "&v=3" на все товары
-        // и на все времена, поэтому браузер/CDN у тех, кто уже открывал
-        // карточку, продолжали показывать старую картинку из своего
-        // 7-дневного кэша даже после замены фото в МойСклад.
-        const imgVer = shortHash([product.updated || '', imageCount, ...miniHrefs].join('|'));
+        const previous = previousProducts.get(product.id);
+        const metaImageSize = Number(product.images?.meta?.size);
+        const previousImageCount = Number(previous?.imageCount) || (previous?.img ? 1 : 0);
+        const imageCount = Number.isFinite(metaImageSize)
+            ? Math.max(0, metaImageSize)
+            : previousImageCount;
+
+        // Если сущность товара менялась после последней успешной синхронизации,
+        // не доверяем старому href изображения: просто выкидываем его из общей
+        // карты. При первом показе /api/product-image безопасно получит свежий
+        // /images и положит его в 7-дневный точечный кэш. Это также покрывает
+        // замену/добавление/удаление фотографий без массовых image-запросов.
+        const updatedAt = Date.parse(String(product.updated || '').replace(' ', 'T'));
+        const changedSinceLastSync = !previous ||
+            imageCount !== previousImageCount ||
+            (previousSyncedAt > 0 && Number.isFinite(updatedAt) && updatedAt > previousSyncedAt);
+
+        if (imageCount > 0 && !changedSinceLastSync && previousImageHrefs[product.id]) {
+            imageHrefs[product.id] = previousImageHrefs[product.id];
+        }
+
+        const hasPhoto = imageCount > 0;
+        const imgVer = hasPhoto
+            ? (changedSinceLastSync
+                ? shortHash([product.updated || '', imageCount].join('|'))
+                : (previous?.imageVersion || shortHash([product.updated || '', imageCount].join('|'))))
+            : '0';
 
         return {
             id: product.id,
             name: product.name,
             price: (product.salePrices?.[0]?.value || 0) / 100,
             img: hasPhoto ? `/api/product-image?id=${product.id}&v=${imgVer}` : '',
-            imageCount: hasPhoto ? Math.max(1, imageCount) : 0,
+            imageCount: hasPhoto ? imageCount : 0,
             imageVersion: imgVer,
             description: product.description || '',
             folderId,
-            stock: stock === null ? null : Math.max(0, stock), // доступное количество; null = учёт остатков выключен в МойСклад
+            stock: stock === null ? null : Math.max(0, stock),
             outOfStock: stock === null ? false : stock <= 0,
             isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS,
             firstSeenAt: seenAt === BASELINE ? 0 : seenAt
@@ -411,11 +422,8 @@ export async function loadCatalogData() {
     });
 
     await kvSetJson(FIRST_SEEN_KEY, updatedFirstSeen);
-    // Ссылки на картинки уже пришли вместе с товарами (expand=images) — сохраняем
-    // их все ОДНИМ запросом в KV. Это значит, что /api/product-image почти никогда
-    // не должен сам ходить в МойСклад за ссылкой — только доставать готовую отсюда.
-    // Раньше он делал это поштучно "по требованию" для каждого товара, и именно
-    // всплеск таких запросов (GET .../images) привёл к ограничению доступа к API.
+    // Оставляем только заведомо свежие старые href. Новые/изменённые картинки
+    // лениво попадут в точечный 7-дневный кэш product-image.js.
     await kvSetJson(IMAGE_HREFS_KEY, imageHrefs);
 
     const categories = buildCategoryTree(folderRows);
