@@ -58,7 +58,14 @@ async function handlePost(req, res) {
             color2: String(b.color2 || '#5a2530').slice(0, 20),
             imageUrl: String(b.imageUrl || '').slice(0, 900000), // с запасом под data:-URL загруженной картинки (обычная ссылка тоже поместится)
             buttonText: String(b.buttonText || '').slice(0, 40),
-            buttonLink: String(b.buttonLink || '').slice(0, 500)
+            buttonLink: String(b.buttonLink || '').slice(0, 500),
+            enabled: b.enabled !== false,
+            badge: String(b.badge || '').slice(0, 40),
+            textTheme: b.textTheme === 'dark' ? 'dark' : 'light',
+            align: b.align === 'center' ? 'center' : 'left',
+            height: ['compact', 'regular', 'large'].includes(b.height) ? b.height : 'regular',
+            overlay: Math.max(0, Math.min(0.75, Number(b.overlay) || 0)),
+            backgroundPosition: ['left', 'center', 'right'].includes(b.backgroundPosition) ? b.backgroundPosition : 'center'
         }));
         await kvSetJson(BANNERS_KEY, cleaned);
         res.status(200).json({ success: true, banners: cleaned });

@@ -38,7 +38,7 @@ async function handleGet(req, res) {
         }
 
         if (view === 'user') {
-            const detail = await getAdminUserDetail(req.query?.userId);
+            const detail = await getAdminUserDetail(req.query?.userId, log);
             if (!detail) {
                 res.status(400).json({ success: false, error: 'Некорректный пользователь' });
                 return;

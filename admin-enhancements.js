@@ -65,6 +65,11 @@
             .user-right { text-align:right; }
             .user-orders-count { font-size:13px; font-weight:750; }
             .user-spent { color:#2f8f4e; font-size:11.8px; margin-top:3px; font-weight:650; }
+            .user-waiting { color:#9a6400; font-size:11.5px; margin-top:4px; font-weight:700; }
+            .waiting-detail-card { background:#fff8eb; border:1px solid #f4e1bb; border-radius:15px; padding:14px; margin-bottom:12px; }
+            .waiting-detail-title { font-size:14px; font-weight:800; margin-bottom:9px; }
+            .waiting-detail-item { background:#fff; border-radius:10px; padding:9px 10px; font-size:12.5px; font-weight:650; margin-top:6px; }
+            .waiting-detail-item small { display:block; color:#9a9a9e; font-weight:500; margin-top:3px; }
             .user-empty { background:#fff; border-radius:15px; padding:38px 18px; color:#8e8e93; text-align:center; }
             .user-drawer-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.28); z-index:9998; display:flex; justify-content:flex-end; }
             .user-drawer { width:min(520px,100%); height:100%; background:#f4f4f6; overflow-y:auto; padding:20px 16px 50px; box-shadow:-10px 0 30px rgba(0,0,0,.12); animation:drawerIn .2s ease-out; }
@@ -122,7 +127,7 @@
                 <div class="admin-stat"><div class="admin-stat-value" id="stat-users">—</div><div class="admin-stat-label">Пользователей</div></div>
                 <div class="admin-stat"><div class="admin-stat-value" id="stat-buyers">—</div><div class="admin-stat-label">Покупателей</div></div>
                 <div class="admin-stat"><div class="admin-stat-value" id="stat-orders">—</div><div class="admin-stat-label">Заказов в истории</div></div>
-                <div class="admin-stat"><div class="admin-stat-value" id="stat-revenue">—</div><div class="admin-stat-label">Известная сумма заказов</div></div>
+                <div class="admin-stat"><div class="admin-stat-value" id="stat-waiting">—</div><div class="admin-stat-label">Ждут поступления</div></div>
             `;
             tabs.parentNode.insertBefore(overview, tabs);
         }
@@ -189,7 +194,7 @@
         set('stat-users', Number(stats.totalUsers || 0).toLocaleString('ru-RU'));
         set('stat-buyers', Number(stats.buyers || 0).toLocaleString('ru-RU'));
         set('stat-orders', Number(stats.totalOrders || 0).toLocaleString('ru-RU'));
-        set('stat-revenue', money(stats.knownRevenue || 0));
+        set('stat-waiting', Number(stats.waitingUsers || 0).toLocaleString('ru-RU'));
     }
 
     async function loadUsers(force) {
@@ -250,6 +255,7 @@
                     <div class="user-right">
                         <div class="user-orders-count">${orderCount} ${orderCount === 1 ? 'заказ' : 'заказов'}</div>
                         <div class="user-spent">${Number(user.totalSpent) > 0 ? money(user.totalSpent) : (orderCount ? 'сумма по клику' : 'без покупок')}</div>
+                        ${Number(user.waitingCount) > 0 ? `<div class="user-waiting">Ждёт: ${Number(user.waitingCount)} тов.</div>` : ''}
                     </div>
                 </div>
             `;
@@ -283,18 +289,21 @@
             const response = await fetch(`/api/notify-log?key=${encodeURIComponent(key)}&view=user&userId=${encodeURIComponent(id)}`, { cache: 'no-store' });
             const data = await response.json();
             if (!response.ok || !data.success) throw new Error(data.error || 'Не удалось загрузить пользователя');
-            renderUserDetail(data.profile || {}, data.orders || []);
+            renderUserDetail(data.profile || {}, data.orders || [], data.waitingItems || []);
         } catch (e) {
             const content = document.getElementById('user-drawer-content');
             if (content) content.innerHTML = `<div class="drawer-loading">${esc(e.message || 'Ошибка загрузки')}</div>`;
         }
     }
 
-    function renderUserDetail(profile, orders) {
+    function renderUserDetail(profile, orders, waitingItems = []) {
         const content = document.getElementById('user-drawer-content');
         if (!content) return;
         const photoStyle = profile.photoUrl ? `style="background-image:url('${esc(profile.photoUrl).replace(/'/g, '%27')}')"` : '';
         const totalSpent = orders.length ? orders.reduce((sum, order) => sum + (Number(order.sum) || 0), 0) : Number(profile.totalSpent) || 0;
+        const waitingHtml = waitingItems.length ? waitingItems.map(item => `
+            <div class="waiting-detail-item">${esc(item.productName || item.productId)}<small>Нажал «Уведомить»: ${esc(formatDate(item.at))}</small></div>
+        `).join('') : '<div class="waiting-empty">Сейчас ничего не ожидает.</div>';
         const ordersHtml = orders.length ? orders.map((order, orderIndex) => {
             const positions = Array.isArray(order.positions) ? order.positions : [];
             const positionsHtml = positions.length ? positions.map(item => `
@@ -329,6 +338,7 @@
                     <div class="profile-cell"><div class="profile-cell-label">Куплено на сумму</div><div class="profile-cell-value">${money(totalSpent)}</div></div>
                 </div>
             </div>
+            <div class="waiting-detail-card"><div class="waiting-detail-title">Ожидает поступления · ${waitingItems.length}</div>${waitingHtml}</div>
             <div class="orders-heading">История покупок</div>
             ${ordersHtml}
         `;

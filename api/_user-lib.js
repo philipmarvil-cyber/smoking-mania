@@ -137,6 +137,41 @@ export async function recordTelegramOrder(userInput = {}, order = {}, items = []
     return true;
 }
 
+async function buildActiveWaitingMap(notifyEntries = [], onlyUserId = '') {
+    const entries = (notifyEntries || []).filter(entry => {
+        const id = cleanUserId(entry?.telegramUserId);
+        const productId = String(entry?.productId || '').trim();
+        return id && productId && (!onlyUserId || id === onlyUserId);
+    });
+    if (!entries.length) return new Map();
+
+    const productIds = [...new Set(entries.map(entry => String(entry.productId)))];
+    const subsLists = await mgetJson(productIds.map(productId => `restock:${productId}`));
+    const activeByProduct = new Map(productIds.map((productId, index) => [
+        productId,
+        new Set((Array.isArray(subsLists[index]) ? subsLists[index] : []).map(value => String(value)))
+    ]));
+
+    const byUser = new Map();
+    const seen = new Set();
+    // Журнал хранится от новых к старым, поэтому при дубле оставляем свежую запись.
+    for (const entry of entries) {
+        const id = cleanUserId(entry.telegramUserId);
+        const productId = String(entry.productId);
+        if (!activeByProduct.get(productId)?.has(id)) continue;
+        const dedupeKey = `${id}:${productId}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        if (!byUser.has(id)) byUser.set(id, []);
+        byUser.get(id).push({
+            productId,
+            productName: String(entry.productName || productId),
+            at: Number(entry.at) || 0
+        });
+    }
+    return byUser;
+}
+
 function normalizeFallbackProfile(id, notifyById, legacyOrderCount) {
     const n = notifyById.get(id) || {};
     return {
@@ -169,19 +204,23 @@ export async function getAdminUsers(notifyEntries = []) {
     }
 
     const idList = [...ids].filter(cleanUserId);
-    const [profiles, legacyLists] = await Promise.all([
+    const [profiles, legacyLists, waitingByUser] = await Promise.all([
         mgetJson(idList.map(id => USER_PROFILE_PREFIX + id)),
-        mgetJson(idList.map(id => LEGACY_ORDERS_PREFIX + id))
+        mgetJson(idList.map(id => LEGACY_ORDERS_PREFIX + id)),
+        buildActiveWaitingMap(notifyEntries)
     ]);
 
     const users = idList.map((id, i) => {
         const legacyIds = Array.isArray(legacyLists[i]) ? legacyLists[i] : [];
         const p = profiles[i] || normalizeFallbackProfile(id, notifyById, legacyIds.length);
+        const waitingItems = waitingByUser.get(id) || [];
         return {
             ...p,
             id,
             totalOrders: Math.max(Number(p.totalOrders) || 0, legacyIds.length),
-            hasLegacyOrders: legacyIds.length > 0
+            hasLegacyOrders: legacyIds.length > 0,
+            waitingItems,
+            waitingCount: waitingItems.length
         };
     }).sort((a, b) => (Number(b.lastSeenAt) || Number(b.firstSeenAt) || 0) - (Number(a.lastSeenAt) || Number(a.firstSeenAt) || 0));
 
@@ -191,7 +230,9 @@ export async function getAdminUsers(notifyEntries = []) {
             totalUsers: users.length,
             buyers: users.filter(u => Number(u.totalOrders) > 0).length,
             totalOrders: users.reduce((sum, u) => sum + (Number(u.totalOrders) || 0), 0),
-            knownRevenue: users.reduce((sum, u) => sum + (Number(u.totalSpent) || 0), 0)
+            knownRevenue: users.reduce((sum, u) => sum + (Number(u.totalSpent) || 0), 0),
+            waitingUsers: users.filter(u => Number(u.waitingCount) > 0).length,
+            waitingRequests: users.reduce((sum, u) => sum + (Number(u.waitingCount) || 0), 0)
         }
     };
 }
@@ -218,11 +259,12 @@ function readDescriptionField(description, label) {
     return line ? line.slice(line.indexOf(':') + 1).trim() : '';
 }
 
-export async function getAdminUserDetail(rawId) {
+export async function getAdminUserDetail(rawId, notifyEntries = []) {
     const id = cleanUserId(rawId);
     if (!id) return null;
 
     let profile = (await kvGetJson(USER_PROFILE_PREFIX + id)) || normalizeFallbackProfile(id, new Map(), 0);
+    const waitingItems = (await buildActiveWaitingMap(notifyEntries, id)).get(id) || [];
     const newIds = (await redis(['ZRANGE', USER_ORDERS_PREFIX + id, '0', '49', 'REV'])) || [];
     const legacyIds = (await kvGetJson(LEGACY_ORDERS_PREFIX + id)) || [];
     const orderIds = [...new Set([...newIds, ...(Array.isArray(legacyIds) ? legacyIds : [])])].slice(0, 30);
@@ -256,6 +298,7 @@ export async function getAdminUserDetail(rawId) {
             totalOrders: orders.length || Number(profile.totalOrders) || 0,
             totalSpent: orders.length ? orders.reduce((sum, o) => sum + (Number(o.sum) || 0), 0) : Number(profile.totalSpent) || 0
         },
-        orders
+        orders,
+        waitingItems
     };
 }
