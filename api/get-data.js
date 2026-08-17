@@ -1,7 +1,6 @@
-// Отдаёт каталог фронтенду. Читает В ОСНОВНОМ из KV — в МойСклад по-крупному
-// не ходит, сколько бы пользователей ни открыло бота одновременно.
-// Единственное исключение: KV пустой (самый первый запуск) — тогда один раз
-// грузим каталог напрямую, чтобы бот не встречал пользователей пустым экраном.
+// Отдаёт каталог фронтенду. Обычная загрузка читает готовый каталог из KV
+// и НЕ ждёт живого запроса к МойСклад. Обновление остатков запускается
+// отдельно через ?refresh=1 уже после первого рендера интерфейса.
 import { kvGetCatalog, kvSetCatalog, loadCatalogData, refreshAllStock } from './_catalog-lib.js';
 
 export default async function handler(req, res) {
@@ -10,28 +9,28 @@ export default async function handler(req, res) {
         let isColdStart = false;
 
         if (!catalog) {
-            // Холодный старт: кэша ещё нет. Грузим один раз и сохраняем.
+            // Холодный старт: кэша ещё нет. Только в этом редком случае нужна
+            // тяжёлая загрузка из МойСклад до ответа пользователю.
             isColdStart = true;
             catalog = await loadCatalogData();
             await kvSetCatalog({ ...catalog, syncedAt: Date.now() });
         }
 
-        if (!isColdStart) {
-            // Не полагаемся только на вебхук из МойСклад — он не всегда
-            // присылается (например, при перемещении заказа в Корзину вместо
-            // окончательного удаления МойСклад в части случаев вообще не шлёт
-            // событие). Поэтому здесь же, при обычной загрузке каталога,
-            // тоже пробуем обновить остатки. Внутри уже стоит защита "не чаще
-            // раза в 3 минуты", так что это не создаёт лишней нагрузки —
-            // подавляющее большинство запросов эту проверку проходят мгновенно.
+        // Важно для скорости: обычный /api/get-data сразу отдаёт KV.
+        // Клиент вызывает refresh=1 уже после того, как каталог показан.
+        // refreshAllStock сам защищён 3-минутным cooldown, так что несколько
+        // пользователей не создадут шквал запросов к МойСклад.
+        if (!isColdStart && req.query.refresh === '1') {
             const refreshed = await refreshAllStock().catch(() => false);
             if (refreshed) catalog = await kvGetCatalog();
         }
 
-        // Кэш на CDN Vercel: короткий, чтобы после заказа (списание остатка
-        // в create-order.js) все пользователи увидели актуальный остаток
-        // почти мгновенно — а не только через 5 минут/час, как было раньше.
-        res.setHeader('Cache-Control', 'public, s-maxage=10, stale-while-revalidate=30');
+        res.setHeader(
+            'Cache-Control',
+            req.query.refresh === '1'
+                ? 'no-store'
+                : 'public, max-age=15, s-maxage=30, stale-while-revalidate=120'
+        );
         res.status(200).json({
             products: catalog.products || [],
             categories: catalog.categories || []
