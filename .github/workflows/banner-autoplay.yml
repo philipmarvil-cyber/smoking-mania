@@ -1,0 +1,36 @@
+name: Banner autoplay
+on:
+  push:
+    paths:
+      - '.github/workflows/banner-autoplay.yml'
+permissions:
+  contents: write
+jobs:
+  autoplay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate banner script
+        run: node --check home-banners.js
+      - name: Bump banner version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          old = '/home-banners.js?v=20260817b'
+          new = '/home-banners.js?v=20260817c'
+          if old not in s:
+              raise SystemExit('old banner version not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+          grep -F '/home-banners.js?v=20260817c' index.html
+      - name: Commit clean result
+        run: |
+          rm -f .github/workflows/banner-autoplay.yml
+          git config user.name "philipmarvil-cyber"
+          git config user.email "philipmarvil@gmail.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Enable automatic banner rotation"
+          git push
