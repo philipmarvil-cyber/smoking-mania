@@ -26,9 +26,47 @@
         const style = document.createElement('style');
         style.id = 'home-banners-modern-style';
         style.textContent = `
-            .banners-viewport { padding:12px 12px 14px !important; }
-            .banners-strip { align-items:stretch; }
-            .banner.hero-banner { margin:0 !important; border-radius:20px !important; padding:0 !important; min-height:176px; position:relative; overflow:hidden; background-size:cover !important; background-position:center; isolation:isolate; display:flex; box-shadow:0 7px 20px rgba(45,28,31,.12); border:1px solid rgba(255,255,255,.18); }
+            /*
+             * Геометрия карусели намеренно устроена так, чтобы внешний размер
+             * КАЖДОГО слайда был ровно 100% viewport. Раньше боковой padding был
+             * у самого viewport, а setupBannerCarousel считал шаг через
+             * viewport.clientWidth — на iOS это давало разницу между шириной
+             * баннера и шагом transform, из-за чего соседний слайд выглядывал.
+             *
+             * Теперь viewport не имеет горизонтального padding. У карточки
+             * ширина calc(100% - 12px) + по 6px margin с каждой стороны = ровно
+             * 100%. Поэтому свайп снова попадает пиксель-в-пиксель, а между
+             * баннерами во время жеста остаётся аккуратный зазор 12px.
+             */
+            .banners-viewport {
+                padding:12px 0 14px !important;
+                margin:0 6px !important;
+                overflow:hidden !important;
+                box-sizing:border-box !important;
+            }
+            .banners-strip {
+                align-items:stretch;
+                width:100% !important;
+                gap:0 !important;
+            }
+            .banner.hero-banner {
+                flex:0 0 calc(100% - 12px) !important;
+                width:calc(100% - 12px) !important;
+                min-width:calc(100% - 12px) !important;
+                margin:0 6px !important;
+                box-sizing:border-box !important;
+                border-radius:20px !important;
+                padding:0 !important;
+                min-height:176px;
+                position:relative;
+                overflow:hidden;
+                background-size:cover !important;
+                background-position:center;
+                isolation:isolate;
+                display:flex;
+                box-shadow:0 7px 20px rgba(45,28,31,.10);
+                border:1px solid rgba(255,255,255,.14);
+            }
             .banner.hero-banner::before { content:''; position:absolute; inset:0; z-index:-1; background:var(--hero-overlay,rgba(0,0,0,.28)); }
             .banner.hero-banner.dark-text::before { background:var(--hero-overlay-light,rgba(255,255,255,.34)); }
             .hero-banner.compact { min-height:138px; }
