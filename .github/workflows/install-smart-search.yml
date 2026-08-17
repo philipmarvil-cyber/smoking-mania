@@ -1,0 +1,84 @@
+name: Install smart product search
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'smart-search.js'
+      - '.github/workflows/install-smart-search.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate smart search
+        shell: bash
+        run: |
+          node --check smart-search.js
+          cat > /tmp/test-smart-search.js <<'JS'
+          global.window = global;
+          global.document = { getElementById() { return null; } };
+          global.renderProductCardsInto = () => {};
+          global.allProducts = [];
+          global.categoryPageDefaultList = [];
+          require(process.cwd() + '/smart-search.js');
+          const products = [
+            { name:'Marlboro Gold', description:'Сигареты классические золотые' },
+            { name:'Marlboro Touch Blue', description:'Синие сигареты' },
+            { name:'Kent Blue', description:'Сигареты синие' },
+            { name:'HQD Cuvie Plus Mango', description:'Одноразовая электронная сигарета манго' },
+            { name:'Жидкость Brusko Mint', description:'Мятная жидкость' }
+          ];
+          const expectFirst = (q, name) => {
+            const got = global.__smartProductSearch(products, q)[0]?.name;
+            if (got !== name) throw new Error(`${q}: expected ${name}, got ${got}`);
+          };
+          expectFirst('marlboro', 'Marlboro Gold');
+          expectFirst('malboro', 'Marlboro Gold');
+          expectFirst('малборо', 'Marlboro Gold');
+          expectFirst('мальборо', 'Marlboro Gold');
+          expectFirst('ьфкдищкщ', 'Marlboro Gold');
+          expectFirst('gold marlboro', 'Marlboro Gold');
+          expectFirst('кент синий', 'Kent Blue');
+          expectFirst('жижа mint', 'Жидкость Brusko Mint');
+          expectFirst('одноразка mango', 'HQD Cuvie Plus Mango');
+          console.log('Smart search tests passed');
+          JS
+          node /tmp/test-smart-search.js
+
+      - name: Connect smart search to storefront
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('index.html')
+          text = path.read_text(encoding='utf-8')
+          tag = '    <script src="/smart-search.js?v=20260817"></script>'
+          if tag not in text:
+              if '</body>' not in text:
+                  raise SystemExit('Could not find </body> in index.html')
+              text = text.replace('</body>', tag + '\n</body>', 1)
+              path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Commit storefront connection
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          if git diff --cached --quiet; then
+            echo 'index.html already connected; nothing to commit.'
+            exit 0
+          fi
+          git commit -m 'Connect smart product search'
+          git push origin HEAD:main
