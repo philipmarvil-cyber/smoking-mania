@@ -274,4 +274,35 @@
             if (prod) discoverGallery(prod, id);
         };
     }
+
+    // Реестр пользователей для админ-панели. Не трогаем МойСклад: это один
+    // маленький POST в KV максимум раз в 6 часов с данного устройства.
+    function touchTelegramUserForAdmin() {
+        const webApp = window.Telegram?.WebApp;
+        const user = webApp?.initDataUnsafe?.user;
+        if (!user?.id) return;
+        const storageKey = `admin_user_touch_v1:${user.id}`;
+        const now = Date.now();
+        const last = Number(localStorage.getItem(storageKey)) || 0;
+        if (now - last < 6 * 60 * 60 * 1000) return;
+        localStorage.setItem(storageKey, String(now));
+        fetch('/api/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'touch-user',
+                user: {
+                    id: user.id,
+                    firstName: user.first_name || '',
+                    lastName: user.last_name || '',
+                    username: user.username || '',
+                    photoUrl: user.photo_url || ''
+                }
+            })
+        }).then(response => {
+            if (!response.ok) localStorage.removeItem(storageKey);
+        }).catch(() => localStorage.removeItem(storageKey));
+    }
+    setTimeout(touchTelegramUserForAdmin, 250);
+
 })();

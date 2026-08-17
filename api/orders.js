@@ -11,6 +11,7 @@
 // 2. запись в KV orders-by-user:{telegramUserId} — сохраняется в
 //    /api/create-order при оформлении, переживает смену устройства.
 import { API, fetchJson, kvGetJson, colorToHex } from './_catalog-lib.js';
+import { registerTelegramUser } from './_user-lib.js';
 
 async function handleOrderDetail(id, res) {
     const order = await fetchJson(`${API}/entity/customerorder/${id}?expand=state,positions.assortment`);
@@ -72,7 +73,16 @@ export default async function handler(req, res) {
     }
 
     try {
-        const { id, ids, telegramUserId } = req.body || {};
+        const { id, ids, telegramUserId, action, user } = req.body || {};
+        if (action === 'touch-user') {
+            const profile = await registerTelegramUser(user || {});
+            if (!profile) {
+                res.status(400).json({ success: false, error: 'Некорректный Telegram user' });
+                return;
+            }
+            res.status(200).json({ success: true });
+            return;
+        }
         if (id) {
             await handleOrderDetail(id, res);
         } else {

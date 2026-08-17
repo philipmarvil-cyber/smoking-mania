@@ -9,6 +9,7 @@
 // наглухо закрыт (не отдаёт данные вообще никому), чтобы по ошибке не
 // выложить список покупателей в открытый доступ.
 import { kvGetJson, kvSetJson, ADMIN_CHAT_ID_KEY, ADMIN_CHAT_IDS_KEY, ADMIN_PENDING_USERNAMES_KEY, ADMIN_TELEGRAM_USERNAME } from './_catalog-lib.js';
+import { getAdminUsers, getAdminUserDetail } from './_user-lib.js';
 
 const LOG_KEY = 'notify-subs:v1';
 
@@ -28,6 +29,24 @@ async function getAdminsState() {
 async function handleGet(req, res) {
     try {
         const log = (await kvGetJson(LOG_KEY)) || [];
+        const view = String(req.query?.view || '');
+
+        if (view === 'users') {
+            const result = await getAdminUsers(log);
+            res.status(200).json({ success: true, ...result });
+            return;
+        }
+
+        if (view === 'user') {
+            const detail = await getAdminUserDetail(req.query?.userId);
+            if (!detail) {
+                res.status(400).json({ success: false, error: 'Некорректный пользователь' });
+                return;
+            }
+            res.status(200).json({ success: true, ...detail });
+            return;
+        }
+
         const { admins, pending } = await getAdminsState();
         res.status(200).json({ success: true, entries: log, adminConnected: admins.length > 0, admins, pending });
     } catch (e) {

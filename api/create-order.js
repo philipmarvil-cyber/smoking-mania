@@ -1,6 +1,7 @@
 // Создание заказа покупателя в МойСклад из корзины бота.
 // Все запросы идут через fetchJson с троттлингом и ретраями на 429.
 import { API, fetchJson, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, getLiveStock, sendToAdminsForType } from './_catalog-lib.js';
+import { recordTelegramOrder } from './_user-lib.js';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -184,6 +185,22 @@ export default async function handler(req, res) {
             const existing = (await kvGetJson(key)) || [];
             const updated = [order.id, ...existing.filter(id => id !== order.id)].slice(0, 30);
             await kvSetJson(key, updated);
+        }
+
+        // Сохраняем компактный снимок заказа для админ-панели. Это позволяет
+        // смотреть историю покупок из KV, не дёргая МойСклад при каждом открытии
+        // карточки пользователя. Старые заказы при необходимости подгрузятся
+        // отдельно только для выбранного пользователя.
+        if (telegramUserId) {
+            try {
+                await recordTelegramOrder(
+                    { id: telegramUserId, phone: cleanPhone },
+                    { id: order.id, name: order.name, moment: order.moment },
+                    items
+                );
+            } catch (e) {
+                // Заказ уже создан — ошибка аналитического кэша не должна его ломать.
+            }
         }
 
         // Уведомление админу в Telegram о новом заказе — не полагаемся на то, что
