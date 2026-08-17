@@ -1,4 +1,4 @@
-name: Storefront performance and gallery improvements
+name: Storefront polish
 
 on:
   push:
@@ -10,56 +10,53 @@ permissions:
   contents: write
 
 jobs:
-  improve:
+  polish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Apply focused storefront improvements
+      - name: Patch large storefront files
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
-          # 1) Keep freshness ordering ONLY in New items, not ordinary categories.
-          search = Path('smart-search.js')
-          s = search.read_text(encoding='utf-8')
-          old = """            const categorySearchActive = id === 'category-products-container' &&
+          # smart-search.js: freshness ordering belongs only to New items.
+          p = Path('smart-search.js')
+          s = p.read_text(encoding='utf-8')
+          start_marker = '    // applyCatalog intentionally keeps the storefront object compact'
+          end_marker = '    const originalRenderProductCardsInto ='
+          if start_marker in s:
+              start = s.index(start_marker)
+              end = s.index(end_marker, start)
+              s = s[:start] + s[end:]
+
+          old_sort = """            const categorySearchActive = id === 'category-products-container' &&
                 !!document.getElementById('category-search-input')?.value?.trim();
             const shouldSortFresh = id === 'home-newest-container' ||
                 id === 'newest-products-container' ||
                 (id === 'category-products-container' && !categorySearchActive);
 """
-          new = """            const shouldSortFresh = id === 'home-newest-container' ||
+          new_sort = """            const shouldSortFresh = id === 'home-newest-container' ||
                 id === 'newest-products-container';
 """
-          if old in s:
-              s = s.replace(old, new, 1)
+          if old_sort in s:
+              s = s.replace(old_sort, new_sort, 1)
           elif "(id === 'category-products-container' && !categorySearchActive)" in s:
-              raise SystemExit('Could not update freshness scope safely')
+              raise SystemExit('smart-search freshness patch failed')
+          p.write_text(s, encoding='utf-8')
 
-          # firstSeenAt is now preserved by the main catalog mapper, so remove the
-          # old double-render wrapper that was making every catalog refresh render twice.
-          s = re.sub(
-              r"\n    // applyCatalog intentionally keeps.*?\n    const originalRenderProductCardsInto =",
-              "\n    const originalRenderProductCardsInto =",
-              s,
-              count=1,
-              flags=re.S,
-          )
-          search.write_text(s, encoding='utf-8')
-
-          # 2) Catalog: 20-day NEW already exists; now expose image count/version.
-          cat = Path('api/_catalog-lib.js')
-          c = cat.read_text(encoding='utf-8')
-          old_img = """        const imageRow = product.images?.rows?.[0];
+          # api/_catalog-lib.js: keep all image metadata in the scheduled sync,
+          # so ordinary browsing does not create metadata calls to MoySklad.
+          p = Path('api/_catalog-lib.js')
+          s = p.read_text(encoding='utf-8')
+          old = """        const imageRow = product.images?.rows?.[0];
         const hasPhoto = !!imageRow;
         const miniHref = hasPhoto ? (imageRow.miniature?.downloadHref || '') : '';
 """
-          new_img = """        const imageRows = product.images?.rows || [];
+          new = """        const imageRows = product.images?.rows || [];
         const imageCount = Number(product.images?.meta?.size) || imageRows.length;
         const miniHrefs = imageRows
             .map(row => row?.miniature?.downloadHref || '')
@@ -67,86 +64,84 @@ jobs:
         const hasPhoto = miniHrefs.length > 0;
         const miniHref = hasPhoto ? miniHrefs[0] : '';
 """
-          if old_img in c:
-              c = c.replace(old_img, new_img, 1)
-          elif 'const imageCount = Number(product.images?.meta?.size)' not in c:
-              raise SystemExit('Catalog image mapping pattern not found')
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif 'const imageCount = Number(product.images?.meta?.size)' not in s:
+              raise SystemExit('catalog image block patch failed')
 
-          old_map = "if (hasPhoto) imageHrefs[product.id] = miniHref;"
-          new_map = "if (hasPhoto) imageHrefs[product.id] = { mini: miniHref, minis: miniHrefs };"
-          if old_map in c:
-              c = c.replace(old_map, new_map, 1)
+          s = s.replace(
+              'if (hasPhoto) imageHrefs[product.id] = miniHref;',
+              'if (hasPhoto) imageHrefs[product.id] = { mini: miniHref, minis: miniHrefs };',
+              1
+          )
+          old = 'const imgVer = shortHash(miniHref);'
+          new = "const imgVer = shortHash([product.updated || '', imageCount, ...miniHrefs].join('|'));"
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('catalog image version patch failed')
 
-          old_ver = "const imgVer = shortHash(miniHref);"
-          new_ver = "const imgVer = shortHash([product.updated || '', imageCount, ...miniHrefs].join('|'));"
-          if old_ver in c:
-              c = c.replace(old_ver, new_ver, 1)
-          elif new_ver not in c:
-              raise SystemExit('Image version pattern not found')
-
-          old_return = """            img: hasPhoto ? `/api/product-image?id=${product.id}&v=${imgVer}` : '',
+          old = """            img: hasPhoto ? `/api/product-image?id=${product.id}&v=${imgVer}` : '',
             description: product.description || '',
 """
-          new_return = """            img: hasPhoto ? `/api/product-image?id=${product.id}&v=${imgVer}` : '',
+          new = """            img: hasPhoto ? `/api/product-image?id=${product.id}&v=${imgVer}` : '',
             imageCount: hasPhoto ? Math.max(1, imageCount) : 0,
             imageVersion: imgVer,
             description: product.description || '',
 """
-          if old_return in c:
-              c = c.replace(old_return, new_return, 1)
-          elif 'imageVersion: imgVer' not in c:
-              raise SystemExit('Catalog return image fields pattern not found')
-          cat.write_text(c, encoding='utf-8')
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif 'imageVersion: imgVer' not in s:
+              raise SystemExit('catalog return image fields patch failed')
+          p.write_text(s, encoding='utf-8')
 
-          # 3) Frontend: preserve metadata, start catalog immediately, do not upgrade
-          # every grid card to a full-size image in the background.
-          index = Path('index.html')
-          h = index.read_text(encoding='utf-8')
-          old_fields = """                folderId: prod.folderId || null,
+          # index.html: preserve metadata, avoid downloading full-size photos for
+          # every grid card, parallelize catalog vs Telegram CloudStorage, connect gallery.
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          old = """                folderId: prod.folderId || null,
                 isNew: !!prod.isNew,
                 stock: (typeof prod.stock === 'number') ? prod.stock : null // null = учёт остатков выключен в МойСклад — лимита нет
 """
-          new_fields = """                folderId: prod.folderId || null,
+          new = """                folderId: prod.folderId || null,
                 isNew: !!prod.isNew,
                 firstSeenAt: Number(prod.firstSeenAt) || 0,
                 imageCount: Number(prod.imageCount) || (prod.img ? 1 : 0),
                 imageVersion: prod.imageVersion || '0',
                 stock: (typeof prod.stock === 'number') ? prod.stock : null // null = учёт остатков выключен в МойСклад — лимита нет
 """
-          if old_fields in h:
-              h = h.replace(old_fields, new_fields, 1)
-          elif 'imageCount: Number(prod.imageCount)' not in h:
-              raise SystemExit('applyCatalog fields pattern not found')
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif 'imageCount: Number(prod.imageCount)' not in s:
+              raise SystemExit('index catalog fields patch failed')
 
-          old_card_img = 'const imgHtml = prod.img ? `<img src="${prod.img}" data-full-src="${prod.img}&size=full" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;'
-          new_card_img = 'const imgHtml = prod.img ? `<img src="${prod.img}" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;'
-          if old_card_img in h:
-              h = h.replace(old_card_img, new_card_img, 1)
-          elif new_card_img not in h:
-              raise SystemExit('Card image pattern not found')
+          old = 'const imgHtml = prod.img ? `<img src="${prod.img}" data-full-src="${prod.img}&size=full" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;'
+          new = 'const imgHtml = prod.img ? `<img src="${prod.img}" loading="lazy" decoding="async">` : `<span class="no-photo">Тут скоро будет фото</span>`;'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('grid image patch failed')
 
-          old_boot = """        loadCartAndFavorites(() => {
+          old = """        loadCartAndFavorites(() => {
             loadShopData();
         });
 """
-          new_boot = """        // Каталог и CloudStorage грузим параллельно. Раньше каталог ждал
-        // два сетевых чтения Telegram CloudStorage (корзина + избранное), из-за
-        // чего даже локально закэшированные товары появлялись с задержкой.
+          new = """        // Не ждём два сетевых чтения Telegram CloudStorage перед каталогом.
+        // Товары и пользовательские данные стартуют параллельно.
         loadShopData();
         loadCartAndFavorites(() => {
             if (allProducts.length || categories.length) renderScreen(currentScreen());
         });
 
-        // Остатки обновляем уже ПОСЛЕ первого рендера. Пользователь видит
-        // каталог мгновенно, а редкий живой запрос к МойСклад выполняется в
-        // фоне и защищён серверным 3-минутным cooldown.
+        // Живые остатки обновляем уже после первого рендера. Серверный cooldown
+        // по-прежнему ограничивает реальный запрос к МойСклад разом в 3 минуты.
         setTimeout(() => {
             fetch('/api/get-data?refresh=1', { cache: 'no-store' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.error || !Array.isArray(data.products)) return;
                     try { localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(data)); } catch (e) {}
-                    const freshById = new Map(data.products.map(p => [p.id, p]));
+                    const freshById = new Map(data.products.map(prod => [prod.id, prod]));
                     allProducts.forEach(prod => {
                         const fresh = freshById.get(prod.id);
                         if (!fresh) return;
@@ -157,378 +152,20 @@ jobs:
                 .catch(() => {});
         }, 2200);
 """
-          if old_boot in h:
-              h = h.replace(old_boot, new_boot, 1)
-          elif 'Каталог и CloudStorage грузим параллельно' not in h:
-              raise SystemExit('Startup loading pattern not found')
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif 'Товары и пользовательские данные стартуют параллельно' not in s:
+              raise SystemExit('startup patch failed')
 
-          h = h.replace('/smart-search.js?v=20260817b', '/smart-search.js?v=20260817c')
-          old_tail = '    <script src="/smart-search.js?v=20260817c"></script>\n</body>'
-          new_tail = '    <script src="/smart-search.js?v=20260817c"></script>\n    <script src="/storefront-enhancements.js?v=20260817a"></script>\n</body>'
-          if old_tail in h:
-              h = h.replace(old_tail, new_tail, 1)
-          elif '/storefront-enhancements.js' not in h:
-              raise SystemExit('Script tail pattern not found')
-          index.write_text(h, encoding='utf-8')
-
-          # 4) Fast catalog API: live stock refresh only when explicitly requested.
-          gd = Path('api/get-data.js')
-          g = gd.read_text(encoding='utf-8')
-          old_refresh = """        if (!isColdStart) {
-            // Не полагаемся только на вебхук из МойСклад — он не всегда
-            // присылается (например, при перемещении заказа в Корзину вместо
-            // окончательного удаления МойСклад в части случаев вообще не шлёт
-            // событие). Поэтому здесь же, при обычной загрузке каталога,
-            // тоже пробуем обновить остатки. Внутри уже стоит защита "не чаще
-            // раза в 3 минуты", так что это не создаёт лишней нагрузки —
-            // подавляющее большинство запросов эту проверку проходят мгновенно.
-            const refreshed = await refreshAllStock().catch(() => false);
-            if (refreshed) catalog = await kvGetCatalog();
-        }
-"""
-          new_refresh = """        // Критический путь загрузки НЕ ждёт МойСклад: обычный /api/get-data
-        // сразу отдаёт уже готовый KV-каталог. Живое обновление остатков клиент
-        // запускает позже через ?refresh=1, когда интерфейс уже показан. Сам
-        // refreshAllStock защищён общим cooldown и не может долбить API часто.
-        if (!isColdStart && req.query.refresh === '1') {
-            const refreshed = await refreshAllStock().catch(() => false);
-            if (refreshed) catalog = await kvGetCatalog();
-        }
-"""
-          if old_refresh in g:
-              g = g.replace(old_refresh, new_refresh, 1)
-          elif "req.query.refresh === '1'" not in g:
-              raise SystemExit('get-data refresh pattern not found')
-          g = g.replace("res.setHeader('Cache-Control', 'public, s-maxage=10, stale-while-revalidate=30');",
-                        "res.setHeader('Cache-Control', req.query.refresh === '1' ? 'no-store' : 'public, max-age=15, s-maxage=30, stale-while-revalidate=120');")
-          gd.write_text(g, encoding='utf-8')
+          s = s.replace('/smart-search.js?v=20260817b', '/smart-search.js?v=20260817c')
+          old = '    <script src="/smart-search.js?v=20260817c"></script>\n</body>'
+          new = '    <script src="/smart-search.js?v=20260817c"></script>\n    <script src="/storefront-enhancements.js?v=20260817a"></script>\n</body>'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif '/storefront-enhancements.js' not in s:
+              raise SystemExit('enhancements include patch failed')
+          p.write_text(s, encoding='utf-8')
           PY
-
-          cat > storefront-enhancements.js <<'JS'
-          (() => {
-              'use strict';
-
-              // Избранное — это временный экран поверх текущего места, а не сброс
-              // навигации. Поэтому системная кнопка «Назад» возвращает в ту же
-              // категорию/товар и на ту же позицию скролла.
-              const originalSwitchTab = window.switchTab;
-              if (typeof originalSwitchTab === 'function') {
-                  window.switchTab = function switchTabPreservingFavorites(type) {
-                      if (type === 'favorites' && typeof navigateTo === 'function' && typeof currentScreen === 'function') {
-                          const current = currentScreen();
-                          if (current?.type === 'favorites') return;
-                          navigateTo({ type: 'favorites' });
-                          return;
-                      }
-                      return originalSwitchTab(type);
-                  };
-              }
-
-              const style = document.createElement('style');
-              style.textContent = `
-                  .product-card.out-of-stock .product-image-container {
-                      background: #ededf0;
-                      border-radius: 14px;
-                      overflow: hidden;
-                  }
-                  .product-card.out-of-stock .product-image-container img,
-                  .product-main-img.out-of-stock .product-gallery-slide img,
-                  .product-main-img.out-of-stock > img {
-                      mix-blend-mode: multiply;
-                      filter: grayscale(.18) saturate(.72);
-                      opacity: .84;
-                  }
-                  .product-main-img.out-of-stock,
-                  .product-main-img.out-of-stock .product-gallery-slide {
-                      background: #ededf0;
-                  }
-                  .product-card.out-of-stock {
-                      box-shadow: none;
-                      border: 1px solid rgba(60,60,67,.07);
-                  }
-                  .product-gallery-viewport {
-                      width: 100%;
-                      overflow: hidden;
-                      border-radius: 14px;
-                      touch-action: pan-y;
-                      position: relative;
-                  }
-                  .product-gallery-track {
-                      display: flex;
-                      width: 100%;
-                      will-change: transform;
-                      transition: transform .28s cubic-bezier(.22,.61,.36,1);
-                  }
-                  .product-gallery-slide {
-                      flex: 0 0 100%;
-                      width: 100%;
-                      height: 300px;
-                      display: flex;
-                      align-items: center;
-                      justify-content: center;
-                      background: #fff;
-                  }
-                  .product-gallery-slide img {
-                      width: 100%;
-                      max-width: 100%;
-                      height: 100% !important;
-                      max-height: 100%;
-                      object-fit: contain;
-                      opacity: 1;
-                      transition: opacity .18s ease;
-                  }
-                  .product-gallery-slide img.gallery-pending { opacity: .18; }
-                  .product-gallery-dots {
-                      position: absolute;
-                      left: 50%;
-                      bottom: 9px;
-                      transform: translateX(-50%);
-                      display: flex;
-                      align-items: center;
-                      gap: 5px;
-                      padding: 5px 8px;
-                      border-radius: 12px;
-                      background: rgba(255,255,255,.86);
-                      backdrop-filter: blur(8px);
-                      z-index: 3;
-                  }
-                  .product-gallery-dot {
-                      width: 5px;
-                      height: 5px;
-                      border-radius: 50%;
-                      background: #c7c7cc;
-                      transition: width .2s ease, background .2s ease;
-                  }
-                  .product-gallery-dot.active {
-                      width: 15px;
-                      border-radius: 4px;
-                      background: #1c1c1e;
-                  }
-                  .product-main-img .fav-toggle { z-index: 5; }
-                  .product-main-img .new-badge { z-index: 5; }
-              `;
-              document.head.appendChild(style);
-
-              function detailImageUrl(prod, index, full = true) {
-                  const v = encodeURIComponent(prod.imageVersion || '0');
-                  return `/api/product-image?id=${encodeURIComponent(prod.id)}&index=${index}&v=${v}${full ? '&size=full' : ''}`;
-              }
-
-              function enhanceGallery(prod, detailId) {
-                  const main = document.querySelector(`.product-main-img[data-pid="${CSS.escape(String(prod.id))}"]`);
-                  const firstImg = main?.querySelector('#detail-main-img');
-                  const count = Math.max(prod.img ? 1 : 0, Number(prod.imageCount) || 0);
-                  if (!main || !firstImg || count <= 1) return;
-                  if (main.querySelector('.product-gallery-viewport')) return;
-
-                  const viewport = document.createElement('div');
-                  viewport.className = 'product-gallery-viewport';
-                  const track = document.createElement('div');
-                  track.className = 'product-gallery-track';
-                  viewport.appendChild(track);
-
-                  const images = [];
-                  for (let i = 0; i < count; i++) {
-                      const slide = document.createElement('div');
-                      slide.className = 'product-gallery-slide';
-                      let img;
-                      if (i === 0) {
-                          img = firstImg;
-                      } else {
-                          img = document.createElement('img');
-                          img.alt = prod.name || '';
-                          img.decoding = 'async';
-                          img.className = 'gallery-pending';
-                      }
-                      slide.appendChild(img);
-                      track.appendChild(slide);
-                      images.push(img);
-                  }
-
-                  const dots = document.createElement('div');
-                  dots.className = 'product-gallery-dots';
-                  dots.innerHTML = Array.from({ length: count }, (_, i) =>
-                      `<span class="product-gallery-dot${i === 0 ? ' active' : ''}" data-i="${i}"></span>`
-                  ).join('');
-                  viewport.appendChild(dots);
-                  main.insertBefore(viewport, main.firstChild);
-
-                  let index = 0;
-                  let width = viewport.clientWidth || 1;
-                  let startX = 0;
-                  let startY = 0;
-                  let dragX = 0;
-                  let axis = null;
-                  const requested = new Set([0]);
-
-                  function loadFull(i) {
-                      if (i < 0 || i >= count || requested.has(i)) return;
-                      requested.add(i);
-                      const target = images[i];
-                      const url = detailImageUrl(prod, i, true);
-                      const preload = new Image();
-                      preload.onload = () => {
-                          if (typeof currentScreen === 'function') {
-                              const screen = currentScreen();
-                              if (screen?.type !== 'detail' || screen.productId !== detailId) return;
-                          }
-                          target.src = url;
-                          target.classList.remove('gallery-pending');
-                      };
-                      preload.onerror = () => target.classList.remove('gallery-pending');
-                      preload.src = url;
-                  }
-
-                  function apply(animate = true) {
-                      track.style.transition = animate ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none';
-                      track.style.transform = `translateX(${-(index * width) + dragX}px)`;
-                      dots.querySelectorAll('.product-gallery-dot').forEach((dot, i) => dot.classList.toggle('active', i === index));
-                  }
-
-                  function goTo(next) {
-                      index = Math.max(0, Math.min(count - 1, next));
-                      dragX = 0;
-                      apply(true);
-                      loadFull(index);
-                      const preloadNext = () => loadFull(index + 1);
-                      if ('requestIdleCallback' in window) requestIdleCallback(preloadNext, { timeout: 1000 });
-                      else setTimeout(preloadNext, 350);
-                  }
-
-                  // Первый full уже начал грузить штатный renderProductDetail.
-                  // Подготавливаем второй кадр только когда браузер свободен.
-                  const warmSecond = () => loadFull(1);
-                  if ('requestIdleCallback' in window) requestIdleCallback(warmSecond, { timeout: 1400 });
-                  else setTimeout(warmSecond, 500);
-
-                  viewport.addEventListener('touchstart', e => {
-                      const t = e.touches[0];
-                      width = viewport.clientWidth || 1;
-                      startX = t.clientX;
-                      startY = t.clientY;
-                      dragX = 0;
-                      axis = null;
-                  }, { passive: true });
-
-                  viewport.addEventListener('touchmove', e => {
-                      const t = e.touches[0];
-                      const dx = t.clientX - startX;
-                      const dy = t.clientY - startY;
-                      if (!axis && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-                      if (axis !== 'x') return;
-                      e.preventDefault();
-                      const atEdge = (index === 0 && dx > 0) || (index === count - 1 && dx < 0);
-                      dragX = atEdge ? dx * .3 : dx;
-                      apply(false);
-                  }, { passive: false });
-
-                  viewport.addEventListener('touchend', () => {
-                      if (axis !== 'x') return;
-                      const threshold = width * .14;
-                      if (dragX < -threshold) goTo(index + 1);
-                      else if (dragX > threshold) goTo(index - 1);
-                      else goTo(index);
-                  });
-
-                  dots.addEventListener('click', e => {
-                      const dot = e.target.closest('.product-gallery-dot');
-                      if (dot) goTo(Number(dot.dataset.i));
-                  });
-
-                  window.addEventListener('resize', () => {
-                      width = viewport.clientWidth || 1;
-                      dragX = 0;
-                      apply(false);
-                  }, { passive: true, once: true });
-              }
-
-              const originalRenderProductDetail = window.renderProductDetail;
-              if (typeof originalRenderProductDetail === 'function') {
-                  window.renderProductDetail = function renderProductDetailWithGallery(id) {
-                      originalRenderProductDetail(id);
-                      const prod = allProducts.find(p => p.id === id);
-                      if (prod) enhanceGallery(prod, id);
-                  };
-              }
-          })();
-          JS
-
-          cat > api/product-image.js <<'JS'
-          // Versioned image proxy for MoySklad. Product cards use only the light
-          // miniature. Full images (including gallery images #2/#3) are resolved
-          // lazily on the product page and their href list is cached in KV.
-          import { API, fetchJson, fetchBinary, kvGetJson, kvSetJson, getImageHrefsMap } from './_catalog-lib.js';
-
-          const HREF_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-          export default async function handler(req, res) {
-              const id = (req.query.id || '').replace(/[^a-f0-9-]/gi, '');
-              if (!id) return res.status(400).send('Не указан id товара');
-
-              const wantFull = req.query.size === 'full';
-              const index = Math.max(0, Math.min(49, parseInt(req.query.index || '0', 10) || 0));
-              const v = (req.query.v || '0').replace(/[^a-z0-9]/gi, '').slice(0, 30) || '0';
-
-              try {
-                  let href = null;
-
-                  if (wantFull) {
-                      // One metadata call resolves ALL product images. Swiping to the
-                      // second/third picture therefore does not create one API metadata
-                      // request per image. The list is shared for 7 days through KV.
-                      const cacheKey = `imgfull3:${id}:${v}`;
-                      const cached = await kvGetJson(cacheKey);
-                      let hrefs = (cached && (Date.now() - cached.at) < HREF_TTL_MS && Array.isArray(cached.hrefs))
-                          ? cached.hrefs
-                          : null;
-                      if (!hrefs) {
-                          const data = await fetchJson(`${API}/entity/product/${id}/images?limit=100`);
-                          hrefs = (data?.rows || []).map(row =>
-                              row?.meta?.downloadHref || row?.miniature?.downloadHref || ''
-                          ).filter(Boolean);
-                          await kvSetJson(cacheKey, { hrefs, at: Date.now() });
-                      }
-                      href = hrefs[index] || null;
-                  } else {
-                      const hrefMap = await getImageHrefsMap();
-                      const entry = Object.prototype.hasOwnProperty.call(hrefMap, id) ? hrefMap[id] : null;
-                      if (entry && typeof entry === 'object') {
-                          href = (Array.isArray(entry.minis) ? entry.minis[index] : null) || (index === 0 ? entry.mini : null) || null;
-                      } else if (typeof entry === 'string' && index === 0) {
-                          href = entry;
-                      }
-
-                      if (!href) {
-                          const cacheKey = `imghrefs2:${id}`;
-                          const cached = await kvGetJson(cacheKey);
-                          let minis = (cached && (Date.now() - cached.at) < HREF_TTL_MS && Array.isArray(cached.minis))
-                              ? cached.minis
-                              : null;
-                          if (!minis) {
-                              const data = await fetchJson(`${API}/entity/product/${id}/images?limit=100`);
-                              minis = (data?.rows || []).map(row => row?.miniature?.downloadHref || '').filter(Boolean);
-                              await kvSetJson(cacheKey, { minis, at: Date.now() });
-                          }
-                          href = minis[index] || null;
-                      }
-                  }
-
-                  if (!href) return res.status(404).send('У товара нет фото');
-
-                  const { buffer, contentType } = await fetchBinary(href);
-                  res.setHeader('Content-Type', contentType);
-                  // URL contains v, so a changed photo gets a new URL. This lets both
-                  // Telegram WebView and Vercel CDN keep old versioned bytes aggressively.
-                  res.setHeader('Cache-Control', 'public, max-age=2592000, s-maxage=31536000, stale-while-revalidate=2592000, immutable');
-                  res.setHeader('X-Ms-Image-Variant', wantFull ? `full-${index}` : `mini-${index}`);
-                  res.setHeader('X-Ms-Image-Bytes', String(buffer.length));
-                  res.status(200).send(buffer);
-              } catch (e) {
-                  console.error('[product-image]', e?.message);
-                  res.status(500).send('Не удалось получить фото');
-              }
-          }
-          JS
 
       - name: Validate
         shell: bash
@@ -539,22 +176,16 @@ jobs:
           node --input-type=module --check < api/get-data.js
           node --input-type=module --check < api/product-image.js
           git diff --check
-          grep -q "const shouldSortFresh = id === 'home-newest-container'" smart-search.js
-          ! grep -q "categorySearchActive" smart-search.js
           grep -q "imageCount: hasPhoto" api/_catalog-lib.js
-          grep -q "imgfull3" api/product-image.js
-          grep -q "req.query.refresh === '1'" api/get-data.js
           grep -q "storefront-enhancements.js?v=20260817a" index.html
-          grep -q "loadShopData();" index.html
-          # Grid cards must no longer request full-size images.
-          ! grep -Fq 'data-full-src="${prod.img}&size=full" loading="lazy"' index.html
+          ! grep -q "categorySearchActive" smart-search.js
 
-      - name: Commit final changes and remove installer
+      - name: Commit and clean installer
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git rm .github/workflows/storefront-polish.yml
-          git add index.html smart-search.js storefront-enhancements.js api/_catalog-lib.js api/get-data.js api/product-image.js
-          git commit -m 'Polish storefront navigation gallery and loading'
+          git add index.html smart-search.js api/_catalog-lib.js
+          git commit -m 'Finish storefront performance and gallery polish'
           git push origin HEAD:main
