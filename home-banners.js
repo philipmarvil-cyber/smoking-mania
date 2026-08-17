@@ -1,6 +1,8 @@
 (() => {
     'use strict';
 
+    const AUTOPLAY_MS = 5000;
+
     const esc = value => String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -104,6 +106,56 @@
         return `background-image:linear-gradient(135deg,${b.color1 || '#82394a'},${b.color2 || '#5a2530'});background-position:center;`;
     }
 
+    function configureAutoplay(viewport) {
+        if (!viewport) return;
+
+        const clearTimer = () => {
+            if (viewport._bannerAutoplayTimer) {
+                clearTimeout(viewport._bannerAutoplayTimer);
+                viewport._bannerAutoplayTimer = null;
+            }
+        };
+
+        const schedule = () => {
+            clearTimer();
+            const state = viewport._carouselState;
+            if (!state || Number(state.count) < 2 || document.hidden) return;
+
+            viewport._bannerAutoplayTimer = setTimeout(() => {
+                const liveState = viewport._carouselState;
+                if (!liveState || Number(liveState.count) < 2 || document.hidden) {
+                    schedule();
+                    return;
+                }
+                liveState.goTo((liveState.index + 1) % liveState.count);
+                schedule();
+            }, AUTOPLAY_MS);
+        };
+
+        // renderBanners может вызываться повторно. Сами обработчики вешаем
+        // единожды, а schedule всегда читает актуальный viewport._carouselState.
+        if (!viewport.dataset.bannerAutoplayBound) {
+            viewport.dataset.bannerAutoplayBound = '1';
+
+            // Пока человек держит палец на баннере, карусель не двигается сама.
+            viewport.addEventListener('touchstart', clearTimer, { passive: true });
+            viewport.addEventListener('touchend', schedule, { passive: true });
+            viewport.addEventListener('touchcancel', schedule, { passive: true });
+
+            // Клик по точке/кнопке тоже считается ручным взаимодействием:
+            // следующий автоматический переход только через полные 5 секунд.
+            viewport.addEventListener('click', schedule, { passive: true });
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) clearTimer();
+                else schedule();
+            });
+        }
+
+        viewport._bannerAutoplaySchedule = schedule;
+        schedule();
+    }
+
     function renderModernBanners(input) {
         injectStyles();
         const viewport = document.getElementById('banners-viewport');
@@ -113,6 +165,7 @@
 
         const banners = (Array.isArray(input) ? input : []).map(normalizeBanner).filter(b => b.enabled !== false);
         if (!banners.length) {
+            if (viewport._bannerAutoplayTimer) clearTimeout(viewport._bannerAutoplayTimer);
             viewport.style.display = 'none';
             if (dotsWrap) dotsWrap.innerHTML = '';
             return;
@@ -145,7 +198,10 @@
                 ? banners.map((_, i) => `<div class="banners-dot${i === 0 ? ' active' : ''}" data-index="${i}"></div>`).join('')
                 : '';
         }
-        if (typeof setupBannerCarousel === 'function') setupBannerCarousel(viewport, strip, banners.length, dotsWrap);
+        if (typeof setupBannerCarousel === 'function') {
+            setupBannerCarousel(viewport, strip, banners.length, dotsWrap);
+            configureAutoplay(viewport);
+        }
     }
 
     window.renderBanners = renderModernBanners;
