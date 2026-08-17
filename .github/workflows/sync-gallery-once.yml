@@ -1,0 +1,32 @@
+name: Sync gallery catalog once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-gallery-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Sync production catalog
+        run: |
+          curl --fail --silent --show-error --max-time 90 \
+            'https://smoking-mania-1-jql8ka5cw-smoking-mania.vercel.app/api/sync-catalog' \
+            -o /tmp/sync.json
+          cat /tmp/sync.json
+          grep -q '"success":true' /tmp/sync.json
+      - name: Remove one-time workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/sync-gallery-once.yml
+          git commit -m 'Complete gallery catalog sync'
+          git push origin HEAD:main
