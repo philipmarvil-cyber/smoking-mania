@@ -5,6 +5,7 @@
 //
 //   GET  /api/banners                    → список баннеров (публично, без ключа)
 //   POST /api/banners?key=ADMIN_PANEL_KEY → сохранить список (личный кабинет админа)
+// В схеме v1 также храним внутреннюю цель баннера: товар / категория / URL.
 import { kvGetJson, kvSetJson } from './_catalog-lib.js';
 
 export const BANNERS_KEY = 'home-banners:v1';
