@@ -101,15 +101,26 @@
     `;
     document.head.appendChild(style);
 
+    function galleryVersion(prod) {
+        if (prod.imageVersion && prod.imageVersion !== '0') return String(prod.imageVersion);
+        try {
+            return new URL(prod.img || '', window.location.origin).searchParams.get('v') || '0';
+        } catch (e) {
+            return '0';
+        }
+    }
+
     function detailImageUrl(prod, index) {
-        const v = encodeURIComponent(prod.imageVersion || '0');
+        const v = encodeURIComponent(galleryVersion(prod));
         return `/api/product-image?id=${encodeURIComponent(prod.id)}&index=${index}&v=${v}&size=full`;
     }
 
-    function enhanceGallery(prod, detailId) {
+    function enhanceGallery(prod, detailId, forcedCount = null) {
         const main = document.querySelector('.product-main-img');
         const firstImg = main?.querySelector('#detail-main-img');
-        const count = Math.max(prod.img ? 1 : 0, Number(prod.imageCount) || 0);
+        const count = forcedCount === null
+            ? Math.max(prod.img ? 1 : 0, Number(prod.imageCount) || 0)
+            : Math.max(1, Number(forcedCount) || 1);
         if (!main || !firstImg || count <= 1 || main.querySelector('.product-gallery-viewport')) return;
 
         const viewport = document.createElement('div');
@@ -187,7 +198,6 @@
             else setTimeout(warmNext, 350);
         }
 
-        // Второй кадр готовим заранее, но только когда браузер свободен.
         const warmSecond = () => loadFull(1);
         if ('requestIdleCallback' in window) requestIdleCallback(warmSecond, { timeout: 1400 });
         else setTimeout(warmSecond, 500);
@@ -227,12 +237,41 @@
         });
     }
 
+    function discoverGallery(prod, id) {
+        if (!prod?.img) return;
+        const knownCount = Number(prod.imageCount) || 0;
+        if (knownCount > 1) {
+            enhanceGallery(prod, id, knownCount);
+            return;
+        }
+
+        // Старый localStorage/KV мог быть создан до появления imageCount.
+        // В таком случае не запускаем тяжёлый full-sync всего каталога: узнаём
+        // число фото только для реально открытого товара. Сервер делит этот
+        // 7-дневный cache с product-image.js, поэтому обычно это вообще 0
+        // дополнительных запросов к МойСклад после загрузки первого full-фото.
+        if (prod.imageVersion && prod.imageVersion !== '0') return;
+        const v = encodeURIComponent(galleryVersion(prod));
+        fetch(`/api/product-images?id=${encodeURIComponent(prod.id)}&v=${v}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (!data?.success || Number(data.count) <= 1) return;
+                if (typeof currentScreen === 'function') {
+                    const screen = currentScreen();
+                    if (screen?.type !== 'detail' || screen.productId !== id) return;
+                }
+                prod.imageCount = Number(data.count);
+                enhanceGallery(prod, id, prod.imageCount);
+            })
+            .catch(() => {});
+    }
+
     const originalRenderProductDetail = window.renderProductDetail;
     if (typeof originalRenderProductDetail === 'function') {
         window.renderProductDetail = function renderProductDetailWithGallery(id) {
             originalRenderProductDetail(id);
             const prod = allProducts.find(p => p.id === id);
-            if (prod) enhanceGallery(prod, id);
+            if (prod) discoverGallery(prod, id);
         };
     }
 })();
