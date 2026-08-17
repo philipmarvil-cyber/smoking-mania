@@ -1,0 +1,42 @@
+name: Sync catalog once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-catalog-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync deployed catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://smoking-mania-1-fnjcai5po-smoking-mania.vercel.app/api/sync-catalog'
+          curl --fail --show-error --silent --retry 2 --retry-delay 3 "$URL" | tee /tmp/sync.json
+          python - <<'PY'
+          import json
+          data = json.load(open('/tmp/sync.json', encoding='utf-8'))
+          if not data.get('success'):
+              raise SystemExit('sync-catalog did not return success: ' + repr(data))
+          print('Catalog sync succeeded:', data)
+          PY
+
+      - name: Remove one-time workflow
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/sync-catalog-once.yml
+          git commit -m 'Remove one-time catalog sync'
+          git push origin HEAD:main
