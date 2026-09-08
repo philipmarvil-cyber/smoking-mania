@@ -1,0 +1,3 @@
+Smoking Mania admin production redeploy trigger.
+Reason: production admin was serving the banner editor version from before admin-banner-targets.js was connected, while main already contains the target picker.
+Triggered: 2026-09-08.
