@@ -2,13 +2,13 @@
     'use strict';
 
     const CATEGORY_VISUALS = [
-        { test: /мерч/i, y: '0%' },
-        { test: /колб/i, y: '16.6667%' },
-        { test: /смес/i, y: '33.3333%' },
-        { test: /кальян/i, y: '50%' },
-        { test: /угол/i, y: '66.6667%' },
-        { test: /аксессуар/i, y: '83.3333%' },
-        { test: /чаш/i, y: '100%' }
+        { test: /мерч/i, y: '0%', w: '74%' },
+        { test: /колб/i, y: '16.6667%', w: '80%' },
+        { test: /смес/i, y: '33.3333%', w: '88%' },
+        { test: /кальян/i, y: '50%', w: '88%' },
+        { test: /угол/i, y: '66.6667%', w: '88%' },
+        { test: /аксессуар/i, y: '83.3333%', w: '88%' },
+        { test: /чаш/i, y: '100%', w: '84%' }
     ];
 
     const categoryStyle = document.createElement('style');
@@ -18,11 +18,12 @@
             overflow: hidden;
             justify-content: flex-end;
             align-items: flex-start;
+            background-color: #2b2e33;
             background-image:
-                linear-gradient(90deg, rgba(10,11,13,.58) 0%, rgba(10,11,13,.28) 48%, rgba(10,11,13,.05) 100%),
-                url('/assets/category-sprite.jpg?v=20260909b');
-            background-size: 100% 100%, 100% 700%;
-            background-position: center, center var(--category-y);
+                linear-gradient(90deg, rgba(21,23,27,.96) 0%, rgba(21,23,27,.78) 33%, rgba(21,23,27,.34) 56%, rgba(21,23,27,.04) 100%),
+                url('/assets/category-sprite.jpg?v=20260909c');
+            background-size: 100% 100%, var(--category-w) 700%;
+            background-position: center, right var(--category-y);
             background-repeat: no-repeat;
             padding: 10px 11px;
         }
@@ -30,7 +31,7 @@
         .category-tile.category-photo .category-tile-name {
             position: relative;
             z-index: 1;
-            max-width: 82%;
+            max-width: 56%;
             color: #fff;
             font-size: 12px;
             font-weight: 750;
@@ -50,13 +51,14 @@
             if (visual) {
                 tile.classList.add('category-photo');
                 tile.style.setProperty('--category-y', visual.y);
+                tile.style.setProperty('--category-w', visual.w);
             }
             return tile;
         };
     }
 
     const legacy = document.createElement('script');
-    legacy.src = '/storefront-enhancements-base.js?v=20260909b';
+    legacy.src = '/storefront-enhancements-base.js?v=20260909c';
     legacy.async = false;
     document.head.appendChild(legacy);
 })();
