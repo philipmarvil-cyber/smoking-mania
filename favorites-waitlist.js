@@ -4,6 +4,7 @@
     let activeSection = 'favorites';
     let cachedItems = null;
     let requestSerial = 0;
+    const SEEN_AVAILABLE_KEY = 'waitlist-seen-available:v1';
 
     const style = document.createElement('style');
     style.textContent = `
@@ -17,6 +18,7 @@
             background: #e5e5ea;
         }
         #page-favorites .favorites-section-tab {
+            position: relative;
             min-width: 0;
             height: 38px;
             border: 0;
@@ -55,13 +57,58 @@
         #page-favorites .favorites-section-tab.active .favorites-section-count {
             background: rgba(255,255,255,.22);
         }
+        #page-favorites .waitlist-unread-dot {
+            display: none;
+            position: absolute;
+            top: 3px;
+            left: 50%;
+            width: 7px;
+            height: 7px;
+            margin-left: -3.5px;
+            border-radius: 50%;
+            background: #34c759;
+            box-shadow: 0 0 0 2px #e5e5ea;
+        }
+        #page-favorites .favorites-section-tab.active .waitlist-unread-dot {
+            box-shadow: 0 0 0 2px #000;
+        }
+
+        #favorites-container.favorites-waitlist-mode {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            padding: 0 12px 24px;
+            align-items: start;
+        }
+        #favorites-container.favorites-waitlist-mode .product-card {
+            min-width: 0;
+            width: 100%;
+            margin: 0;
+        }
         #favorites-container.favorites-waitlist-mode .notify-btn {
             pointer-events: none;
-            opacity: .62;
+        }
+        #favorites-container.favorites-waitlist-mode .waitlist-available-card {
+            position: relative;
+        }
+        #favorites-container.favorites-waitlist-mode .waitlist-stock-badge {
+            position: absolute;
+            z-index: 4;
+            top: 8px;
+            right: 8px;
+            padding: 5px 8px;
+            border-radius: 999px;
+            background: #34c759;
+            color: #fff;
+            font-size: 10px;
+            line-height: 1;
+            font-weight: 800;
+            box-shadow: 0 2px 8px rgba(0,0,0,.14);
         }
         #favorites-container .waitlist-loading,
         #favorites-container .waitlist-error,
         #favorites-container .waitlist-empty {
+            grid-column: 1 / -1;
             padding: 34px 18px;
             color: #8e8e93;
             text-align: center;
@@ -69,9 +116,10 @@
             line-height: 1.4;
         }
         #favorites-container .waitlist-missing {
+            grid-column: 1 / -1;
             display: grid;
             gap: 8px;
-            padding: 8px 12px 0;
+            padding: 8px 0 0;
         }
         #favorites-container .waitlist-missing-item {
             padding: 13px 14px;
@@ -101,6 +149,22 @@
         return document.getElementById('favorites-container');
     }
 
+    function getSeenAvailableIds() {
+        try {
+            const raw = localStorage.getItem(SEEN_AVAILABLE_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+        } catch (e) {
+            return new Set();
+        }
+    }
+
+    function saveSeenAvailableIds(ids) {
+        try {
+            localStorage.setItem(SEEN_AVAILABLE_KEY, JSON.stringify([...ids]));
+        } catch (e) {}
+    }
+
     function ensureTabs() {
         const page = getPage();
         const container = getContainer();
@@ -112,7 +176,7 @@
             tabs.className = 'favorites-section-tabs';
             tabs.innerHTML = `
                 <button type="button" class="favorites-section-tab" data-favorites-section="favorites">Избранное</button>
-                <button type="button" class="favorites-section-tab" data-favorites-section="waitlist">Список ожидания<span class="favorites-section-count"></span></button>
+                <button type="button" class="favorites-section-tab" data-favorites-section="waitlist"><span class="waitlist-unread-dot" aria-hidden="true"></span>Список ожидания<span class="favorites-section-count"></span></button>
             `;
             container.parentNode.insertBefore(tabs, container);
 
@@ -148,10 +212,33 @@
         badge.style.display = count ? 'inline-flex' : 'none';
     }
 
+    function updateUnreadIndicator(items, markViewed = false) {
+        const dot = getPage()?.querySelector('.waitlist-unread-dot');
+        if (!dot) return;
+
+        const availableIds = new Set(
+            (Array.isArray(items) ? items : [])
+                .filter(item => item?.inStock)
+                .map(item => String(item.productId))
+        );
+        const seen = getSeenAvailableIds();
+
+        if (markViewed) {
+            availableIds.forEach(id => seen.add(id));
+            saveSeenAvailableIds(seen);
+            dot.style.display = 'none';
+            return;
+        }
+
+        const hasUnread = [...availableIds].some(id => !seen.has(id));
+        dot.style.display = hasUnread ? 'block' : 'none';
+    }
+
     function renderFavoritesSection() {
         const container = getContainer();
         if (!container) return;
         container.classList.remove('favorites-waitlist-mode');
+        container.style.display = '';
         try {
             if (typeof renderFavorites === 'function') {
                 renderFavorites();
@@ -174,6 +261,7 @@
 
         if (!items.length) {
             container.innerHTML = '<div class="waitlist-empty">Пока список ожидания пуст.<br>Товары появятся здесь после нажатия «Уведомить».</div>';
+            updateUnreadIndicator(items, true);
             return;
         }
 
@@ -184,14 +272,30 @@
             products = items.map(item => byId.get(String(item.productId))).filter(Boolean);
         } catch (e) {}
 
+        const itemById = new Map(items.map(item => [String(item.productId), item]));
         const foundIds = new Set(products.map(product => String(product.id)));
         const missing = items.filter(item => !foundIds.has(String(item.productId)));
 
         if (products.length && typeof window.renderProductCardsInto === 'function') {
             window.renderProductCardsInto(container, products);
-            container.querySelectorAll('.notify-btn').forEach(button => {
-                button.disabled = true;
-                button.innerHTML = waitingLabelHtml();
+            container.querySelectorAll('.product-card').forEach(card => {
+                const pid = String(card.querySelector('.product-image-container')?.dataset.pid || '');
+                const item = itemById.get(pid);
+                if (!item) return;
+
+                if (item.inStock) {
+                    card.classList.add('waitlist-available-card');
+                    const badge = document.createElement('div');
+                    badge.className = 'waitlist-stock-badge';
+                    badge.textContent = 'В наличии';
+                    card.appendChild(badge);
+                } else {
+                    const button = card.querySelector('.notify-btn');
+                    if (button) {
+                        button.disabled = true;
+                        button.innerHTML = waitingLabelHtml();
+                    }
+                }
             });
         } else {
             container.innerHTML = '';
@@ -203,11 +307,14 @@
             missing.forEach(item => {
                 const row = document.createElement('div');
                 row.className = 'waitlist-missing-item';
-                row.textContent = item.productName || 'Товар';
+                row.textContent = `${item.productName || 'Товар'}${item.inStock ? ' · В наличии' : ''}`;
                 wrap.appendChild(row);
             });
             container.appendChild(wrap);
         }
+
+        // Сам факт открытия вкладки считается просмотром поступивших товаров.
+        updateUnreadIndicator(items, true);
     }
 
     async function loadWaitlist(force = false) {
@@ -217,6 +324,7 @@
 
         if (!force && Array.isArray(cachedItems)) {
             updateCount(cachedItems);
+            updateUnreadIndicator(cachedItems, activeSection === 'waitlist');
             if (activeSection === 'waitlist') renderWaitlistItems(cachedItems);
             return;
         }
@@ -225,6 +333,7 @@
         if (!userId) {
             cachedItems = [];
             updateCount(cachedItems);
+            updateUnreadIndicator(cachedItems, activeSection === 'waitlist');
             if (activeSection === 'waitlist') {
                 container.classList.add('favorites-waitlist-mode');
                 container.innerHTML = '<div class="waitlist-empty">Список ожидания доступен после запуска магазина через Telegram.</div>';
@@ -249,6 +358,7 @@
             if (serial !== requestSerial) return;
             cachedItems = data.items;
             updateCount(cachedItems);
+            updateUnreadIndicator(cachedItems, activeSection === 'waitlist');
             if (activeSection === 'waitlist') renderWaitlistItems(cachedItems);
         } catch (e) {
             if (serial !== requestSerial) return;
@@ -265,7 +375,6 @@
         if (activeSection === 'waitlist') loadWaitlist(refresh);
         else {
             getContainer()?.classList.remove('favorites-waitlist-mode');
-            // В фоне обновим только счётчик, не меняя уже отрисованное избранное.
             if (refresh) loadWaitlist(true);
         }
     }
