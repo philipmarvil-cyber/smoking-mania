@@ -246,3 +246,251 @@
         loadCatalog();
     }, 0);
 })();
+
+// Редактор картинок верхнеуровневых категорий каталога. Он живёт в уже
+// подключённом admin-скрипте, чтобы не добавлять ещё один статический файл
+// и не менять загрузочную цепочку админки.
+(() => {
+    'use strict';
+
+    let categoriesCache = [];
+    let imagesCache = {};
+    let artworkLoaded = false;
+    let artworkLoading = false;
+
+    const safe = value => String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    const DEFAULT_VISUALS = [
+        { test: /мерч/i, y: '0%' },
+        { test: /колб/i, y: '16.6667%' },
+        { test: /смес/i, y: '33.3333%' },
+        { test: /кальян/i, y: '50%' },
+        { test: /угол/i, y: '66.6667%' },
+        { test: /аксессуар/i, y: '83.3333%' },
+        { test: /чаш/i, y: '100%' }
+    ];
+
+    function artworkStyle() {
+        if (document.getElementById('catalog-artwork-admin-style')) return;
+        const style = document.createElement('style');
+        style.id = 'catalog-artwork-admin-style';
+        style.textContent = `
+            .catalog-artwork-admin { margin-top:18px; }
+            .catalog-artwork-card { background:#fff; border-radius:14px; padding:12px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,.05); display:grid; grid-template-columns:150px minmax(0,1fr); gap:12px; align-items:center; }
+            .catalog-artwork-preview { width:150px; aspect-ratio:1.48/1; border-radius:12px; overflow:hidden; background:#272a2f; background-repeat:no-repeat; box-shadow:inset 0 0 0 1px rgba(255,255,255,.04); }
+            .catalog-artwork-name { font-size:14px; font-weight:800; margin-bottom:6px; }
+            .catalog-artwork-state { color:#8e8e93; font-size:11.5px; margin-bottom:9px; }
+            .catalog-artwork-actions { display:flex; flex-wrap:wrap; gap:7px; }
+            .catalog-artwork-btn { border:0; border-radius:9px; padding:8px 11px; font:inherit; font-size:12px; font-weight:750; cursor:pointer; background:#eaeaed; color:#1c1c1e; }
+            .catalog-artwork-btn.primary { background:#1c1c1e; color:#fff; }
+            .catalog-artwork-btn.reset { background:#fdf1e2; color:#9a5b0a; }
+            .catalog-artwork-btn:disabled { opacity:.55; cursor:default; }
+            .catalog-artwork-status { min-height:16px; margin-top:7px; font-size:11.5px; color:#8e8e93; }
+            .catalog-artwork-loading { background:#fff; border-radius:14px; padding:28px 14px; text-align:center; color:#8e8e93; font-size:13px; }
+            @media (max-width:620px) {
+                .catalog-artwork-card { grid-template-columns:112px minmax(0,1fr); gap:10px; }
+                .catalog-artwork-preview { width:112px; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function ensureArtworkUi() {
+        artworkStyle();
+        const panel = document.getElementById('tab-panel-catalog');
+        if (!panel || document.getElementById('catalog-artwork-admin')) return;
+        const section = document.createElement('div');
+        section.id = 'catalog-artwork-admin';
+        section.className = 'catalog-artwork-admin';
+        section.innerHTML = `
+            <div class="section-heading">Картинки категорий</div>
+            <p class="sub" style="margin-top:-6px; margin-bottom:12px;">Здесь меняются изображения больших карточек на отдельном экране «Каталог». Загруженное фото автоматически уменьшается для быстрой загрузки.</p>
+            <div id="catalog-artwork-list"><div class="catalog-artwork-loading">Откройте раздел «Каталог», чтобы загрузить категории.</div></div>`;
+        panel.appendChild(section);
+    }
+
+    function visualFor(name, index) {
+        const found = DEFAULT_VISUALS.find(item => item.test.test(String(name || '')));
+        return found?.y || `${Math.max(0, Math.min(6, index)) * (100 / 6)}%`;
+    }
+
+    function setFallbackPreview(preview, category, index) {
+        preview.style.backgroundImage = `linear-gradient(90deg,rgba(14,15,18,.32),rgba(14,15,18,.02)),url('/assets/category-sprite.jpg?v=20260910b')`;
+        preview.style.backgroundSize = '100% 100%, auto 700%';
+        preview.style.backgroundPosition = `center, right ${visualFor(category.name, index)}`;
+    }
+
+    function setCustomPreview(preview, imageUrl) {
+        preview.style.backgroundImage = `url("${String(imageUrl || '').replace(/"/g, '%22')}")`;
+        preview.style.backgroundSize = 'cover';
+        preview.style.backgroundPosition = 'center';
+    }
+
+    function renderArtworkList() {
+        ensureArtworkUi();
+        const list = document.getElementById('catalog-artwork-list');
+        if (!list) return;
+        if (!categoriesCache.length) {
+            list.innerHTML = '<div class="catalog-artwork-loading">Категории пока не найдены.</div>';
+            return;
+        }
+
+        list.innerHTML = '';
+        categoriesCache.forEach((category, index) => {
+            const id = String(category.id || '');
+            const current = String(imagesCache[id] || '');
+            const card = document.createElement('div');
+            card.className = 'catalog-artwork-card';
+            card.innerHTML = `
+                <div class="catalog-artwork-preview"></div>
+                <div>
+                    <div class="catalog-artwork-name">${safe(category.name || 'Категория')}</div>
+                    <div class="catalog-artwork-state">${current ? 'Используется своя картинка' : 'Используется стандартная картинка'}</div>
+                    <div class="catalog-artwork-actions">
+                        <button type="button" class="catalog-artwork-btn primary choose">Выбрать фото</button>
+                        ${current ? '<button type="button" class="catalog-artwork-btn reset">Вернуть стандартную</button>' : ''}
+                        <input class="file" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+                    </div>
+                    <div class="catalog-artwork-status"></div>
+                </div>`;
+
+            const preview = card.querySelector('.catalog-artwork-preview');
+            if (current) setCustomPreview(preview, current); else setFallbackPreview(preview, category, index);
+
+            const fileInput = card.querySelector('.file');
+            const choose = card.querySelector('.choose');
+            const reset = card.querySelector('.reset');
+            const status = card.querySelector('.catalog-artwork-status');
+            choose.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', async () => {
+                const file = fileInput.files?.[0];
+                fileInput.value = '';
+                if (!file) return;
+                choose.disabled = true;
+                if (reset) reset.disabled = true;
+                status.textContent = 'Подготавливаем и сохраняем…';
+                status.style.color = '#8e8e93';
+                try {
+                    const dataUrl = await compressImage(file);
+                    await saveArtwork(id, dataUrl);
+                    imagesCache[id] = dataUrl;
+                    renderArtworkList();
+                    const fresh = [...document.querySelectorAll('.catalog-artwork-card')][index]?.querySelector('.catalog-artwork-status');
+                    if (fresh) { fresh.textContent = 'Сохранено ✓'; fresh.style.color = '#1f7a4d'; }
+                } catch (e) {
+                    status.textContent = 'Ошибка: ' + (e.message || 'не удалось сохранить');
+                    status.style.color = '#d9482b';
+                } finally {
+                    choose.disabled = false;
+                    if (reset) reset.disabled = false;
+                }
+            });
+            if (reset) reset.addEventListener('click', async () => {
+                reset.disabled = true;
+                choose.disabled = true;
+                status.textContent = 'Возвращаем стандартную…';
+                status.style.color = '#8e8e93';
+                try {
+                    await saveArtwork(id, '');
+                    imagesCache[id] = '';
+                    renderArtworkList();
+                    const fresh = [...document.querySelectorAll('.catalog-artwork-card')][index]?.querySelector('.catalog-artwork-status');
+                    if (fresh) { fresh.textContent = 'Стандартная картинка возвращена ✓'; fresh.style.color = '#1f7a4d'; }
+                } catch (e) {
+                    status.textContent = 'Ошибка: ' + (e.message || 'не удалось сохранить');
+                    status.style.color = '#d9482b';
+                } finally {
+                    reset.disabled = false;
+                    choose.disabled = false;
+                }
+            });
+            list.appendChild(card);
+        });
+    }
+
+    function compressImage(file) {
+        return new Promise((resolve, reject) => {
+            if (!file.type.startsWith('image/')) { reject(new Error('Выберите изображение')); return; }
+            const reader = new FileReader();
+            reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
+            reader.onload = () => {
+                const image = new Image();
+                image.onerror = () => reject(new Error('Не удалось открыть изображение'));
+                image.onload = () => {
+                    const maxSide = 900;
+                    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
+                    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+                    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#292b30';
+                    ctx.fillRect(0, 0, width, height);
+                    ctx.drawImage(image, 0, 0, width, height);
+                    let result = canvas.toDataURL('image/jpeg', 0.78);
+                    if (result.length > 470000) result = canvas.toDataURL('image/jpeg', 0.62);
+                    if (result.length > 495000) { reject(new Error('Фото получилось слишком большим. Возьмите изображение меньшего размера.')); return; }
+                    resolve(result);
+                };
+                image.src = reader.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function saveArtwork(categoryId, imageUrl) {
+        const key = sessionStorage.getItem('admin-panel-key') || '';
+        if (!key) throw new Error('Нет ключа администратора');
+        const response = await fetch(`/api/banners?key=${encodeURIComponent(key)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ catalogCategoryImage: { categoryId, imageUrl } })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success) throw new Error(data.error || 'Не удалось сохранить');
+    }
+
+    async function loadArtwork(force = false) {
+        ensureArtworkUi();
+        if (artworkLoading || (artworkLoaded && !force)) return;
+        artworkLoading = true;
+        const list = document.getElementById('catalog-artwork-list');
+        if (list) list.innerHTML = '<div class="catalog-artwork-loading">Загружаем категории и картинки…</div>';
+        try {
+            const catalogResponse = await fetch('/api/get-data', { cache: 'no-store' });
+            const catalogData = await catalogResponse.json();
+            if (!catalogResponse.ok || !Array.isArray(catalogData.categories)) throw new Error(catalogData.error || 'Каталог недоступен');
+            categoriesCache = catalogData.categories || [];
+            const ids = categoriesCache.map(category => String(category.id || '')).filter(Boolean);
+            const imageResponse = await fetch(`/api/banners?kind=category-images&ids=${encodeURIComponent(ids.join(','))}`, { cache: 'no-store' });
+            const imageData = await imageResponse.json();
+            if (!imageResponse.ok || !imageData.success) throw new Error(imageData.error || 'Не удалось загрузить картинки');
+            imagesCache = imageData.images || {};
+            artworkLoaded = true;
+            renderArtworkList();
+        } catch (e) {
+            if (list) list.innerHTML = `<div class="catalog-artwork-loading" style="color:#d9482b;">${safe(e.message || 'Ошибка загрузки')}</div>`;
+        } finally {
+            artworkLoading = false;
+        }
+    }
+
+    const previousSwitchTab = window.switchTab;
+    window.switchTab = function adminSwitchTabWithCatalogArtwork(name) {
+        const result = typeof previousSwitchTab === 'function' ? previousSwitchTab.apply(this, arguments) : undefined;
+        if (name === 'catalog') {
+            ensureArtworkUi();
+            loadArtwork(false);
+        }
+        return result;
+    };
+
+    artworkStyle();
+    setTimeout(ensureArtworkUi, 0);
+})();
