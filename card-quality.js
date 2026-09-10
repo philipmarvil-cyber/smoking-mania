@@ -66,6 +66,9 @@
         }
 
         /* Каталог: без отдельного заголовка, поиск визуально один в один с главной. */
+        #page-catalog.catalog-page {
+            padding-top: max(104px, calc(var(--tg-content-safe-area-inset-top, 0px) + 38px)) !important;
+        }
         #page-catalog .catalog-page-title,
         #page-catalog .catalog-page-search > svg {
             display: none !important;
