@@ -82,6 +82,26 @@
             outline: none !important;
             box-shadow: none !important;
         }
+
+        .nav-bar .nav-item.active {
+            color: #000000 !important;
+        }
+        .nav-bar .nav-item.active:not(.nav-catalog-item) svg {
+            color: #000000 !important;
+            fill: currentColor !important;
+            stroke: currentColor !important;
+        }
+        .nav-bar .nav-item.nav-catalog-item.active {
+            color: #000000 !important;
+        }
+        .nav-bar .nav-catalog-item.active .catalog-nav-icon {
+            background: #000000 !important;
+        }
+        .nav-bar .nav-catalog-item.active .catalog-nav-icon svg {
+            color: #ffffff !important;
+            stroke: #ffffff !important;
+            fill: none !important;
+        }
     `;
     document.head.appendChild(homeLayoutStyle);
 
