@@ -64,6 +64,24 @@
         .tg-ios #page-shop .home-catalog-shortcut span {
             color: #1c1c1e !important;
         }
+
+        .nav-bar,
+        .nav-bar .nav-item,
+        .nav-bar .nav-item * {
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
+        }
+        .nav-bar .nav-item {
+            -webkit-user-select: none !important;
+            user-select: none !important;
+            touch-action: manipulation;
+            outline: none !important;
+        }
+        .nav-bar .nav-item:focus,
+        .nav-bar .nav-item:focus-visible {
+            outline: none !important;
+            box-shadow: none !important;
+        }
     `;
     document.head.appendChild(homeLayoutStyle);
 
