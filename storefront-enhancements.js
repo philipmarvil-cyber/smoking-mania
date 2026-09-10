@@ -1,308 +1,423 @@
 (() => {
     'use strict';
 
-    // Избранное открывается поверх текущего места. Поэтому Telegram Back
-    // возвращает в исходную категорию/товар и восстанавливает scrollY.
-    const originalSwitchTab = window.switchTab;
-    if (typeof originalSwitchTab === 'function') {
-        window.switchTab = function switchTabPreservingFavorites(type) {
-            if (type === 'favorites' && typeof navigateTo === 'function' && typeof currentScreen === 'function') {
-                const current = currentScreen();
-                if (current?.type === 'favorites') return;
-                navigateTo({ type: 'favorites' });
+    // Сохраняем все прежние storefront-enhancements без копирования их логики
+    // сюда: этот файл остаётся тонким слоем для нового экрана каталога.
+    const legacy = document.createElement('script');
+    legacy.src = '/storefront-enhancements-base.js?v=20260910a';
+    legacy.async = false;
+    document.head.appendChild(legacy);
+
+    const ACCENT = '#6b2d38';
+    const MUTED = '#8e8e93';
+    const ROOT_TABS = new Set(['shop', 'catalog', 'cart', 'account']);
+    let rootTab = 'shop';
+
+    const CATEGORY_VISUALS = [
+        { test: /мерч/i, y: '0%' },
+        { test: /колб/i, y: '16.6667%' },
+        { test: /смес/i, y: '33.3333%' },
+        { test: /кальян/i, y: '50%' },
+        { test: /угол/i, y: '66.6667%' },
+        { test: /аксессуар/i, y: '83.3333%' },
+        { test: /чаш/i, y: '100%' }
+    ];
+
+    const style = document.createElement('style');
+    style.textContent = `
+        /* На главной категории теперь живут на отдельной вкладке. */
+        #home-categories-container.catalog-moved-away,
+        .section-title.catalog-moved-away { display: none !important; }
+
+        .search-bar.catalog-shortcut-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 70px;
+            gap: 8px;
+            align-items: stretch;
+        }
+        .search-bar.catalog-shortcut-row input {
+            min-width: 0;
+            height: 46px;
+            margin: 0;
+        }
+        .home-catalog-shortcut {
+            width: 70px;
+            height: 46px;
+            border: 0;
+            border-radius: 18px;
+            background: #eaeaed;
+            color: ${MUTED};
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1px;
+            padding: 0;
+            font: inherit;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .home-catalog-shortcut:active { transform: scale(.97); }
+        .home-catalog-shortcut svg {
+            width: 19px;
+            height: 19px;
+            stroke: currentColor;
+            stroke-width: 2;
+            fill: none;
+        }
+        .home-catalog-shortcut span {
+            font-size: 9.5px;
+            line-height: 1;
+            font-weight: 650;
+        }
+
+        /* Пятая, центральная вкладка — Каталог. В неактивном состоянии серая. */
+        .nav-bar .nav-item.nav-catalog-item { color: ${MUTED}; }
+        .nav-catalog-item .catalog-nav-icon {
+            width: 34px;
+            height: 34px;
+            margin: -7px auto 0;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: ${MUTED};
+            background: transparent;
+            transition: transform .18s ease, background .18s ease, color .18s ease;
+        }
+        .nav-catalog-item .catalog-nav-icon svg {
+            width: 23px;
+            height: 23px;
+            margin: 0;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+        }
+        .nav-catalog-item.active { color: ${ACCENT} !important; font-weight: 600; }
+        .nav-catalog-item.active .catalog-nav-icon {
+            color: #fff;
+            background: ${ACCENT};
+            transform: translateY(-4px);
+            box-shadow: 0 5px 13px rgba(107,45,56,.28);
+        }
+        .nav-catalog-item .catalog-nav-label { display: block; margin-top: -1px; }
+
+        #page-catalog.catalog-page {
+            background: #f2f2f7;
+            min-height: calc(100vh - 65px);
+            box-sizing: border-box;
+            padding: calc(env(safe-area-inset-top) + 14px) 12px calc(88px + env(safe-area-inset-bottom));
+        }
+        .catalog-page-title {
+            font-size: 30px;
+            line-height: 1.08;
+            font-weight: 800;
+            letter-spacing: -.6px;
+            color: #111114;
+            margin: 0 4px 16px;
+        }
+        .catalog-page-search {
+            position: relative;
+            margin: 0 4px 14px;
+        }
+        .catalog-page-search svg {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translateY(-50%);
+            stroke: ${MUTED};
+            stroke-width: 2;
+            fill: none;
+            pointer-events: none;
+        }
+        .catalog-page-search input {
+            width: 100%;
+            height: 48px;
+            box-sizing: border-box;
+            border: 0;
+            outline: none;
+            border-radius: 20px;
+            background: #eaeaed;
+            color: #1c1c1e;
+            font-size: 15px;
+            padding: 0 16px 0 45px;
+        }
+        .catalog-page-search input::placeholder { color: #929299; }
+
+        .catalog-photo-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 9px;
+            padding: 0 4px;
+        }
+        .catalog-photo-card {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1.48 / 1;
+            overflow: hidden;
+            border-radius: 15px;
+            background-color: #272a2f;
+            background-image:
+                linear-gradient(90deg, rgba(14,15,18,.83) 0%, rgba(14,15,18,.56) 41%, rgba(14,15,18,.16) 72%, rgba(14,15,18,.04) 100%),
+                url('/assets/category-sprite.jpg?v=20260910a');
+            background-size: 100% 100%, auto 700%;
+            background-position: center, right var(--catalog-y);
+            background-repeat: no-repeat;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .catalog-photo-card:active { transform: scale(.985); opacity: .94; }
+        .catalog-photo-card-name {
+            position: absolute;
+            left: 13px;
+            right: 42%;
+            bottom: 12px;
+            z-index: 1;
+            color: #fff;
+            font-size: 17px;
+            font-weight: 760;
+            line-height: 1.05;
+            letter-spacing: -.25px;
+            text-shadow: 0 2px 8px rgba(0,0,0,.72);
+            overflow-wrap: break-word;
+        }
+        .catalog-empty {
+            grid-column: 1 / -1;
+            padding: 34px 12px;
+            text-align: center;
+            color: ${MUTED};
+            font-size: 14px;
+        }
+
+        @media (max-width: 360px) {
+            .catalog-page-title { font-size: 27px; }
+            .catalog-photo-card-name { font-size: 15px; left: 11px; bottom: 10px; }
+            .search-bar.catalog-shortcut-row { grid-template-columns: minmax(0, 1fr) 64px; }
+            .home-catalog-shortcut { width: 64px; }
+        }
+    `;
+    document.head.appendChild(style);
+
+    function gridIcon() {
+        return `<svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="4" width="6" height="6" rx="1.4"></rect>
+            <rect x="14" y="4" width="6" height="6" rx="1.4"></rect>
+            <rect x="4" y="14" width="6" height="6" rx="1.4"></rect>
+            <rect x="14" y="14" width="6" height="6" rx="1.4"></rect>
+        </svg>`;
+    }
+
+    function markExistingNavItems() {
+        document.querySelectorAll('.nav-bar .nav-item').forEach(item => {
+            if (item.dataset.tab) return;
+            const handler = item.getAttribute('onclick') || '';
+            const match = handler.match(/switchTab\(['\"]([^'\"]+)['\"]\)/);
+            if (match) item.dataset.tab = match[1];
+        });
+    }
+
+    function ensureCatalogNavItem() {
+        const nav = document.querySelector('.nav-bar');
+        if (!nav) return null;
+        markExistingNavItems();
+        let item = nav.querySelector('.nav-catalog-item');
+        if (item) return item;
+
+        item = document.createElement('div');
+        item.className = 'nav-item nav-catalog-item';
+        item.dataset.tab = 'catalog';
+        item.innerHTML = `<span class="catalog-nav-icon">${gridIcon()}</span><span class="catalog-nav-label">Каталог</span>`;
+        item.addEventListener('click', () => {
+            if (typeof window.switchTab === 'function') window.switchTab('catalog');
+        });
+
+        const cart = nav.querySelector('[data-tab="cart"]');
+        if (cart) nav.insertBefore(item, cart);
+        else nav.appendChild(item);
+        return item;
+    }
+
+    function setNavActive(type) {
+        const nav = document.querySelector('.nav-bar');
+        if (!nav) return;
+        markExistingNavItems();
+        nav.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+        const item = nav.querySelector(`[data-tab="${type}"]`);
+        if (item) item.classList.add('active');
+    }
+
+    function moveHomeCategoriesAway() {
+        const grid = document.getElementById('home-categories-container');
+        if (grid) grid.classList.add('catalog-moved-away');
+
+        const shop = document.getElementById('page-shop') || document;
+        const title = Array.from(shop.querySelectorAll('.section-title')).find(el =>
+            (el.textContent || '').trim().toLowerCase() === 'категории'
+        );
+        if (title) title.classList.add('catalog-moved-away');
+    }
+
+    function ensureHomeShortcut() {
+        const input = document.getElementById('search-input');
+        const bar = input?.closest('.search-bar');
+        if (!bar) return;
+        bar.classList.add('catalog-shortcut-row');
+        if (bar.querySelector('.home-catalog-shortcut')) return;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'home-catalog-shortcut';
+        button.setAttribute('aria-label', 'Открыть каталог');
+        button.innerHTML = `${gridIcon()}<span>Каталог</span>`;
+        button.addEventListener('click', () => {
+            if (typeof window.switchTab === 'function') window.switchTab('catalog');
+        });
+        bar.appendChild(button);
+    }
+
+    function ensureCatalogPage() {
+        let page = document.getElementById('page-catalog');
+        if (page) return page;
+
+        page = document.createElement('div');
+        page.id = 'page-catalog';
+        page.className = 'page catalog-page';
+        page.innerHTML = `
+            <h1 class="catalog-page-title">Каталог</h1>
+            <div class="catalog-page-search">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+                <input id="catalog-category-search" type="search" inputmode="search" autocomplete="off" placeholder="Поиск категории">
+            </div>
+            <div class="catalog-photo-grid" id="catalog-photo-grid"></div>
+        `;
+
+        const nav = document.querySelector('.nav-bar');
+        if (nav?.parentNode) nav.parentNode.insertBefore(page, nav);
+        else document.body.appendChild(page);
+
+        page.querySelector('#catalog-category-search')?.addEventListener('input', event => {
+            renderCatalogCards(event.target.value || '');
+        });
+        return page;
+    }
+
+    function visualFor(name, index) {
+        const str = String(name || '');
+        const visual = CATEGORY_VISUALS.find(item => item.test.test(str));
+        if (visual) return visual;
+        const fallbackIndex = Math.max(0, Math.min(6, index));
+        return { y: `${fallbackIndex * (100 / 6)}%` };
+    }
+
+    function renderCatalogCards(query = '') {
+        const page = ensureCatalogPage();
+        const grid = page.querySelector('#catalog-photo-grid');
+        if (!grid) return;
+        grid.innerHTML = '';
+
+        const source = (typeof categories !== 'undefined' && Array.isArray(categories)) ? categories : [];
+        const needle = String(query || '').trim().toLocaleLowerCase('ru');
+        const visible = needle
+            ? source.filter(cat => String(cat.name || '').toLocaleLowerCase('ru').includes(needle))
+            : source;
+
+        if (!visible.length) {
+            const empty = document.createElement('div');
+            empty.className = 'catalog-empty';
+            empty.textContent = source.length ? 'Ничего не найдено' : 'Каталог загружается…';
+            grid.appendChild(empty);
+            return;
+        }
+
+        visible.forEach((cat, index) => {
+            const card = document.createElement('div');
+            card.className = 'catalog-photo-card';
+            card.style.setProperty('--catalog-y', visualFor(cat.name, index).y);
+
+            const label = document.createElement('div');
+            label.className = 'catalog-photo-card-name';
+            label.textContent = cat.name || '';
+            card.appendChild(label);
+
+            card.addEventListener('click', () => {
+                if (typeof navigateTo === 'function') {
+                    navigateTo({ type: 'category', categoryId: cat.id });
+                }
+            });
+            grid.appendChild(card);
+        });
+    }
+
+    function renderCatalogScreen(screen) {
+        const page = ensureCatalogPage();
+        document.querySelectorAll('.page').forEach(item => item.classList.remove('active'));
+        page.classList.add('active');
+
+        const search = page.querySelector('#catalog-category-search');
+        if (search && document.activeElement !== search) search.value = '';
+        renderCatalogCards(search?.value || '');
+        setNavActive('catalog');
+
+        const y = Number(screen?.scrollY) || 0;
+        window.scrollTo(0, y);
+        requestAnimationFrame(() => window.scrollTo(0, y));
+
+        try { window.Telegram?.WebApp?.BackButton?.hide(); } catch (e) {}
+        if (typeof ensureDocumentIsScrollable === 'function') {
+            ensureDocumentIsScrollable();
+            setTimeout(ensureDocumentIsScrollable, 100);
+        }
+    }
+
+    const originalRenderScreen = window.renderScreen;
+    if (typeof originalRenderScreen === 'function') {
+        window.renderScreen = function renderScreenWithCatalog(screen) {
+            if (screen?.type === 'catalog') {
+                rootTab = 'catalog';
+                renderCatalogScreen(screen);
                 return;
             }
+
+            const result = originalRenderScreen(screen);
+
+            if (ROOT_TABS.has(screen?.type)) rootTab = screen.type;
+            if (screen?.type === 'favorites') setNavActive('favorites');
+            else if (ROOT_TABS.has(screen?.type)) setNavActive(screen.type);
+            else setNavActive(rootTab);
+
+            moveHomeCategoriesAway();
+            ensureHomeShortcut();
+            return result;
+        };
+    }
+
+    // Фиксируем текущий корневой таб ещё и в switchTab, до того как старый
+    // storefront-enhancements обернёт его своей логикой Избранного.
+    const originalSwitchTab = window.switchTab;
+    if (typeof originalSwitchTab === 'function') {
+        window.switchTab = function switchTabWithCatalogState(type) {
+            if (ROOT_TABS.has(type)) rootTab = type;
             return originalSwitchTab(type);
         };
     }
 
-    const style = document.createElement('style');
-    style.textContent = `
-        .product-card.out-of-stock .product-image-container {
-            background: #ededf0;
-            border-radius: 14px;
-            overflow: hidden;
-        }
-        .product-card.out-of-stock .product-image-container img,
-        .product-main-img.out-of-stock .product-gallery-slide img,
-        .product-main-img.out-of-stock > img {
-            mix-blend-mode: multiply;
-            filter: grayscale(.18) saturate(.72);
-            opacity: .84;
-        }
-        .product-main-img.out-of-stock,
-        .product-main-img.out-of-stock .product-gallery-slide {
-            background: #ededf0;
-        }
-        .product-card.out-of-stock {
-            box-shadow: none;
-            border: 1px solid rgba(60,60,67,.07);
-        }
-        .product-gallery-viewport {
-            width: 100%;
-            overflow: hidden;
-            border-radius: 14px;
-            touch-action: pan-y;
-            position: relative;
-        }
-        .product-gallery-track {
-            display: flex;
-            width: 100%;
-            will-change: transform;
-            transition: transform .28s cubic-bezier(.22,.61,.36,1);
-        }
-        .product-gallery-slide {
-            flex: 0 0 100%;
-            width: 100%;
-            height: 300px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #fff;
-        }
-        .product-gallery-slide img {
-            width: 100%;
-            max-width: 100%;
-            height: 100% !important;
-            max-height: 100%;
-            object-fit: contain;
-            opacity: 1;
-            transition: opacity .18s ease;
-        }
-        .product-gallery-slide img.gallery-pending { opacity: .15; }
-        .product-gallery-dots {
-            position: absolute;
-            left: 50%;
-            bottom: 9px;
-            transform: translateX(-50%);
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 8px;
-            border-radius: 12px;
-            background: rgba(255,255,255,.86);
-            backdrop-filter: blur(8px);
-            z-index: 3;
-        }
-        .product-gallery-dot {
-            width: 5px;
-            height: 5px;
-            border-radius: 50%;
-            background: #c7c7cc;
-            transition: width .2s ease, background .2s ease;
-        }
-        .product-gallery-dot.active {
-            width: 15px;
-            border-radius: 4px;
-            background: #1c1c1e;
-        }
-        .product-main-img .fav-toggle,
-        .product-main-img .new-badge { z-index: 5; }
-    `;
-    document.head.appendChild(style);
-
-    function galleryVersion(prod) {
-        if (prod.imageVersion && prod.imageVersion !== '0') return String(prod.imageVersion);
-        try {
-            return new URL(prod.img || '', window.location.origin).searchParams.get('v') || '0';
-        } catch (e) {
-            return '0';
-        }
+    function install() {
+        ensureCatalogNavItem();
+        ensureCatalogPage();
+        moveHomeCategoriesAway();
+        ensureHomeShortcut();
+        const current = typeof currentScreen === 'function' ? currentScreen() : { type: 'shop' };
+        if (current?.type === 'catalog') renderCatalogScreen(current);
+        else if (current?.type === 'favorites') setNavActive('favorites');
+        else setNavActive(ROOT_TABS.has(current?.type) ? current.type : rootTab);
     }
 
-    function detailImageUrl(prod, index) {
-        const v = encodeURIComponent(galleryVersion(prod));
-        return `/api/product-image?id=${encodeURIComponent(prod.id)}&index=${index}&v=${v}&size=full`;
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', install, { once: true });
+    } else {
+        install();
     }
-
-    function enhanceGallery(prod, detailId, forcedCount = null) {
-        const main = document.querySelector('.product-main-img');
-        const firstImg = main?.querySelector('#detail-main-img');
-        const count = forcedCount === null
-            ? Math.max(prod.img ? 1 : 0, Number(prod.imageCount) || 0)
-            : Math.max(1, Number(forcedCount) || 1);
-        if (!main || !firstImg || count <= 1 || main.querySelector('.product-gallery-viewport')) return;
-
-        const viewport = document.createElement('div');
-        viewport.className = 'product-gallery-viewport';
-        const track = document.createElement('div');
-        track.className = 'product-gallery-track';
-        viewport.appendChild(track);
-
-        const images = [];
-        for (let i = 0; i < count; i++) {
-            const slide = document.createElement('div');
-            slide.className = 'product-gallery-slide';
-            let img;
-            if (i === 0) {
-                img = firstImg;
-            } else {
-                img = document.createElement('img');
-                img.alt = prod.name || '';
-                img.decoding = 'async';
-                img.className = 'gallery-pending';
-            }
-            slide.appendChild(img);
-            track.appendChild(slide);
-            images.push(img);
-        }
-
-        const dots = document.createElement('div');
-        dots.className = 'product-gallery-dots';
-        dots.innerHTML = Array.from({ length: count }, (_, i) =>
-            `<span class="product-gallery-dot${i === 0 ? ' active' : ''}" data-i="${i}"></span>`
-        ).join('');
-        viewport.appendChild(dots);
-        main.insertBefore(viewport, main.firstChild);
-
-        let index = 0;
-        let width = viewport.clientWidth || 1;
-        let startX = 0;
-        let startY = 0;
-        let dragX = 0;
-        let axis = null;
-        // Первый full уже загружает штатная страница товара.
-        const requested = new Set([0]);
-
-        function loadFull(i) {
-            if (i < 0 || i >= count || requested.has(i)) return;
-            requested.add(i);
-            const target = images[i];
-            const url = detailImageUrl(prod, i);
-            const preload = new Image();
-            preload.onload = () => {
-                if (typeof currentScreen === 'function') {
-                    const screen = currentScreen();
-                    if (screen?.type !== 'detail' || screen.productId !== detailId) return;
-                }
-                target.src = url;
-                target.classList.remove('gallery-pending');
-            };
-            preload.onerror = () => target.classList.remove('gallery-pending');
-            preload.src = url;
-        }
-
-        function apply(animate = true) {
-            track.style.transition = animate ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none';
-            track.style.transform = `translateX(${-(index * width) + dragX}px)`;
-            dots.querySelectorAll('.product-gallery-dot').forEach((dot, i) => dot.classList.toggle('active', i === index));
-        }
-
-        function goTo(next) {
-            index = Math.max(0, Math.min(count - 1, next));
-            dragX = 0;
-            apply(true);
-            loadFull(index);
-            const warmNext = () => loadFull(index + 1);
-            if ('requestIdleCallback' in window) requestIdleCallback(warmNext, { timeout: 1000 });
-            else setTimeout(warmNext, 350);
-        }
-
-        const warmSecond = () => loadFull(1);
-        if ('requestIdleCallback' in window) requestIdleCallback(warmSecond, { timeout: 1400 });
-        else setTimeout(warmSecond, 500);
-
-        viewport.addEventListener('touchstart', e => {
-            const t = e.touches[0];
-            width = viewport.clientWidth || 1;
-            startX = t.clientX;
-            startY = t.clientY;
-            dragX = 0;
-            axis = null;
-        }, { passive: true });
-
-        viewport.addEventListener('touchmove', e => {
-            const t = e.touches[0];
-            const dx = t.clientX - startX;
-            const dy = t.clientY - startY;
-            if (!axis && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-            if (axis !== 'x') return;
-            e.preventDefault();
-            const atEdge = (index === 0 && dx > 0) || (index === count - 1 && dx < 0);
-            dragX = atEdge ? dx * .3 : dx;
-            apply(false);
-        }, { passive: false });
-
-        viewport.addEventListener('touchend', () => {
-            if (axis !== 'x') return;
-            const threshold = width * .14;
-            if (dragX < -threshold) goTo(index + 1);
-            else if (dragX > threshold) goTo(index - 1);
-            else goTo(index);
-        });
-
-        dots.addEventListener('click', e => {
-            const dot = e.target.closest('.product-gallery-dot');
-            if (dot) goTo(Number(dot.dataset.i));
-        });
-    }
-
-    function discoverGallery(prod, id) {
-        if (!prod?.img) return;
-        const knownCount = Number(prod.imageCount) || 0;
-        if (knownCount > 1) {
-            enhanceGallery(prod, id, knownCount);
-            return;
-        }
-
-        // Старый localStorage/KV мог быть создан до появления imageCount.
-        // В таком случае не запускаем тяжёлый full-sync всего каталога: узнаём
-        // число фото только для реально открытого товара. Сервер делит этот
-        // 7-дневный cache с product-image.js, поэтому обычно это вообще 0
-        // дополнительных запросов к МойСклад после загрузки первого full-фото.
-        if (prod.imageVersion && prod.imageVersion !== '0') return;
-        const v = encodeURIComponent(galleryVersion(prod));
-        fetch(`/api/product-images?id=${encodeURIComponent(prod.id)}&v=${v}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                if (!data?.success || Number(data.count) <= 1) return;
-                if (typeof currentScreen === 'function') {
-                    const screen = currentScreen();
-                    if (screen?.type !== 'detail' || screen.productId !== id) return;
-                }
-                prod.imageCount = Number(data.count);
-                enhanceGallery(prod, id, prod.imageCount);
-            })
-            .catch(() => {});
-    }
-
-    const originalRenderProductDetail = window.renderProductDetail;
-    if (typeof originalRenderProductDetail === 'function') {
-        window.renderProductDetail = function renderProductDetailWithGallery(id) {
-            originalRenderProductDetail(id);
-            const prod = allProducts.find(p => p.id === id);
-            if (prod) discoverGallery(prod, id);
-        };
-    }
-
-    // Реестр пользователей для админ-панели. Не трогаем МойСклад: это один
-    // маленький POST в KV максимум раз в 6 часов с данного устройства.
-    function touchTelegramUserForAdmin() {
-        const webApp = window.Telegram?.WebApp;
-        const user = webApp?.initDataUnsafe?.user;
-        if (!user?.id) return;
-        const storageKey = `admin_user_touch_v1:${user.id}`;
-        const now = Date.now();
-        const last = Number(localStorage.getItem(storageKey)) || 0;
-        if (now - last < 6 * 60 * 60 * 1000) return;
-        localStorage.setItem(storageKey, String(now));
-        fetch('/api/orders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'touch-user',
-                user: {
-                    id: user.id,
-                    firstName: user.first_name || '',
-                    lastName: user.last_name || '',
-                    username: user.username || '',
-                    photoUrl: user.photo_url || ''
-                }
-            })
-        }).then(response => {
-            if (!response.ok) localStorage.removeItem(storageKey);
-        }).catch(() => localStorage.removeItem(storageKey));
-    }
-    setTimeout(touchTelegramUserForAdmin, 250);
-
 })();
