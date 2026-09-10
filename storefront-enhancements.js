@@ -10,6 +10,7 @@
     const MUTED = '#8e8e93';
     const ROOT_TABS = new Set(['shop', 'catalog', 'cart', 'account']);
     let rootTab = 'shop';
+    let catalogSearchDebounce = null;
 
     const CATEGORY_VISUALS = [
         { test: /мерч/i, y: '0%' },
@@ -100,6 +101,7 @@
             letter-spacing: -.2px; text-shadow: 0 2px 8px rgba(0,0,0,.72);
             overflow-wrap: normal; word-break: normal; hyphens: none;
         }
+        #catalog-product-results { padding: 0 4px; }
         .catalog-empty {
             grid-column: 1 / -1; padding: 34px 12px; text-align: center; color: ${MUTED}; font-size: 14px;
         }
@@ -190,12 +192,13 @@
             <h1 class="catalog-page-title">Каталог</h1>
             <div class="catalog-page-search">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
-                <input id="catalog-category-search" type="search" inputmode="search" autocomplete="off" placeholder="Поиск категории">
+                <input id="catalog-product-search" type="search" inputmode="search" autocomplete="off" placeholder="Поиск товаров">
             </div>
-            <div class="catalog-photo-grid" id="catalog-photo-grid"></div>`;
+            <div class="catalog-photo-grid" id="catalog-photo-grid"></div>
+            <div class="products-grid" id="catalog-product-results" style="display:none;"></div>`;
         const nav = document.querySelector('.nav-bar');
         if (nav?.parentNode) nav.parentNode.insertBefore(page, nav); else document.body.appendChild(page);
-        page.querySelector('#catalog-category-search')?.addEventListener('input', event => renderCatalogCards(event.target.value || ''));
+        page.querySelector('#catalog-product-search')?.addEventListener('input', event => handleCatalogProductSearch(event.target.value || ''));
         return page;
     }
 
@@ -206,22 +209,20 @@
         return { y: `${fallbackIndex * (100 / 6)}%` };
     }
 
-    function renderCatalogCards(query = '') {
+    function renderCatalogCards() {
         const page = ensureCatalogPage();
         const grid = page.querySelector('#catalog-photo-grid');
         if (!grid) return;
         grid.innerHTML = '';
         const source = (typeof categories !== 'undefined' && Array.isArray(categories)) ? categories : [];
-        const needle = String(query || '').trim().toLocaleLowerCase('ru');
-        const visible = needle ? source.filter(cat => String(cat.name || '').toLocaleLowerCase('ru').includes(needle)) : source;
-        if (!visible.length) {
+        if (!source.length) {
             const empty = document.createElement('div');
             empty.className = 'catalog-empty';
-            empty.textContent = source.length ? 'Ничего не найдено' : 'Каталог загружается…';
+            empty.textContent = 'Каталог загружается…';
             grid.appendChild(empty);
             return;
         }
-        visible.forEach((cat, index) => {
+        source.forEach((cat, index) => {
             const card = document.createElement('div');
             card.className = 'catalog-photo-card';
             card.style.setProperty('--catalog-y', visualFor(cat.name, index).y);
@@ -236,13 +237,52 @@
         });
     }
 
+    function handleCatalogProductSearch(query = '') {
+        clearTimeout(catalogSearchDebounce);
+        const page = ensureCatalogPage();
+        const grid = page.querySelector('#catalog-photo-grid');
+        const results = page.querySelector('#catalog-product-results');
+        const term = String(query || '').trim();
+
+        if (!term) {
+            if (results) {
+                results.style.display = 'none';
+                results.innerHTML = '';
+            }
+            if (grid) grid.style.display = '';
+            renderCatalogCards();
+            return;
+        }
+
+        if (grid) grid.style.display = 'none';
+        if (results) results.style.display = '';
+
+        catalogSearchDebounce = setTimeout(() => {
+            const latestTerm = String(page.querySelector('#catalog-product-search')?.value || '').trim();
+            if (!latestTerm) {
+                handleCatalogProductSearch('');
+                return;
+            }
+
+            const source = (typeof allProducts !== 'undefined' && Array.isArray(allProducts)) ? allProducts : [];
+            const searchFn = typeof window.__smartProductSearch === 'function'
+                ? window.__smartProductSearch
+                : ((list, value) => {
+                    const needle = String(value || '').toLocaleLowerCase('ru');
+                    return list.filter(prod => String(prod.name || '').toLocaleLowerCase('ru').includes(needle));
+                });
+            const renderFn = typeof window.renderProductCardsInto === 'function' ? window.renderProductCardsInto : null;
+            if (results && renderFn) renderFn(results, searchFn(source, latestTerm));
+        }, 120);
+    }
+
     function renderCatalogScreen(screen) {
         const page = ensureCatalogPage();
         document.querySelectorAll('.page').forEach(item => item.classList.remove('active'));
         page.classList.add('active');
-        const search = page.querySelector('#catalog-category-search');
+        const search = page.querySelector('#catalog-product-search');
         if (search && document.activeElement !== search) search.value = '';
-        renderCatalogCards(search?.value || '');
+        handleCatalogProductSearch(search?.value || '');
         setNavActive('catalog');
         const y = Number(screen?.scrollY) || 0;
         window.scrollTo(0, y);
