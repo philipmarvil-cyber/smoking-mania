@@ -10,6 +10,10 @@
             padding-top: calc(env(safe-area-inset-top) + 8px) !important;
             padding-bottom: 12px !important;
         }
+        #page-shop .search-bar.catalog-shortcut-row input,
+        #page-shop .home-catalog-shortcut {
+            background: var(--tg-theme-secondary-bg-color, #eaeaed) !important;
+        }
     `;
     document.head.appendChild(homeLayoutStyle);
 
