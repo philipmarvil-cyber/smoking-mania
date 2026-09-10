@@ -113,10 +113,10 @@
         document.addEventListener('DOMContentLoaded', removeSupportButton, { once: true });
     }
 
-    // Карточка появляется сразу с лёгкой миниатюрой, а качественная версия
-    // догружается только если карточка действительно попала в/рядом с экраном.
-    // Так сохраняем чёткость, но не возвращаем прежнюю массовую загрузку full
-    // для десятков/сотен невидимых товаров.
+    // На главной оставляем лёгкие миниатюры и дозагрузку full рядом с экраном.
+    // В категориях и результатах поиска каталога сразу используем versioned
+    // full-URL, иначе WebView успевает показать старую кэшированную miniature,
+    // а через 1–2 секунды резко подменяет её на актуальное изображение.
     const MAX_CONCURRENT = 2;
     const queue = [];
     let active = 0;
@@ -193,9 +193,26 @@
         });
     }, { rootMargin: '220px 0px', threshold: 0.01 });
 
+    function shouldUseFreshFullImmediately(img) {
+        return !!img.closest('#page-category, #catalog-product-results');
+    }
+
     function watchImage(img) {
         if (!img || img.dataset.hqObserved || img.closest('.product-card') === null) return;
         img.dataset.hqObserved = '1';
+
+        if (shouldUseFreshFullImmediately(img)) {
+            const prod = getProductForImage(img);
+            const fullUrl = getFullUrl(prod);
+            if (fullUrl) {
+                const absoluteFullUrl = new URL(fullUrl, location.href).href;
+                if (img.src !== absoluteFullUrl) img.src = fullUrl;
+                img.dataset.hqState = 'done';
+                img.classList.add('hq-ready');
+                return;
+            }
+        }
+
         observer.observe(img);
     }
 
