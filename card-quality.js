@@ -132,7 +132,7 @@
             color: #ffffff !important;
             font-size: 16px !important;
             line-height: 1.08 !important;
-            font-weight: 450 !important;
+            font-weight: 400 !important;
             letter-spacing: -.2px !important;
             text-wrap: normal !important;
             background: rgba(255,255,255,.16) !important;
