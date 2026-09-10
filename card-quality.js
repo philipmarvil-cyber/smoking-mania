@@ -120,6 +120,43 @@
             opacity: .72 !important;
         }
 
+        /* Названия категорий: возвращаем прежнюю типографику и кладём её
+           на прозрачную стеклянную iOS-подложку. */
+        #page-catalog .catalog-photo-card-name {
+            right: auto !important;
+            max-width: calc(100% - 26px) !important;
+            width: auto !important;
+            display: inline-block !important;
+            box-sizing: border-box !important;
+            padding: 6px 10px 7px !important;
+            border-radius: 999px !important;
+            color: #ffffff !important;
+            font-size: 16px !important;
+            line-height: 1.08 !important;
+            font-weight: 760 !important;
+            letter-spacing: -.2px !important;
+            text-wrap: normal !important;
+            background: rgba(255,255,255,.16) !important;
+            border: 1px solid rgba(255,255,255,.24) !important;
+            -webkit-backdrop-filter: blur(12px) saturate(165%) !important;
+            backdrop-filter: blur(12px) saturate(165%) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.24),
+                inset 0 -1px 0 rgba(255,255,255,.07),
+                0 4px 14px rgba(0,0,0,.14) !important;
+            text-shadow: 0 1px 5px rgba(0,0,0,.42) !important;
+        }
+        @media (max-width: 360px) {
+            #page-catalog .catalog-photo-card-name {
+                font-size: 14px !important;
+                left: 11px !important;
+                right: auto !important;
+                bottom: 10px !important;
+                max-width: calc(100% - 22px) !important;
+                padding: 6px 9px !important;
+            }
+        }
+
         .nav-bar,
         .nav-bar .nav-item,
         .nav-bar .nav-item * {
