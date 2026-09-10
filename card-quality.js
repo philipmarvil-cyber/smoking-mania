@@ -120,20 +120,19 @@
             opacity: .72 !important;
         }
 
-        /* Названия категорий: возвращаем прежнюю типографику и кладём её
-           на прозрачную стеклянную iOS-подложку. */
+        /* Названия категорий: прозрачная стеклянная iOS-подложка. */
         #page-catalog .catalog-photo-card-name {
             right: auto !important;
             max-width: calc(100% - 26px) !important;
             width: auto !important;
             display: inline-block !important;
             box-sizing: border-box !important;
-            padding: 6px 10px 7px !important;
+            padding: 5px 9px 6px !important;
             border-radius: 999px !important;
             color: #ffffff !important;
             font-size: 16px !important;
             line-height: 1.08 !important;
-            font-weight: 760 !important;
+            font-weight: 600 !important;
             letter-spacing: -.2px !important;
             text-wrap: normal !important;
             background: rgba(255,255,255,.16) !important;
@@ -153,7 +152,7 @@
                 right: auto !important;
                 bottom: 10px !important;
                 max-width: calc(100% - 22px) !important;
-                padding: 6px 9px !important;
+                padding: 5px 8px !important;
             }
         }
 
