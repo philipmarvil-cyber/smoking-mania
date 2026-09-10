@@ -1,6 +1,26 @@
 (() => {
     'use strict';
 
+    // Главная страница: убираем кнопку техподдержки из шапки и делаем
+    // верх компактнее. Остальные экраны используют прежнюю высоту .header.
+    const homeLayoutStyle = document.createElement('style');
+    homeLayoutStyle.textContent = `
+        #page-shop .header {
+            min-height: calc(92px + env(safe-area-inset-top)) !important;
+            padding-top: calc(env(safe-area-inset-top) + 8px) !important;
+            padding-bottom: 12px !important;
+        }
+    `;
+    document.head.appendChild(homeLayoutStyle);
+
+    function removeSupportButton() {
+        document.querySelector('#page-shop .support-header-btn')?.remove();
+    }
+    removeSupportButton();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', removeSupportButton, { once: true });
+    }
+
     // Карточка появляется сразу с лёгкой миниатюрой, а качественная версия
     // догружается только если карточка действительно попала в/рядом с экраном.
     // Так сохраняем чёткость, но не возвращаем прежнюю массовую загрузку full
