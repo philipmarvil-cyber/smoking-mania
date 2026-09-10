@@ -127,7 +127,7 @@
             width: auto !important;
             display: inline-block !important;
             box-sizing: border-box !important;
-            padding: 5px 9px 6px !important;
+            padding: 2px 6px !important;
             border-radius: 999px !important;
             color: #ffffff !important;
             font-size: 16px !important;
@@ -152,7 +152,7 @@
                 right: auto !important;
                 bottom: 10px !important;
                 max-width: calc(100% - 22px) !important;
-                padding: 5px 8px !important;
+                padding: 2px 6px !important;
             }
         }
 
