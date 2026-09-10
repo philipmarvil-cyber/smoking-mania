@@ -6,7 +6,7 @@
     const homeLayoutStyle = document.createElement('style');
     homeLayoutStyle.textContent = `
         #page-shop .header {
-            min-height: calc(92px + env(safe-area-inset-top)) !important;
+            min-height: calc(102px + env(safe-area-inset-top)) !important;
             padding-top: calc(env(safe-area-inset-top) + 8px) !important;
             padding-bottom: 12px !important;
         }
