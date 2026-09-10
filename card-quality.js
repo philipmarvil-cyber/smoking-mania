@@ -12,7 +12,16 @@
         }
         #page-shop .search-bar.catalog-shortcut-row input,
         #page-shop .home-catalog-shortcut {
-            background: var(--tg-theme-secondary-bg-color, #eaeaed) !important;
+            background: #9e9ea0 !important;
+            color: #ffffff !important;
+        }
+        #page-shop .search-bar.catalog-shortcut-row input::placeholder {
+            color: rgba(255,255,255,.88) !important;
+            opacity: 1;
+        }
+        #page-shop .home-catalog-shortcut svg,
+        #page-shop .home-catalog-shortcut span {
+            color: #ffffff !important;
         }
     `;
     document.head.appendChild(homeLayoutStyle);
