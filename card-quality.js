@@ -65,6 +65,58 @@
             color: #1c1c1e !important;
         }
 
+        /* Каталог: без отдельного заголовка, поиск визуально один в один с главной. */
+        #page-catalog .catalog-page-title,
+        #page-catalog .catalog-page-search > svg {
+            display: none !important;
+        }
+        #page-catalog .catalog-page-search {
+            margin: 0 4px 14px !important;
+        }
+        #page-catalog .catalog-page-search input {
+            -webkit-appearance: none !important;
+            appearance: none !important;
+            width: 100% !important;
+            height: 46px !important;
+            box-sizing: border-box !important;
+            margin: 0 !important;
+            padding: 0 15px !important;
+            border: 0 !important;
+            border-radius: 20px !important;
+            outline: none !important;
+            box-shadow: none !important;
+            background: #9e9ea0 !important;
+            background-color: #9e9ea0 !important;
+            background-image: none !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            font-size: 15px !important;
+            opacity: 1 !important;
+        }
+        #page-catalog .catalog-page-search input::placeholder {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            opacity: .88 !important;
+        }
+        #page-catalog .catalog-page-search input::-webkit-search-decoration,
+        #page-catalog .catalog-page-search input::-webkit-search-cancel-button,
+        #page-catalog .catalog-page-search input::-webkit-search-results-button,
+        #page-catalog .catalog-page-search input::-webkit-search-results-decoration {
+            -webkit-appearance: none !important;
+            appearance: none !important;
+        }
+        .tg-ios #page-catalog .catalog-page-search input {
+            background: #e4e4e9 !important;
+            background-color: #e4e4e9 !important;
+            color: #1c1c1e !important;
+            -webkit-text-fill-color: #1c1c1e !important;
+        }
+        .tg-ios #page-catalog .catalog-page-search input::placeholder {
+            color: #1c1c1e !important;
+            -webkit-text-fill-color: #1c1c1e !important;
+            opacity: .72 !important;
+        }
+
         .nav-bar,
         .nav-bar .nav-item,
         .nav-bar .nav-item * {
