@@ -295,3 +295,87 @@
         .then(data => { if (data?.success) renderModernBanners(data.banners || []); })
         .catch(() => {});
 })();
+
+// Подмена стандартного спрайта каталога индивидуальными картинками,
+// которые администратор загрузил в разделе «Каталог». Сама разметка
+// каталога остаётся в storefront-enhancements.js; здесь только слой данных.
+(() => {
+    'use strict';
+
+    let artwork = {};
+    let loadedSignature = '';
+    let loadingSignature = '';
+
+    function topCategories() {
+        try {
+            return (typeof categories !== 'undefined' && Array.isArray(categories)) ? categories : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function applyArtwork() {
+        const source = topCategories();
+        const grid = document.getElementById('catalog-photo-grid');
+        if (!grid || !source.length) return;
+        const cards = [...grid.querySelectorAll('.catalog-photo-card')];
+        cards.forEach((card, index) => {
+            const category = source[index];
+            if (!category) return;
+            const imageUrl = String(artwork[String(category.id)] || '');
+            if (!imageUrl) return;
+            const escaped = imageUrl.replace(/"/g, '%22');
+            card.style.backgroundImage = `linear-gradient(90deg,rgba(14,15,18,.74) 0%,rgba(14,15,18,.42) 38%,rgba(14,15,18,.10) 72%,rgba(14,15,18,.02) 100%),url("${escaped}")`;
+            card.style.backgroundSize = '100% 100%, cover';
+            card.style.backgroundPosition = 'center, center';
+            card.style.backgroundRepeat = 'no-repeat';
+        });
+    }
+
+    async function loadArtwork() {
+        const source = topCategories();
+        const ids = source.map(category => String(category.id || '')).filter(Boolean);
+        if (!ids.length) return;
+        const signature = ids.join(',');
+        if (loadedSignature === signature) {
+            applyArtwork();
+            return;
+        }
+        if (loadingSignature === signature) return;
+        loadingSignature = signature;
+        try {
+            const response = await fetch(`/api/banners?kind=category-images&ids=${encodeURIComponent(signature)}`, { cache: 'no-store' });
+            const data = await response.json();
+            if (response.ok && data?.success) {
+                artwork = data.images || {};
+                loadedSignature = signature;
+                applyArtwork();
+            }
+        } catch (e) {
+            // При недоступном KV каталог продолжает работать на штатном спрайте.
+        } finally {
+            if (loadingSignature === signature) loadingSignature = '';
+        }
+    }
+
+    const observer = new MutationObserver(() => {
+        applyArtwork();
+        loadArtwork();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+
+    let attempts = 0;
+    const timer = setInterval(() => {
+        attempts += 1;
+        loadArtwork();
+        applyArtwork();
+        if (loadedSignature || attempts >= 30) clearInterval(timer);
+    }, 350);
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            loadedSignature = '';
+            loadArtwork();
+        }
+    });
+})();
