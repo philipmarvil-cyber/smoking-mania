@@ -97,8 +97,14 @@
         .catalog-photo-card:active { transform: scale(.985); opacity: .94; }
         .catalog-photo-card-name {
             position: absolute; left: 13px; right: 8px; bottom: 12px; z-index: 1;
-            color: #fff; font-size: 16px; font-weight: 760; line-height: 1.08;
-            letter-spacing: -.2px; text-shadow: 0 2px 8px rgba(0,0,0,.72);
+            max-width: 88%;
+            color: #fff;
+            font-size: 21px;
+            line-height: 1.04;
+            font-weight: 850;
+            letter-spacing: -.025em;
+            text-wrap: balance;
+            text-shadow: 0 2px 8px rgba(0,0,0,.72);
             overflow-wrap: normal; word-break: normal; hyphens: none;
         }
         #catalog-product-results { padding: 0 4px; }
@@ -109,7 +115,7 @@
         @media (max-width: 360px) {
             #page-catalog.catalog-page { padding-top: max(80px, calc(var(--tg-content-safe-area-inset-top, 0px) + 16px)); }
             .catalog-page-title { font-size: 27px; }
-            .catalog-photo-card-name { font-size: 14px; left: 11px; right: 7px; bottom: 10px; }
+            .catalog-photo-card-name { font-size: 19px; left: 11px; right: 7px; bottom: 10px; }
             .search-bar.catalog-shortcut-row { grid-template-columns: minmax(0, 1fr) 64px; }
             .home-catalog-shortcut { width: 64px; }
         }
