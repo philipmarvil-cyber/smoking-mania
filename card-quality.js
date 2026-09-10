@@ -3,6 +3,10 @@
 
     // Главная страница: убираем кнопку техподдержки из шапки и делаем
     // верх компактнее. Остальные экраны используют прежнюю высоту .header.
+    const telegramPlatform = String(window.Telegram?.WebApp?.platform || '').toLowerCase();
+    const isIOS = telegramPlatform === 'ios' || /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+    document.documentElement.classList.toggle('tg-ios', isIOS);
+
     const homeLayoutStyle = document.createElement('style');
     homeLayoutStyle.textContent = `
         #page-shop .header {
@@ -40,6 +44,25 @@
         #page-shop .home-catalog-shortcut svg,
         #page-shop .home-catalog-shortcut span {
             color: #ffffff !important;
+        }
+
+        .tg-ios #page-shop .search-bar.catalog-shortcut-row input,
+        .tg-ios #page-shop .home-catalog-shortcut {
+            background: #cdcdcf !important;
+            background-color: #cdcdcf !important;
+            color: #7d7d80 !important;
+        }
+        .tg-ios #page-shop .search-bar.catalog-shortcut-row input {
+            -webkit-text-fill-color: #3a3a3c !important;
+        }
+        .tg-ios #page-shop .search-bar.catalog-shortcut-row input::placeholder {
+            color: #7d7d80 !important;
+            -webkit-text-fill-color: #7d7d80 !important;
+            opacity: 1 !important;
+        }
+        .tg-ios #page-shop .home-catalog-shortcut svg,
+        .tg-ios #page-shop .home-catalog-shortcut span {
+            color: #7d7d80 !important;
         }
     `;
     document.head.appendChild(homeLayoutStyle);
