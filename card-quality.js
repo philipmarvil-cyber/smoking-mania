@@ -48,21 +48,21 @@
 
         .tg-ios #page-shop .search-bar.catalog-shortcut-row input,
         .tg-ios #page-shop .home-catalog-shortcut {
-            background: #cdcdcf !important;
-            background-color: #cdcdcf !important;
-            color: #7d7d80 !important;
+            background: #e4e4e9 !important;
+            background-color: #e4e4e9 !important;
+            color: #1c1c1e !important;
         }
         .tg-ios #page-shop .search-bar.catalog-shortcut-row input {
-            -webkit-text-fill-color: #3a3a3c !important;
+            -webkit-text-fill-color: #1c1c1e !important;
         }
         .tg-ios #page-shop .search-bar.catalog-shortcut-row input::placeholder {
-            color: #7d7d80 !important;
-            -webkit-text-fill-color: #7d7d80 !important;
-            opacity: 1 !important;
+            color: #1c1c1e !important;
+            -webkit-text-fill-color: #1c1c1e !important;
+            opacity: .72 !important;
         }
         .tg-ios #page-shop .home-catalog-shortcut svg,
         .tg-ios #page-shop .home-catalog-shortcut span {
-            color: #7d7d80 !important;
+            color: #1c1c1e !important;
         }
     `;
     document.head.appendChild(homeLayoutStyle);
