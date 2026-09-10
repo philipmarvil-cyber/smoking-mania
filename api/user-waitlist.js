@@ -1,4 +1,4 @@
-import { kvGetJson } from './_catalog-lib.js';
+import { kvGetJson, kvGetCatalog } from './_catalog-lib.js';
 
 const LOG_KEY = 'notify-subs:v1';
 
@@ -22,13 +22,16 @@ export default async function handler(req, res) {
     }
 
     try {
-        const log = (await kvGetJson(LOG_KEY)) || [];
+        const [log, catalog] = await Promise.all([
+            kvGetJson(LOG_KEY),
+            kvGetCatalog().catch(() => null)
+        ]);
         const latestByProduct = new Map();
 
         // Журнал хранится от новых к старым. Берём последнюю заявку пользователя
-        // по каждому товару, а ниже дополнительно проверяем, что подписка всё ещё
-        // активна в restock:{productId}. Поэтому уже сработавшие уведомления
-        // автоматически исчезают из списка ожидания.
+        // по каждому товару. Сработавшие заявки больше не удаляем из ответа:
+        // если товар уже появился на складе, он остаётся в списке со статусом
+        // inStock=true, чтобы клиент увидел, что именно пришло.
         for (const entry of Array.isArray(log) ? log : []) {
             if (cleanUserId(entry?.telegramUserId) !== telegramUserId) continue;
             const productId = String(entry?.productId || '').trim();
@@ -40,23 +43,39 @@ export default async function handler(req, res) {
             });
         }
 
+        const productsById = new Map(
+            (Array.isArray(catalog?.products) ? catalog.products : [])
+                .map(product => [String(product.id), product])
+        );
         const candidates = [...latestByProduct.values()];
-        const activeItems = [];
+        const items = [];
 
-        // Не создаём сотни параллельных запросов к KV, если у пользователя
-        // накопилось много заявок: проверяем небольшими пачками.
         for (let i = 0; i < candidates.length; i += 25) {
             const chunk = candidates.slice(i, i + 25);
             const checked = await Promise.all(chunk.map(async item => {
+                const product = productsById.get(item.productId) || null;
                 const subs = await kvGetJson(`restock:${item.productId}`);
                 const active = Array.isArray(subs) && subs.some(id => String(id) === telegramUserId);
-                return active ? item : null;
+                const inStock = !!product && !product.outOfStock && !product.archived;
+
+                // Активная заявка всегда остаётся. Уже сработавшую показываем,
+                // пока товар реально есть в наличии. Старые неактивные записи,
+                // которые снова исчезли со склада, не засоряют список ожидания.
+                if (!active && !inStock) return null;
+                return {
+                    ...item,
+                    active,
+                    inStock
+                };
             }));
-            activeItems.push(...checked.filter(Boolean));
+            items.push(...checked.filter(Boolean));
         }
 
-        activeItems.sort((a, b) => b.at - a.at);
-        res.status(200).json({ success: true, items: activeItems });
+        items.sort((a, b) => {
+            if (a.inStock !== b.inStock) return a.inStock ? -1 : 1;
+            return b.at - a.at;
+        });
+        res.status(200).json({ success: true, items });
     } catch (e) {
         console.error('[user-waitlist]', e?.message);
         res.status(500).json({ success: false, error: 'Не удалось загрузить список ожидания' });
