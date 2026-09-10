@@ -12,12 +12,30 @@
         }
         #page-shop .search-bar.catalog-shortcut-row input,
         #page-shop .home-catalog-shortcut {
+            -webkit-appearance: none !important;
+            appearance: none !important;
             background: #9e9ea0 !important;
+            background-color: #9e9ea0 !important;
+            background-image: none !important;
+            border: 0 !important;
+            box-shadow: none !important;
             color: #ffffff !important;
+            opacity: 1 !important;
+        }
+        #page-shop .search-bar.catalog-shortcut-row input {
+            -webkit-text-fill-color: #ffffff !important;
         }
         #page-shop .search-bar.catalog-shortcut-row input::placeholder {
-            color: rgba(255,255,255,.88) !important;
-            opacity: 1;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            opacity: .88 !important;
+        }
+        #page-shop .search-bar.catalog-shortcut-row input::-webkit-search-decoration,
+        #page-shop .search-bar.catalog-shortcut-row input::-webkit-search-cancel-button,
+        #page-shop .search-bar.catalog-shortcut-row input::-webkit-search-results-button,
+        #page-shop .search-bar.catalog-shortcut-row input::-webkit-search-results-decoration {
+            -webkit-appearance: none;
+            appearance: none;
         }
         #page-shop .home-catalog-shortcut svg,
         #page-shop .home-catalog-shortcut span {
