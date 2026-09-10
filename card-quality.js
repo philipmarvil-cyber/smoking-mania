@@ -114,8 +114,8 @@
     }
 
     // На главной оставляем лёгкие миниатюры и дозагрузку full рядом с экраном.
-    // В категориях и результатах поиска каталога сразу используем versioned
-    // full-URL, иначе WebView успевает показать старую кэшированную miniature,
+    // В категориях и результатах поиска сразу используем versioned full-URL,
+    // иначе WebView успевает показать старую кэшированную miniature,
     // а через 1–2 секунды резко подменяет её на актуальное изображение.
     const MAX_CONCURRENT = 2;
     const queue = [];
@@ -194,7 +194,7 @@
     }, { rootMargin: '220px 0px', threshold: 0.01 });
 
     function shouldUseFreshFullImmediately(img) {
-        return !!img.closest('#page-category, #catalog-product-results');
+        return !!img.closest('#page-category, #catalog-product-results, #home-search-results');
     }
 
     function watchImage(img) {
