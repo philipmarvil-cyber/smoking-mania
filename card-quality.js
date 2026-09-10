@@ -194,7 +194,7 @@
     }, { rootMargin: '220px 0px', threshold: 0.01 });
 
     function shouldUseFreshFullImmediately(img) {
-        return !!img.closest('#page-category, #catalog-product-results, #home-search-results');
+        return !!img.closest('#page-category, #catalog-product-results, #home-search-results, #favorites-container.favorites-waitlist-mode');
     }
 
     function watchImage(img) {
@@ -231,4 +231,11 @@
         });
     });
     mutations.observe(document.body, { childList: true, subtree: true });
+
+    // Дополнительный раздел «Список ожидания» внутри избранного. Загружаем
+    // отдельным маленьким скриптом, чтобы не трогать основной index.html.
+    const waitlistScript = document.createElement('script');
+    waitlistScript.src = '/favorites-waitlist.js?v=20260910a';
+    waitlistScript.async = false;
+    document.head.appendChild(waitlistScript);
 })();
