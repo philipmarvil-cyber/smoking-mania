@@ -5,10 +5,17 @@
 //
 //   GET  /api/banners                    → список баннеров (публично, без ключа)
 //   POST /api/banners?key=ADMIN_PANEL_KEY → сохранить список (личный кабинет админа)
+//
+// Этот же endpoint хранит индивидуальные картинки карточек каталога, чтобы
+// не добавлять отдельную serverless-функцию и не упираться в лимит Vercel:
+//   GET  /api/banners?kind=category-images&ids=id1,id2
+//   POST /api/banners?key=... { catalogCategoryImage: { categoryId, imageUrl } }
+//
 // В схеме v1 также храним внутреннюю цель баннера: товар / категория / URL.
 import { kvGetJson, kvSetJson } from './_catalog-lib.js';
 
 export const BANNERS_KEY = 'home-banners:v1';
+const CATEGORY_IMAGE_KEY_PREFIX = 'catalog-category-image:v1:';
 
 const DEFAULT_BANNERS = [
     {
@@ -29,7 +36,45 @@ const DEFAULT_BANNERS = [
     }
 ];
 
+function cleanCategoryId(value) {
+    return String(value || '').replace(/[^a-z0-9-]/gi, '').slice(0, 80);
+}
+
+function cleanCategoryImageUrl(value) {
+    const url = String(value || '').trim();
+    if (!url) return '';
+    if (/^https?:\/\//i.test(url)) return url.slice(0, 500000);
+    if (/^data:image\/(?:jpeg|jpg|png|webp);base64,/i.test(url)) return url.slice(0, 500000);
+    return null;
+}
+
+async function handleCategoryImagesGet(req, res) {
+    const rawIds = String(req.query?.ids || '');
+    const ids = [...new Set(rawIds.split(',').map(cleanCategoryId).filter(Boolean))].slice(0, 30);
+    if (!ids.length) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(200).json({ success: true, images: {} });
+        return;
+    }
+
+    try {
+        const entries = await Promise.all(ids.map(async id => {
+            const value = await kvGetJson(`${CATEGORY_IMAGE_KEY_PREFIX}${id}`);
+            return [id, typeof value === 'string' ? value : ''];
+        }));
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(200).json({ success: true, images: Object.fromEntries(entries) });
+    } catch (e) {
+        res.status(200).json({ success: true, images: {} });
+    }
+}
+
 async function handleGet(req, res) {
+    if (req.query?.kind === 'category-images') {
+        await handleCategoryImagesGet(req, res);
+        return;
+    }
+
     try {
         const banners = await kvGetJson(BANNERS_KEY);
         res.status(200).json({ success: true, banners: Array.isArray(banners) && banners.length ? banners : DEFAULT_BANNERS });
@@ -47,6 +92,28 @@ async function handlePost(req, res) {
     const providedKey = req.query?.key;
     if (providedKey !== requiredKey) {
         res.status(403).json({ success: false, error: 'Неверный ключ' });
+        return;
+    }
+
+    const categoryImageUpdate = req.body?.catalogCategoryImage;
+    if (categoryImageUpdate) {
+        const categoryId = cleanCategoryId(categoryImageUpdate.categoryId);
+        const imageUrl = cleanCategoryImageUrl(categoryImageUpdate.imageUrl);
+        if (!categoryId) {
+            res.status(400).json({ success: false, error: 'Не указана категория' });
+            return;
+        }
+        if (imageUrl === null) {
+            res.status(400).json({ success: false, error: 'Поддерживается JPEG/PNG/WebP или обычная https-ссылка' });
+            return;
+        }
+        try {
+            const saved = await kvSetJson(`${CATEGORY_IMAGE_KEY_PREFIX}${categoryId}`, imageUrl);
+            if (!saved) throw new Error('KV не подтвердил сохранение');
+            res.status(200).json({ success: true, categoryId, imageUrl });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message || 'Не удалось сохранить картинку категории' });
+        }
         return;
     }
 
