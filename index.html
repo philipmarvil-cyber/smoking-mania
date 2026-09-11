@@ -1635,8 +1635,10 @@
         .subcategory-heading-row .filter-label { padding:0; }
         .subcat-all-button { border:0; border-radius:999px; padding:6px 11px; background:#e4e4e9; color:#626268; font:inherit; font-size:11.5px; font-weight:700; cursor:pointer; }
         .subcat-all-button.active { background:#1c1c1e; color:#fff; }
-        .subcategory-logo-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(72px,1fr)); gap:11px 8px; padding:0 15px 15px; }
-        .subcat-logo-card { min-width:0; border:0; padding:0; background:transparent; color:#1c1c1e; font:inherit; text-align:center; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+        .subcategory-logo-grid { display:flex; gap:8px; overflow-x:auto; align-items:flex-start; padding:0 15px 15px; scrollbar-width:none; -webkit-overflow-scrolling:touch; touch-action:pan-x; }
+        .subcategory-logo-grid::-webkit-scrollbar { display:none; }
+        .subcategory-logo-grid * { touch-action:pan-x; }
+        .subcat-logo-card { flex:0 0 78px; width:78px; min-width:0; border:0; padding:0; background:transparent; color:#1c1c1e; font:inherit; text-align:center; cursor:pointer; -webkit-tap-highlight-color:transparent; }
         .subcat-logo-card:active { transform:scale(.97); }
         .subcat-logo-media { position:relative; display:flex; width:100%; aspect-ratio:1/1; align-items:center; justify-content:center; overflow:hidden; border-radius:18px; background:#fff; box-shadow:0 1px 5px rgba(24,24,28,.065); transition:box-shadow .18s ease, transform .18s ease; }
         .subcat-logo-card.active .subcat-logo-media { box-shadow:0 0 0 2px #6b2d38, 0 3px 10px rgba(107,45,56,.14); }
@@ -1644,10 +1646,11 @@
         .subcat-logo-media img[hidden] { display:none; }
         .subcat-logo-fallback { display:flex; width:54%; aspect-ratio:1/1; align-items:center; justify-content:center; border-radius:50%; background:linear-gradient(145deg,#f0ecee,#e4dadd); color:#6b2d38; font-size:20px; font-weight:850; letter-spacing:-.04em; }
         .subcat-logo-arrow { position:absolute; right:7px; bottom:7px; display:flex; width:20px; height:20px; align-items:center; justify-content:center; border-radius:50%; background:#f0f0f3; color:#626268; font-size:18px; line-height:1; box-shadow:0 1px 3px rgba(0,0,0,.08); }
-        .subcat-logo-name { display:-webkit-box; margin-top:6px; min-height:27px; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; font-size:11.5px; font-weight:700; line-height:1.16; overflow-wrap:anywhere; }
+        .subcat-logo-name { display:block; margin-top:6px; font-size:11.5px; font-weight:700; line-height:1.16; white-space:normal; overflow:visible; overflow-wrap:anywhere; }
         .filter-label { padding: 0 15px 6px 15px; font-size: 12px; font-weight: 700; color: #9a9a9e; text-transform: uppercase; letter-spacing: 0.03em; }
         @media (max-width:360px) {
-            .subcategory-logo-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px 7px; padding-left:12px; padding-right:12px; }
+            .subcategory-logo-grid { gap:7px; padding-left:12px; padding-right:12px; }
+            .subcat-logo-card { flex-basis:74px; width:74px; }
             .subcat-logo-media { border-radius:16px; }
             .subcat-logo-name { font-size:10.5px; }
         }
