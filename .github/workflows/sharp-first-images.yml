@@ -1,0 +1,187 @@
+name: Apply sharp-first product images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sharp-first-images.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Switch product cards to sharp-first images
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          card = Path('card-quality.js')
+          s = card.read_text(encoding='utf-8')
+          start_marker = '    // Instant-first: miniature никогда не убираем, пока резкая CDN-картинка\n'
+          end_marker = '    // Дополнительный раздел «Список ожидания» внутри избранного. Загружаем\n'
+          start = s.index(start_marker)
+          end = s.index(end_marker, start)
+
+          replacement = r'''    // Sharp-first: в товарной сетке больше не показываем miniature вообще.
+    // Карточка сразу получает одну резкую 640px WebP-версию из Vercel Image
+    // Optimization. Это одновременно убирает «мыло» и двойную загрузку
+    // miniature -> HQ. Повторные открытия берутся из versioned CDN/browser cache.
+    const CARD_IMAGE_WIDTH = 640;
+    const CARD_IMAGE_QUALITY = 88;
+    const SHARP_EAGER_COUNT = isMobileWebView ? 8 : 10;
+    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '700px 0px' : '1000px 0px';
+
+    function getProductById(pid) {
+        if (!pid || typeof allProducts === 'undefined') return null;
+        return allProducts.find(prod => String(prod.id) === String(pid)) || null;
+    }
+
+    function getProductForContainer(container) {
+        return getProductById(container?.dataset?.pid);
+    }
+
+    function getBaseImageUrl(prod) {
+        if (!prod?.id) return '';
+        if (prod.img) return prod.img;
+        const count = Number(prod.imageCount) || 0;
+        const version = String(prod.imageVersion || '0');
+        if (count <= 0 || version === '0') return '';
+        return `/api/product-image?id=${encodeURIComponent(prod.id)}&v=${encodeURIComponent(version)}`;
+    }
+
+    function getFullUrl(prod) {
+        const base = getBaseImageUrl(prod);
+        if (!base) return '';
+        if (/[?&]size=full(?:&|$)/.test(base)) return base;
+        return `${base}${base.includes('?') ? '&' : '?'}size=full`;
+    }
+
+    function getSharpCardUrl(prod) {
+        const source = getFullUrl(prod);
+        if (!source) return '';
+        return `/_vercel/image?url=${encodeURIComponent(source)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
+    }
+
+    function getCardIndexFromContainer(container) {
+        const card = container?.closest('.product-card');
+        const parent = card?.parentElement;
+        if (!card || !parent) return -1;
+        let index = 0;
+        for (const child of parent.children) {
+            if (!child.classList?.contains('product-card')) continue;
+            if (child === card) return index;
+            index++;
+        }
+        return -1;
+    }
+
+    function mountSharpImage(container) {
+        if (!container || container.dataset.sharpMounted === '1') return;
+        const prod = getProductForContainer(container);
+        const sharpUrl = getSharpCardUrl(prod);
+        if (!sharpUrl) return;
+
+        container.dataset.sharpMounted = '1';
+        const oldImg = container.querySelector(':scope > img');
+        const placeholder = container.querySelector(':scope > .no-photo');
+        const img = oldImg || document.createElement('img');
+        const index = getCardIndexFromContainer(container);
+
+        img.decoding = 'async';
+        img.alt = '';
+        if (index >= 0 && index < SHARP_EAGER_COUNT) {
+            img.loading = 'eager';
+            const priority = index < 4 ? 'high' : 'auto';
+            try { img.fetchPriority = priority; } catch (e) {}
+            img.setAttribute('fetchpriority', priority);
+        } else {
+            img.loading = 'lazy';
+            try { img.fetchPriority = 'auto'; } catch (e) {}
+            img.setAttribute('fetchpriority', 'auto');
+        }
+
+        // Не оставляем старую miniature даже на один кадр: пользователь либо
+        // сразу видит резкую cached/CDN-картинку, либо нейтральный фон карточки
+        // до её появления. Мыльного промежуточного состояния больше нет.
+        if (placeholder) placeholder.remove();
+        if (!oldImg) container.prepend(img);
+        const absolute = new URL(sharpUrl, location.href).href;
+        if (img.src !== absolute) img.src = sharpUrl;
+        img.dataset.imageQuality = 'sharp';
+    }
+
+    const sharpObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            sharpObserver.unobserve(entry.target);
+            mountSharpImage(entry.target);
+        });
+    }, { rootMargin: SHARP_PREFETCH_MARGIN, threshold: 0.01 });
+
+    function watchContainer(container) {
+        if (!container?.matches?.('.product-image-container')) return;
+        if (container.dataset.sharpObserved === '1') return;
+        const prod = getProductForContainer(container);
+        if (!getSharpCardUrl(prod)) return;
+        container.dataset.sharpObserved = '1';
+
+        const index = getCardIndexFromContainer(container);
+        if (index >= 0 && index < SHARP_EAGER_COUNT) {
+            mountSharpImage(container);
+        } else {
+            sharpObserver.observe(container);
+        }
+    }
+
+    function scan(root = document) {
+        if (root.matches?.('.product-image-container')) watchContainer(root);
+        root.querySelectorAll?.('.product-image-container').forEach(watchContainer);
+    }
+
+    scan();
+    const mutations = new MutationObserver(records => {
+        records.forEach(record => {
+            record.addedNodes.forEach(node => {
+                if (node.nodeType === 1) scan(node);
+            });
+        });
+    });
+    mutations.observe(document.body, { childList: true, subtree: true });
+
+'''
+          s = s[:start] + replacement + s[end:]
+          card.write_text(s, encoding='utf-8')
+
+          # Bust Telegram WebView's script cache while preserving index.html CRLF.
+          index = Path('index.html')
+          b = index.read_bytes()
+          old = b'/card-quality.js?v=20260911instant3'
+          new = b'/card-quality.js?v=20260911sharp1'
+          if old not in b:
+              raise SystemExit('card-quality loader version not found')
+          index.write_bytes(b.replace(old, new, 1))
+          PY
+
+          node --check card-quality.js
+          grep -q 'CARD_IMAGE_QUALITY = 88' card-quality.js
+          grep -q "SHARP_PREFETCH_MARGIN" card-quality.js
+          grep -q '20260911sharp1' index.html
+
+      - name: Commit sharp-first image pipeline
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/sharp-first-images.yml
+          git add card-quality.js index.html
+          git commit -m 'Show sharp product images without blurry fallback'
+          git push origin HEAD:main
