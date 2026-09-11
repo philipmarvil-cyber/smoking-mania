@@ -1060,10 +1060,10 @@
 
         // --- Страница категории ---
         // Заголовок (имя корневой категории), хлебные крошки (если спустились
-        // глубже одного уровня), поиск по всему каталогу, строка подкатегорий
+        // глубже одного уровня), поиск по всему каталогу, плитки подкатегорий
         // ТЕКУЩЕГО узла дерева (клик по разделу со своими детьми — спускается
-        // на уровень ниже и подменяет саму строку чипов; клик по листу —
-        // просто фильтрует товары) и товары.
+        // на уровень ниже и подменяет сетку; клик по листу — просто фильтрует
+        // товары) и товары. Логотипы плиток подставляет home-banners.js из KV.
         function renderCategoryScreen(screen) {
             const cat = categories.find(c => c.id === screen.categoryId);
             const page = document.getElementById('page-category');
@@ -1093,7 +1093,7 @@
                 <div class="header" style="margin-top:0;"><span>${cat.name}</span></div>
                 <div class="search-bar"><input type="text" id="category-search-input" placeholder="Поиск товаров" oninput="handleCategorySearch()"></div>
                 ${breadcrumbHtml}
-                ${currentNode.subcategories.length ? '<div class="filter-label">Подкатегория</div><div class="subcat-strip" id="subcat-strip"></div>' : ''}
+                ${currentNode.subcategories.length ? '<div class="subcategory-heading-row"><div class="filter-label">Подкатегории</div><button type="button" class="subcat-all-button" id="subcat-all-button">Все товары</button></div><div class="subcategory-logo-grid" id="subcat-strip"></div>' : ''}
                 <div class="products-grid" id="category-products-container" style="padding:15px 12px;"></div>
             `;
 
@@ -1106,19 +1106,41 @@
 
             if (currentNode.subcategories.length) {
                 const strip = document.getElementById('subcat-strip');
-                const allChip = document.createElement('div');
-                allChip.className = 'subcat-chip' + (categoryFilterState.subFolderIds ? '' : ' active');
-                allChip.textContent = 'Все';
+                const allChip = document.getElementById('subcat-all-button');
+                allChip.classList.toggle('active', !categoryFilterState.subFolderIds);
                 allChip.onclick = () => { categoryFilterState.subFolderIds = null; screen.subFolderIds = null; applyCategoryFilters(allChip); };
-                strip.appendChild(allChip);
                 currentNode.subcategories.forEach(sub => {
-                    const chip = document.createElement('div');
+                    const chip = document.createElement('button');
+                    chip.type = 'button';
                     const subFolderIds = collectFolderIds(sub);
                     const isActive = categoryFilterState.subFolderIds &&
                         categoryFilterState.subFolderIds.length === subFolderIds.length &&
                         categoryFilterState.subFolderIds.every(id => subFolderIds.includes(id));
-                    chip.className = 'subcat-chip' + (isActive ? ' active' : '');
-                    chip.textContent = sub.name + (sub.subcategories.length ? ' ›' : '');
+                    chip.className = 'subcat-logo-card' + (isActive ? ' active' : '');
+                    chip.dataset.categoryLogoId = String(sub.id || '');
+                    chip.setAttribute('aria-label', sub.name || 'Подкатегория');
+
+                    const media = document.createElement('span');
+                    media.className = 'subcat-logo-media';
+                    const image = document.createElement('img');
+                    image.alt = '';
+                    image.hidden = true;
+                    const fallback = document.createElement('span');
+                    fallback.className = 'subcat-logo-fallback';
+                    fallback.textContent = String(sub.name || '?')
+                        .split(/\s+/).filter(Boolean).slice(0, 2)
+                        .map(part => part[0]).join('').toLocaleUpperCase('ru') || '?';
+                    media.append(image, fallback);
+                    if (sub.subcategories.length) {
+                        const arrow = document.createElement('span');
+                        arrow.className = 'subcat-logo-arrow';
+                        arrow.textContent = '›';
+                        media.appendChild(arrow);
+                    }
+                    const label = document.createElement('span');
+                    label.className = 'subcat-logo-name';
+                    label.textContent = sub.name || '';
+                    chip.append(media, label);
                     if (sub.subcategories.length) {
                         // У раздела есть свои подразделы — спуск на уровень
                         // ниже теперь отдельный шаг в navStack (через
@@ -1142,6 +1164,7 @@
                     }
                     strip.appendChild(chip);
                 });
+                window.__loadCategoryArtwork?.();
             }
 
             const baseFolderIds = categoryFilterState.subFolderIds || nodeFolderIds;
@@ -1151,9 +1174,9 @@
         }
 
         // Пересчитывает список товаров из выбранной подкатегории (в рамках
-        // текущего узла drill-down) и подсвечивает активный чип.
+        // текущего узла drill-down) и подсвечивает активную плитку.
         function applyCategoryFilters(chipEl) {
-            document.querySelectorAll('#subcat-strip .subcat-chip').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('#subcat-strip .subcat-logo-card, #subcat-all-button').forEach(c => c.classList.remove('active'));
             chipEl.classList.add('active');
 
             const { cat, pathIds, subFolderIds } = categoryFilterState;
@@ -1607,13 +1630,27 @@
         .search-bar { padding: 0 15px 10px 15px; }
         .search-bar input { width: 100%; padding: 12px 15px; box-sizing: border-box; border-radius: 20px; border: none; background: #eaeaed; font-size: 15px; }
 
-        /* Горизонтальная строка подкатегорий на странице категории */
-        .subcat-strip { display: flex; gap: 8px; overflow-x: auto; padding: 0 15px 14px 15px; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
-        .subcat-strip * { touch-action: pan-x; }
-        .subcat-strip::-webkit-scrollbar { display: none; }
-        .subcat-chip { flex: 0 0 auto; padding: 8px 16px; border-radius: 20px; background: #eaeaed; color: #1c1c1e; font-size: 13.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
-        .subcat-chip.active { background: #1c1c1e; color: #fff; }
+        /* Компактные logo-card плитки подкатегорий на странице категории */
+        .subcategory-heading-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 15px 8px; }
+        .subcategory-heading-row .filter-label { padding:0; }
+        .subcat-all-button { border:0; border-radius:999px; padding:6px 11px; background:#e4e4e9; color:#626268; font:inherit; font-size:11.5px; font-weight:700; cursor:pointer; }
+        .subcat-all-button.active { background:#1c1c1e; color:#fff; }
+        .subcategory-logo-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(72px,1fr)); gap:11px 8px; padding:0 15px 15px; }
+        .subcat-logo-card { min-width:0; border:0; padding:0; background:transparent; color:#1c1c1e; font:inherit; text-align:center; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+        .subcat-logo-card:active { transform:scale(.97); }
+        .subcat-logo-media { position:relative; display:flex; width:100%; aspect-ratio:1/1; align-items:center; justify-content:center; overflow:hidden; border-radius:18px; background:#fff; box-shadow:0 1px 5px rgba(24,24,28,.065); transition:box-shadow .18s ease, transform .18s ease; }
+        .subcat-logo-card.active .subcat-logo-media { box-shadow:0 0 0 2px #6b2d38, 0 3px 10px rgba(107,45,56,.14); }
+        .subcat-logo-media img { width:76%; height:76%; object-fit:contain; display:block; }
+        .subcat-logo-media img[hidden] { display:none; }
+        .subcat-logo-fallback { display:flex; width:54%; aspect-ratio:1/1; align-items:center; justify-content:center; border-radius:50%; background:linear-gradient(145deg,#f0ecee,#e4dadd); color:#6b2d38; font-size:20px; font-weight:850; letter-spacing:-.04em; }
+        .subcat-logo-arrow { position:absolute; right:7px; bottom:7px; display:flex; width:20px; height:20px; align-items:center; justify-content:center; border-radius:50%; background:#f0f0f3; color:#626268; font-size:18px; line-height:1; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+        .subcat-logo-name { display:-webkit-box; margin-top:6px; min-height:27px; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; font-size:11.5px; font-weight:700; line-height:1.16; overflow-wrap:anywhere; }
         .filter-label { padding: 0 15px 6px 15px; font-size: 12px; font-weight: 700; color: #9a9a9e; text-transform: uppercase; letter-spacing: 0.03em; }
+        @media (max-width:360px) {
+            .subcategory-logo-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px 7px; padding-left:12px; padding-right:12px; }
+            .subcat-logo-media { border-radius:16px; }
+            .subcat-logo-name { font-size:10.5px; }
+        }
         .breadcrumb-strip { padding: 0 15px 12px 15px; font-size: 13px; color: #8a8a8e; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
         .breadcrumb-link { cursor: pointer; color: #007aff; font-weight: 600; }
         .breadcrumb-sep { padding: 0 4px; color: #c7c7cc; }
@@ -2251,6 +2288,6 @@
     <script src="/smart-search.js?v=20260817c"></script>
     <script src="/storefront-enhancements.js?v=20260817b"></script>
     <script src="/card-quality.js?v=20260817a"></script>
-    <script src="/home-banners.js?v=20260817d"></script>
+    <script src="/home-banners.js?v=20260911a"></script>
 </body>
 </html>

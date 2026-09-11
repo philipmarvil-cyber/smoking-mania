@@ -303,8 +303,8 @@
     'use strict';
 
     let artwork = {};
-    let loadedSignature = '';
-    let loadingSignature = '';
+    const loadedIds = new Set();
+    const loadingIds = new Set();
 
     function topCategories() {
         try {
@@ -312,6 +312,15 @@
         } catch (e) {
             return [];
         }
+    }
+
+    function neededCategoryIds() {
+        const ids = topCategories().map(category => String(category.id || '')).filter(Boolean);
+        document.querySelectorAll('[data-category-logo-id]').forEach(card => {
+            const id = String(card.dataset.categoryLogoId || '');
+            if (id) ids.push(id);
+        });
+        return [...new Set(ids)];
     }
 
     function applyArtwork() {
@@ -330,33 +339,48 @@
             card.style.backgroundPosition = 'center, center';
             card.style.backgroundRepeat = 'no-repeat';
         });
+
+        document.querySelectorAll('.subcat-logo-card[data-category-logo-id]').forEach(card => {
+            const imageUrl = String(artwork[String(card.dataset.categoryLogoId || '')] || '');
+            const image = card.querySelector('.subcat-logo-media img');
+            const fallback = card.querySelector('.subcat-logo-fallback');
+            if (!image || !fallback) return;
+            if (imageUrl) {
+                image.src = imageUrl;
+                image.hidden = false;
+                fallback.hidden = true;
+            } else {
+                image.removeAttribute('src');
+                image.hidden = true;
+                fallback.hidden = false;
+            }
+        });
     }
 
     async function loadArtwork() {
-        const source = topCategories();
-        const ids = source.map(category => String(category.id || '')).filter(Boolean);
-        if (!ids.length) return;
-        const signature = ids.join(',');
-        if (loadedSignature === signature) {
-            applyArtwork();
-            return;
-        }
-        if (loadingSignature === signature) return;
-        loadingSignature = signature;
+        const ids = neededCategoryIds().filter(id => !loadedIds.has(id) && !loadingIds.has(id));
+        if (!ids.length) { applyArtwork(); return; }
+        ids.forEach(id => loadingIds.add(id));
         try {
-            const response = await fetch(`/api/banners?kind=category-images&ids=${encodeURIComponent(signature)}`, { cache: 'no-store' });
-            const data = await response.json();
-            if (response.ok && data?.success) {
-                artwork = data.images || {};
-                loadedSignature = signature;
-                applyArtwork();
-            }
+            const batches = [];
+            for (let i = 0; i < ids.length; i += 30) batches.push(ids.slice(i, i + 30));
+            const results = await Promise.all(batches.map(async batch => {
+                const response = await fetch(`/api/banners?kind=category-images&ids=${encodeURIComponent(batch.join(','))}`, { cache: 'no-store' });
+                const data = await response.json();
+                if (!response.ok || !data?.success) throw new Error(data?.error || 'Картинки категорий недоступны');
+                return data.images || {};
+            }));
+            results.forEach(images => Object.assign(artwork, images));
+            ids.forEach(id => loadedIds.add(id));
+            applyArtwork();
         } catch (e) {
             // При недоступном KV каталог продолжает работать на штатном спрайте.
         } finally {
-            if (loadingSignature === signature) loadingSignature = '';
+            ids.forEach(id => loadingIds.delete(id));
         }
     }
+
+    window.__loadCategoryArtwork = loadArtwork;
 
     const observer = new MutationObserver(() => {
         applyArtwork();
@@ -369,12 +393,12 @@
         attempts += 1;
         loadArtwork();
         applyArtwork();
-        if (loadedSignature || attempts >= 30) clearInterval(timer);
+        if (loadedIds.size || attempts >= 30) clearInterval(timer);
     }, 350);
 
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
-            loadedSignature = '';
+            loadedIds.clear();
             loadArtwork();
         }
     });
