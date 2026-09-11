@@ -1,3 +1,4 @@
+# retry after preserving index bytes
 name: Finalize sharp cached card images
 
 on:
