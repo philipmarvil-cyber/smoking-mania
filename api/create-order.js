@@ -203,6 +203,40 @@ export default async function handler(req, res) {
             }
         }
 
+        // После успешного заказа купленный товар больше не должен висеть у этого
+        // клиента в «Списке ожидания». Отмечаем момент покупки по каждому товару
+        // и одновременно снимаем активную restock-подписку пользователя.
+        // Если позже он снова нажмёт «Уведомить», новая заявка будет свежее
+        // отметки покупки и товар снова сможет появиться в списке.
+        if (telegramUserId) {
+            try {
+                const purchasedKey = `waitlist-purchased:v1:${telegramUserId}`;
+                const purchasedRaw = (await kvGetJson(purchasedKey)) || {};
+                const purchased = purchasedRaw && typeof purchasedRaw === 'object' && !Array.isArray(purchasedRaw)
+                    ? purchasedRaw
+                    : {};
+                const purchasedAt = Date.now();
+                const uniqueProductIds = [...new Set(
+                    items.map(item => String(item.id || '').trim()).filter(Boolean)
+                )];
+
+                uniqueProductIds.forEach(productId => {
+                    purchased[productId] = purchasedAt;
+                });
+                await kvSetJson(purchasedKey, purchased);
+
+                await Promise.all(uniqueProductIds.map(async productId => {
+                    const restockKey = `restock:${productId}`;
+                    const subs = await kvGetJson(restockKey);
+                    if (!Array.isArray(subs)) return;
+                    const filtered = subs.filter(id => String(id) !== String(telegramUserId));
+                    if (filtered.length !== subs.length) await kvSetJson(restockKey, filtered);
+                }));
+            } catch (e) {
+                // Заказ уже создан — сбой очистки списка ожидания не должен его ломать.
+            }
+        }
+
         // Уведомление админу в Telegram о новом заказе — не полагаемся на то, что
         // МойСклад сам пришлёт push/уведомление по заказу, созданному через API:
         // на практике их нативные уведомления о новых заказах надёжно всплывают
