@@ -294,9 +294,9 @@
     // Optimization. Это одновременно убирает «мыло» и двойную загрузку
     // miniature -> HQ. Повторные открытия берутся из versioned CDN/browser cache.
     const CARD_IMAGE_WIDTH = 640;
-    const CARD_IMAGE_QUALITY = 88;
-    const SHARP_EAGER_COUNT = isMobileWebView ? 8 : 10;
-    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '700px 0px' : '1000px 0px';
+    const CARD_IMAGE_QUALITY = 82;
+    const SHARP_EAGER_COUNT = isMobileWebView ? 4 : 8;
+    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '420px 0px' : '800px 0px';
 
     function getProductById(pid) {
         if (!pid || typeof allProducts === 'undefined') return null;
@@ -328,6 +328,45 @@
         if (!source) return '';
         const absoluteSource = new URL(source, location.origin).href;
         return `/_vercel/image?url=${encodeURIComponent(absoluteSource)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
+    }
+
+    // На мобильном начинаем те же первые sharp-запросы уже при касании по бренду.
+    // Когда карточки появятся после клика, браузер переиспользует активные запросы.
+    const sharpTapPreloads = new Map();
+    const sharpTapFolders = new Set();
+
+    function prewarmTappedCategory(folderId) {
+        const key = String(folderId || '');
+        if (!key || sharpTapFolders.has(key)) return;
+        if (typeof allProducts === 'undefined' || !Array.isArray(allProducts)) return;
+        const products = allProducts
+            .filter(prod => String(prod.folderId || '') === key && getSharpCardUrl(prod))
+            .sort((a, b) => Number(!!a.outOfStock) - Number(!!b.outOfStock))
+            .slice(0, 4);
+        if (!products.length) return;
+        sharpTapFolders.add(key);
+        products.forEach(prod => {
+            const url = getSharpCardUrl(prod);
+            if (!url || sharpTapPreloads.has(url)) return;
+            const preload = new Image();
+            preload.decoding = 'async';
+            try { preload.fetchPriority = 'high'; } catch (e) {}
+            preload.setAttribute('fetchpriority', 'high');
+            sharpTapPreloads.set(url, preload);
+            const cleanup = () => setTimeout(() => sharpTapPreloads.delete(url), 30000);
+            preload.addEventListener('load', cleanup, { once: true });
+            preload.addEventListener('error', cleanup, { once: true });
+            preload.src = url;
+        });
+    }
+
+    if (isMobileWebView) {
+        document.addEventListener('pointerdown', event => {
+            const target = event.target instanceof Element ? event.target : null;
+            const chip = target?.closest('#page-category .subcat-logo-card');
+            const folderId = String(chip?.dataset?.categoryLogoId || '');
+            if (folderId) prewarmTappedCategory(folderId);
+        }, { capture: true, passive: true });
     }
 
     function getCardIndexFromContainer(container) {
