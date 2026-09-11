@@ -289,14 +289,13 @@
         }, true);
     }
 
-    // На мобильных в категориях full-фото грузим только рядом с экраном и по
-    // одной штуке. Это не даёт старому уровню дерева забить WebView декодированием
-    // изображений, если пользователь сразу ткнул следующую подкатегорию.
-    const MAX_CONCURRENT = isMobileWebView ? 1 : 2;
-    const HQ_DELAY = isMobileWebView ? 170 : 220;
-    const HQ_ROOT_MARGIN = isMobileWebView ? '70px 0px' : '220px 0px';
-    const queue = [];
-    let active = 0;
+    // Карточки товаров теперь используют одну и ту же резкую CDN-версию:
+    // оригинал -> Vercel Image Optimization -> 640px WebP q82. Для двухколоночной
+    // мобильной сетки этого достаточно даже на Retina, а вес и decode заметно
+    // ниже full-фото. URL источника содержит v, поэтому при замене фото меняется
+    // и CDN-ключ — старое изображение не может всплыть из кэша.
+    const CARD_IMAGE_WIDTH = 640;
+    const CARD_IMAGE_QUALITY = 82;
 
     function getProductForImage(img) {
         const pid = img.closest('.product-image-container')?.dataset.pid;
@@ -310,93 +309,54 @@
         return `${prod.img}${prod.img.includes('?') ? '&' : '?'}size=full`;
     }
 
-    function isStaleCategoryImage(img) {
-        if (!img?.closest('#page-category')) return false;
-        return Number(img.dataset.categoryImageEpoch || -1) !== categoryImageEpoch;
+    function getCardCdnUrl(prod) {
+        const source = getFullUrl(prod);
+        if (!source) return '';
+        return `/_vercel/image?url=${encodeURIComponent(source)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
     }
 
-    function pump() {
-        while (active < MAX_CONCURRENT && queue.length) {
-            const img = queue.shift();
-            if (!img || !document.contains(img) || img.dataset.hqState !== 'queued' || isStaleCategoryImage(img)) continue;
-
-            const prod = getProductForImage(img);
-            const fullUrl = getFullUrl(prod);
-            if (!fullUrl || img.src === new URL(fullUrl, location.href).href) {
-                img.dataset.hqState = 'done';
-                continue;
-            }
-
-            active++;
-            img.dataset.hqState = 'loading';
-            const preload = new Image();
-            preload.decoding = 'async';
-            preload.onload = () => {
-                if (document.contains(img) && !isStaleCategoryImage(img)) {
-                    img.src = fullUrl;
-                    img.dataset.hqState = 'done';
-                    img.classList.add('hq-ready');
-                }
-                active--;
-                pump();
-            };
-            preload.onerror = () => {
-                img.dataset.hqState = 'failed';
-                active--;
-                pump();
-            };
-            preload.src = fullUrl;
+    function getCardIndex(img) {
+        const card = img.closest('.product-card');
+        const parent = card?.parentElement;
+        if (!card || !parent) return -1;
+        let index = 0;
+        for (const child of parent.children) {
+            if (!child.classList?.contains('product-card')) continue;
+            if (child === card) return index;
+            index++;
         }
-    }
-
-    function enqueue(img) {
-        if (!img || img.dataset.hqState || isStaleCategoryImage(img)) return;
-        img.dataset.hqState = 'queued';
-        queue.push(img);
-        pump();
-    }
-
-    const observer = new IntersectionObserver(entries => {
-        entries.forEach(entry => {
-            const img = entry.target;
-            if (entry.isIntersecting) {
-                if (!img._hqTimer && !img.dataset.hqState) {
-                    img._hqTimer = setTimeout(() => {
-                        img._hqTimer = null;
-                        observer.unobserve(img);
-                        enqueue(img);
-                    }, HQ_DELAY);
-                }
-            } else if (img._hqTimer) {
-                clearTimeout(img._hqTimer);
-                img._hqTimer = null;
-            }
-        });
-    }, { rootMargin: HQ_ROOT_MARGIN, threshold: 0.01 });
-
-    function shouldUseFreshFullImmediately(img) {
-        if (isMobileWebView && img.closest('#page-category')) return false;
-        return !!img.closest('#page-category, #catalog-product-results, #home-search-results, #favorites-container.favorites-waitlist-mode');
+        return -1;
     }
 
     function watchImage(img) {
         if (!img || img.dataset.hqObserved || img.closest('.product-card') === null) return;
-        img.dataset.hqObserved = '1';
-        if (img.closest('#page-category')) img.dataset.categoryImageEpoch = String(categoryImageEpoch);
 
-        if (shouldUseFreshFullImmediately(img)) {
-            const prod = getProductForImage(img);
-            const fullUrl = getFullUrl(prod);
-            if (fullUrl) {
-                const absoluteFullUrl = new URL(fullUrl, location.href).href;
-                if (img.src !== absoluteFullUrl) img.src = fullUrl;
-                img.dataset.hqState = 'done';
-                img.classList.add('hq-ready');
-                return;
-            }
+        const prod = getProductForImage(img);
+        const cardUrl = getCardCdnUrl(prod);
+        if (!cardUrl) return;
+
+        img.dataset.hqObserved = '1';
+        img.dataset.hqState = 'cdn-card';
+        img.decoding = 'async';
+
+        const index = getCardIndex(img);
+        // Первый экран не откладываем: лёгкая miniature из исходной разметки
+        // появляется сразу, а резкая CDN-версия получает высокий приоритет.
+        // Всё ниже первого экрана остаётся native-lazy и не создаёт всплеска сети.
+        if (index >= 0 && index < 6) {
+            img.loading = 'eager';
+            const priority = index < 4 ? 'high' : 'auto';
+            try { img.fetchPriority = priority; } catch (e) {}
+            img.setAttribute('fetchpriority', priority);
+        } else {
+            img.loading = 'lazy';
+            try { img.fetchPriority = 'auto'; } catch (e) {}
+            img.setAttribute('fetchpriority', 'auto');
         }
 
-        observer.observe(img);
+        const absolute = new URL(cardUrl, location.href).href;
+        if (img.src !== absolute) img.src = cardUrl;
+        img.classList.add('hq-ready');
     }
 
     function scan(root = document) {
@@ -418,7 +378,7 @@
     // Дополнительный раздел «Список ожидания» внутри избранного. Загружаем
     // отдельным маленьким скриптом, чтобы не трогать основной index.html.
     const waitlistScript = document.createElement('script');
-    waitlistScript.src = '/favorites-waitlist.js?v=20260910a';
+    waitlistScript.src = '/favorites-waitlist.js?v=20260911cdn1';
     waitlistScript.async = false;
     document.head.appendChild(waitlistScript);
 })();
