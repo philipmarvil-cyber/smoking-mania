@@ -1,0 +1,157 @@
+name: Finalize sharp cached card images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/finalize-image-cdn.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch product grid image delivery
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          card = Path('card-quality.js')
+          s = card.read_text(encoding='utf-8')
+          start_marker = '    // На мобильных в категориях full-фото грузим только рядом с экраном и по\n'
+          end_marker = '    // Дополнительный раздел «Список ожидания» внутри избранного. Загружаем\n'
+          start = s.index(start_marker)
+          end = s.index(end_marker, start)
+          replacement = r'''    // Карточки товаров теперь используют одну и ту же резкую CDN-версию:
+    // оригинал -> Vercel Image Optimization -> 640px WebP q82. Для двухколоночной
+    // мобильной сетки этого достаточно даже на Retina, а вес и decode заметно
+    // ниже full-фото. URL источника содержит v, поэтому при замене фото меняется
+    // и CDN-ключ — старое изображение не может всплыть из кэша.
+    const CARD_IMAGE_WIDTH = 640;
+    const CARD_IMAGE_QUALITY = 82;
+
+    function getProductForImage(img) {
+        const pid = img.closest('.product-image-container')?.dataset.pid;
+        if (!pid || typeof allProducts === 'undefined') return null;
+        return allProducts.find(prod => String(prod.id) === String(pid)) || null;
+    }
+
+    function getFullUrl(prod) {
+        if (!prod?.img) return '';
+        if (/[?&]size=full(?:&|$)/.test(prod.img)) return prod.img;
+        return `${prod.img}${prod.img.includes('?') ? '&' : '?'}size=full`;
+    }
+
+    function getCardCdnUrl(prod) {
+        const source = getFullUrl(prod);
+        if (!source) return '';
+        return `/_vercel/image?url=${encodeURIComponent(source)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
+    }
+
+    function getCardIndex(img) {
+        const card = img.closest('.product-card');
+        const parent = card?.parentElement;
+        if (!card || !parent) return -1;
+        let index = 0;
+        for (const child of parent.children) {
+            if (!child.classList?.contains('product-card')) continue;
+            if (child === card) return index;
+            index++;
+        }
+        return -1;
+    }
+
+    function watchImage(img) {
+        if (!img || img.dataset.hqObserved || img.closest('.product-card') === null) return;
+
+        const prod = getProductForImage(img);
+        const cardUrl = getCardCdnUrl(prod);
+        if (!cardUrl) return;
+
+        img.dataset.hqObserved = '1';
+        img.dataset.hqState = 'cdn-card';
+        img.decoding = 'async';
+
+        const index = getCardIndex(img);
+        // Первый экран не откладываем: лёгкая miniature из исходной разметки
+        // появляется сразу, а резкая CDN-версия получает высокий приоритет.
+        // Всё ниже первого экрана остаётся native-lazy и не создаёт всплеска сети.
+        if (index >= 0 && index < 6) {
+            img.loading = 'eager';
+            const priority = index < 4 ? 'high' : 'auto';
+            try { img.fetchPriority = priority; } catch (e) {}
+            img.setAttribute('fetchpriority', priority);
+        } else {
+            img.loading = 'lazy';
+            try { img.fetchPriority = 'auto'; } catch (e) {}
+            img.setAttribute('fetchpriority', 'auto');
+        }
+
+        const absolute = new URL(cardUrl, location.href).href;
+        if (img.src !== absolute) img.src = cardUrl;
+        img.classList.add('hq-ready');
+    }
+
+    function scan(root = document) {
+        if (root.matches?.('.product-card .product-image-container img')) watchImage(root);
+        root.querySelectorAll?.('.product-card .product-image-container img').forEach(watchImage);
+    }
+
+    scan();
+
+    const mutations = new MutationObserver(records => {
+        records.forEach(record => {
+            record.addedNodes.forEach(node => {
+                if (node.nodeType === 1) scan(node);
+            });
+        });
+    });
+    mutations.observe(document.body, { childList: true, subtree: true });
+
+'''
+          s = s[:start] + replacement + s[end:]
+          s = s.replace('/favorites-waitlist.js?v=20260910a', '/favorites-waitlist.js?v=20260911cdn1')
+          card.write_text(s, encoding='utf-8')
+
+          waitlist = Path('favorites-waitlist.js')
+          w = waitlist.read_text(encoding='utf-8')
+          old_start = '    // На iPhone/Android карточки категории сразу показывают лёгкую miniature.\n'
+          old_end = '    function getUserId() {\n'
+          if old_start in w:
+              a = w.index(old_start)
+              b = w.index(old_end, a)
+              w = w[:a] + w[b:]
+          waitlist.write_text(w, encoding='utf-8')
+
+          index = Path('index.html')
+          h = index.read_text(encoding='utf-8')
+          old = '/card-quality.js?v=20260817a'
+          new = '/card-quality.js?v=20260911cdn1'
+          if old not in h and new not in h:
+              raise SystemExit('card-quality loader not found')
+          h = h.replace(old, new, 1)
+          index.write_text(h, encoding='utf-8')
+          PY
+
+          node --check card-quality.js
+          node --check favorites-waitlist.js
+          git diff --check
+          grep -q 'CARD_IMAGE_WIDTH = 640' card-quality.js
+          grep -q 'card-quality.js?v=20260911cdn1' index.html
+
+      - name: Commit optimized delivery
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/finalize-image-cdn.yml
+          git add card-quality.js favorites-waitlist.js index.html
+          git commit -m 'Use sharp cached CDN images in product grids'
+          git push origin HEAD:main
