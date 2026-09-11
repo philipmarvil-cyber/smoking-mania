@@ -289,24 +289,41 @@
         }, true);
     }
 
-    // Карточки товаров теперь используют одну и ту же резкую CDN-версию:
-    // оригинал -> Vercel Image Optimization -> 640px WebP q82. Для двухколоночной
-    // мобильной сетки этого достаточно даже на Retina, а вес и decode заметно
-    // ниже full-фото. URL источника содержит v, поэтому при замене фото меняется
-    // и CDN-ключ — старое изображение не может всплыть из кэша.
+    // Instant-first: miniature никогда не убираем, пока резкая CDN-картинка
+    // реально не загрузилась. Раньше мы сразу меняли img.src на /_vercel/image,
+    // из-за чего при быстром скролле WebView показывал пустую белую карточку.
+    // Теперь первый кадр всегда берётся из лёгкой versioned miniature, а 640px
+    // WebP подменяет её только после onload. Это сохраняет резкость без мигания.
     const CARD_IMAGE_WIDTH = 640;
     const CARD_IMAGE_QUALITY = 82;
+    const MINI_EAGER_COUNT = isMobileWebView ? 20 : 12;
+    const HQ_MAX_CONCURRENT = isMobileWebView ? 2 : 3;
+    const hqQueue = [];
+    let hqActive = 0;
 
-    function getProductForImage(img) {
-        const pid = img.closest('.product-image-container')?.dataset.pid;
+    function getProductById(pid) {
         if (!pid || typeof allProducts === 'undefined') return null;
         return allProducts.find(prod => String(prod.id) === String(pid)) || null;
     }
 
+    function getProductForImage(img) {
+        return getProductById(img.closest('.product-image-container')?.dataset.pid);
+    }
+
+    function getMiniUrl(prod) {
+        if (!prod?.id) return '';
+        if (prod.img) return prod.img;
+        const count = Number(prod.imageCount) || 0;
+        const version = String(prod.imageVersion || '0');
+        if (count <= 0 || version === '0') return '';
+        return `/api/product-image?id=${encodeURIComponent(prod.id)}&v=${encodeURIComponent(version)}`;
+    }
+
     function getFullUrl(prod) {
-        if (!prod?.img) return '';
-        if (/[?&]size=full(?:&|$)/.test(prod.img)) return prod.img;
-        return `${prod.img}${prod.img.includes('?') ? '&' : '?'}size=full`;
+        const mini = getMiniUrl(prod);
+        if (!mini) return '';
+        if (/[?&]size=full(?:&|$)/.test(mini)) return mini;
+        return `${mini}${mini.includes('?') ? '&' : '?'}size=full`;
     }
 
     function getCardCdnUrl(prod) {
@@ -315,8 +332,8 @@
         return `/_vercel/image?url=${encodeURIComponent(source)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
     }
 
-    function getCardIndex(img) {
-        const card = img.closest('.product-card');
+    function getCardIndexFromContainer(container) {
+        const card = container?.closest('.product-card');
         const parent = card?.parentElement;
         if (!card || !parent) return -1;
         let index = 0;
@@ -328,24 +345,78 @@
         return -1;
     }
 
-    function watchImage(img) {
-        if (!img || img.dataset.hqObserved || img.closest('.product-card') === null) return;
+    function getCardIndex(img) {
+        return getCardIndexFromContainer(img.closest('.product-image-container'));
+    }
 
+    function isStaleCategoryImage(img) {
+        if (!img?.closest('#page-category')) return false;
+        return Number(img.dataset.categoryImageEpoch || -1) !== categoryImageEpoch;
+    }
+
+    function pumpHq() {
+        while (hqActive < HQ_MAX_CONCURRENT && hqQueue.length) {
+            const job = hqQueue.shift();
+            const img = job?.img;
+            if (!img || !document.contains(img) || isStaleCategoryImage(img)) continue;
+            if (img.dataset.hqState !== 'queued') continue;
+
+            hqActive++;
+            img.dataset.hqState = 'loading';
+            const preload = new Image();
+            preload.decoding = 'async';
+            preload.onload = () => {
+                if (document.contains(img) && !isStaleCategoryImage(img)) {
+                    img.src = job.url;
+                    img.dataset.hqState = 'done';
+                    img.classList.add('hq-ready');
+                }
+                hqActive--;
+                pumpHq();
+            };
+            preload.onerror = () => {
+                if (document.contains(img)) img.dataset.hqState = 'mini-only';
+                hqActive--;
+                pumpHq();
+            };
+            preload.src = job.url;
+        }
+    }
+
+    function enqueueHq(img) {
+        if (!img || isStaleCategoryImage(img)) return;
+        if (img.dataset.hqState && img.dataset.hqState !== 'mini' && img.dataset.hqState !== 'mini-only') return;
         const prod = getProductForImage(img);
-        const cardUrl = getCardCdnUrl(prod);
-        if (!cardUrl) return;
+        const url = getCardCdnUrl(prod);
+        if (!url) return;
+        const absolute = new URL(url, location.href).href;
+        if (img.src === absolute) {
+            img.dataset.hqState = 'done';
+            return;
+        }
+        img.dataset.hqState = 'queued';
+        hqQueue.push({ img, url });
+        pumpHq();
+    }
 
-        img.dataset.hqObserved = '1';
-        img.dataset.hqState = 'cdn-card';
-        img.decoding = 'async';
+    const hqObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            hqObserver.unobserve(entry.target);
+            enqueueHq(entry.target);
+        });
+    }, { rootMargin: isMobileWebView ? '420px 0px' : '650px 0px', threshold: 0.01 });
+
+    function prepareMini(img) {
+        const prod = getProductForImage(img);
+        const miniUrl = getMiniUrl(prod);
+        if (!miniUrl) return false;
 
         const index = getCardIndex(img);
-        // Первый экран не откладываем: лёгкая miniature из исходной разметки
-        // появляется сразу, а резкая CDN-версия получает высокий приоритет.
-        // Всё ниже первого экрана остаётся native-lazy и не создаёт всплеска сети.
-        if (index >= 0 && index < 6) {
+        img.decoding = 'async';
+        if (index >= 0 && index < MINI_EAGER_COUNT) {
             img.loading = 'eager';
-            const priority = index < 4 ? 'high' : 'auto';
+            const priority = index < 6 ? 'high' : 'auto';
             try { img.fetchPriority = priority; } catch (e) {}
             img.setAttribute('fetchpriority', priority);
         } else {
@@ -354,12 +425,37 @@
             img.setAttribute('fetchpriority', 'auto');
         }
 
-        const absolute = new URL(cardUrl, location.href).href;
-        if (img.src !== absolute) img.src = cardUrl;
-        img.classList.add('hq-ready');
+        if (!img.getAttribute('src')) img.src = miniUrl;
+        return true;
+    }
+
+    function watchImage(img) {
+        if (!img || img.dataset.hqObserved || img.closest('.product-card') === null) return;
+        if (!prepareMini(img)) return;
+        img.dataset.hqObserved = '1';
+        if (img.closest('#page-category')) img.dataset.categoryImageEpoch = String(categoryImageEpoch);
+        img.dataset.hqState = 'mini';
+        hqObserver.observe(img);
+    }
+
+    function rescueNoPhoto(container) {
+        if (!container?.matches?.('.product-image-container')) return;
+        const placeholder = container.querySelector(':scope > .no-photo');
+        if (!placeholder) return;
+        const prod = getProductById(container.dataset.pid);
+        const miniUrl = getMiniUrl(prod);
+        if (!miniUrl) return;
+
+        const img = document.createElement('img');
+        img.src = miniUrl;
+        img.alt = '';
+        placeholder.replaceWith(img);
+        watchImage(img);
     }
 
     function scan(root = document) {
+        if (root.matches?.('.product-image-container')) rescueNoPhoto(root);
+        root.querySelectorAll?.('.product-image-container').forEach(rescueNoPhoto);
         if (root.matches?.('.product-card .product-image-container img')) watchImage(root);
         root.querySelectorAll?.('.product-card .product-image-container img').forEach(watchImage);
     }

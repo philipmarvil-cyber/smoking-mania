@@ -2030,7 +2030,7 @@
     <script>
         // --- Мгновенная загрузка: сначала рисуем каталог из localStorage,
         // потом в фоне обновляем данные с сервера. ---
-        const LOCAL_CATALOG_KEY = 'catalog_cache_v2';
+        const LOCAL_CATALOG_KEY = 'catalog_cache_v3';
 
         // Эти категории убраны из витрины полностью (по просьбе) — их товары
         // остаются доступны через поиск и на главной, но плитки категорий нет.
@@ -2046,7 +2046,7 @@
                 id: prod.id,
                 name: prod.name,
                 price: prod.price || 0,
-                img: prod.img || '',
+                img: prod.img || ((Number(prod.imageCount) > 0 && prod.imageVersion && String(prod.imageVersion) !== '0') ? `/api/product-image?id=${encodeURIComponent(prod.id)}&v=${encodeURIComponent(prod.imageVersion)}` : ''),
                 description: prod.description || '',
                 archived: !!prod.outOfStock,
                 folderId: prod.folderId || null,
@@ -2291,7 +2291,7 @@
     </script>
     <script src="/smart-search.js?v=20260817c"></script>
     <script src="/storefront-enhancements.js?v=20260817b"></script>
-    <script src="/card-quality.js?v=20260911cdn1"></script>
+    <script src="/card-quality.js?v=20260911instant2"></script>
     <script src="/home-banners.js?v=20260911a"></script>
 </body>
 </html>
