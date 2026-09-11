@@ -1,15 +1,15 @@
 (() => {
     'use strict';
 
-    // Главная страница: убираем кнопку техподдержки из шапки и делаем
-    // верх компактнее. Остальные экраны используют прежнюю высоту .header.
+    // Все пользовательские экраны держим на той же компактной верхней
+    // геометрии, что и главная: одинаковая высота шапки и safe-area отступы.
     const telegramPlatform = String(window.Telegram?.WebApp?.platform || '').toLowerCase();
     const isIOS = telegramPlatform === 'ios' || /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
     document.documentElement.classList.toggle('tg-ios', isIOS);
 
     const homeLayoutStyle = document.createElement('style');
     homeLayoutStyle.textContent = `
-        #page-shop .header {
+        .page .header {
             min-height: calc(108px + env(safe-area-inset-top)) !important;
             padding-top: calc(env(safe-area-inset-top) + 8px) !important;
             padding-bottom: 12px !important;
@@ -65,9 +65,9 @@
             color: #1c1c1e !important;
         }
 
-        /* Каталог: без отдельного заголовка, поиск визуально один в один с главной. */
+        /* Каталог без .header: начинаем контент на той же высоте, что и главная. */
         #page-catalog.catalog-page {
-            padding-top: max(104px, calc(var(--tg-content-safe-area-inset-top, 0px) + 38px)) !important;
+            padding-top: calc(108px + env(safe-area-inset-top)) !important;
         }
         #page-catalog .catalog-page-title,
         #page-catalog .catalog-page-search > svg {
