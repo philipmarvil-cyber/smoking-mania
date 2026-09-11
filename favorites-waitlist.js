@@ -101,8 +101,8 @@
             z-index: 3;
             left: 4px;
             right: auto;
-            top: auto;
-            bottom: 4px;
+            top: 4px;
+            bottom: auto;
             padding: 5px 8px;
             border-radius: 999px;
             background: #34c759;
@@ -111,6 +111,9 @@
             line-height: 1;
             font-weight: 800;
             box-shadow: 0 2px 8px rgba(0,0,0,.14);
+        }
+        #favorites-container.favorites-waitlist-mode .waitlist-available-card .new-badge {
+            top: 28px;
         }
         #favorites-container .waitlist-loading,
         #favorites-container .waitlist-error,
@@ -385,6 +388,19 @@
             getContainer()?.classList.remove('favorites-waitlist-mode');
             if (refresh) loadWaitlist(true);
         }
+    }
+
+    // toggleFavorite() из основного приложения после изменения сердечка обычно
+    // вызывает renderFavorites(), если открыт экран «Избранное». Во вкладке
+    // ожидания это раньше заменяло всю сетку ожидания обычным избранным.
+    const previousRenderFavorites = window.renderFavorites;
+    if (typeof previousRenderFavorites === 'function') {
+        window.renderFavorites = function renderFavoritesWithWaitlistGuard(...args) {
+            if (activeSection === 'waitlist' && getContainer()?.classList.contains('favorites-waitlist-mode')) {
+                return;
+            }
+            return previousRenderFavorites.apply(this, args);
+        };
     }
 
     const previousRenderScreen = window.renderScreen;
