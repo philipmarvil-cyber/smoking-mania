@@ -69,3 +69,5 @@ jobs:
           git add card-quality.js index.html
           git commit -m 'Stop duplicate product image upgrades'
           git push origin HEAD:main
+
+# retry-existing-workflow
