@@ -389,20 +389,24 @@ export async function loadCatalogData() {
         // карты. При первом показе /api/product-image безопасно получит свежий
         // /images и положит его в 7-дневный точечный кэш. Это также покрывает
         // замену/добавление/удаление фотографий без массовых image-запросов.
-        const updatedAt = Date.parse(String(product.updated || '').replace(' ', 'T'));
-        const changedSinceLastSync = !previous ||
-            imageCount !== previousImageCount ||
-            (previousSyncedAt > 0 && Number.isFinite(updatedAt) && updatedAt > previousSyncedAt);
+        // Цена, название, описание и другие поля товара могут менять product.updated,
+        // но к фотографии это отношения не имеет. Раньше любая такая правка
+        // сбрасывала href/version картинки и следующий покупатель снова становился
+        // первым, кто идёт в API МойСклад. Сохраняем image-cache, пока количество
+        // фотографий не изменилось. Это резко уменьшает холодные image-запросы.
+        const imageStructureChanged = !previous || imageCount !== previousImageCount;
+        const canReuseKnownImage = imageCount > 0 && !imageStructureChanged &&
+            previous?.imageVersion && previous.imageVersion !== '0';
 
-        if (imageCount > 0 && !changedSinceLastSync && previousImageHrefs[product.id]) {
+        if (canReuseKnownImage && previousImageHrefs[product.id]) {
             imageHrefs[product.id] = previousImageHrefs[product.id];
         }
 
         const hasPhoto = imageCount > 0;
         const imgVer = hasPhoto
-            ? (changedSinceLastSync
-                ? shortHash([product.updated || '', imageCount].join('|'))
-                : (previous?.imageVersion || shortHash([product.updated || '', imageCount].join('|'))))
+            ? (canReuseKnownImage
+                ? previous.imageVersion
+                : shortHash([product.updated || '', imageCount].join('|')))
             : '0';
 
         return {

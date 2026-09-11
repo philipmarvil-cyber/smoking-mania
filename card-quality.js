@@ -296,8 +296,8 @@
     // WebP подменяет её только после onload. Это сохраняет резкость без мигания.
     const CARD_IMAGE_WIDTH = 640;
     const CARD_IMAGE_QUALITY = 82;
-    const MINI_EAGER_COUNT = isMobileWebView ? 20 : 12;
-    const HQ_MAX_CONCURRENT = isMobileWebView ? 2 : 3;
+    const MINI_EAGER_COUNT = isMobileWebView ? 8 : 10;
+    const HQ_MAX_CONCURRENT = isMobileWebView ? 1 : 2;
     const hqQueue = [];
     let hqActive = 0;
 
@@ -405,7 +405,7 @@
             hqObserver.unobserve(entry.target);
             enqueueHq(entry.target);
         });
-    }, { rootMargin: isMobileWebView ? '420px 0px' : '650px 0px', threshold: 0.01 });
+    }, { rootMargin: isMobileWebView ? '260px 0px' : '650px 0px', threshold: 0.01 });
 
     function prepareMini(img) {
         const prod = getProductForImage(img);
@@ -429,13 +429,34 @@
         return true;
     }
 
+    function armHqAfterMini(img) {
+        if (!img || img.dataset.hqArm === '1') return;
+        img.dataset.hqArm = '1';
+
+        const startHq = () => {
+            if (!document.contains(img) || isStaleCategoryImage(img)) return;
+            if (!img.naturalWidth) return;
+            img.dataset.miniReady = '1';
+            hqObserver.observe(img);
+        };
+
+        // На мобильной сети full/640px больше не конкурирует с miniature.
+        // Сначала пользователь гарантированно получает маленькое фото,
+        // и только после его onload начинаем фоновое улучшение качества.
+        if (img.complete && img.naturalWidth > 0) {
+            startHq();
+        } else {
+            img.addEventListener('load', startHq, { once: true });
+        }
+    }
+
     function watchImage(img) {
         if (!img || img.dataset.hqObserved || img.closest('.product-card') === null) return;
         if (!prepareMini(img)) return;
         img.dataset.hqObserved = '1';
         if (img.closest('#page-category')) img.dataset.categoryImageEpoch = String(categoryImageEpoch);
         img.dataset.hqState = 'mini';
-        hqObserver.observe(img);
+        armHqAfterMini(img);
     }
 
     function rescueNoPhoto(container) {
