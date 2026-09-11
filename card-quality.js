@@ -120,7 +120,7 @@
             opacity: .72 !important;
         }
 
-        /* Названия категорий: стеклянная капсула как плашка «Новый Бренд». */
+        /* Названия категорий: уменьшенная стеклянная капсула в стиле «Новый Бренд». */
         #page-catalog .catalog-photo-card-name {
             right: auto !important;
             width: auto !important;
@@ -129,37 +129,37 @@
             align-items: center !important;
             justify-content: center !important;
             box-sizing: border-box !important;
-            min-height: 30px !important;
-            padding: 4px 13px 5px !important;
+            min-height: 16px !important;
+            padding: 1px 7px 2px !important;
             border-radius: 999px !important;
             color: #ffffff !important;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif !important;
-            font-size: 15px !important;
-            line-height: 20px !important;
+            font-size: 11px !important;
+            line-height: 13px !important;
             font-weight: 600 !important;
             letter-spacing: 0 !important;
             white-space: nowrap !important;
             text-wrap: nowrap !important;
             background: rgba(175, 184, 184, .22) !important;
-            border: 1px solid rgba(255,255,255,.34) !important;
+            border: .5px solid rgba(255,255,255,.34) !important;
             -webkit-backdrop-filter: blur(10px) saturate(145%) !important;
             backdrop-filter: blur(10px) saturate(145%) !important;
             box-shadow:
-                inset 0 1px 0 rgba(255,255,255,.18),
-                inset 0 -1px 0 rgba(255,255,255,.06),
-                0 2px 7px rgba(0,0,0,.10) !important;
-            text-shadow: 0 1px 2px rgba(0,0,0,.16) !important;
+                inset 0 .5px 0 rgba(255,255,255,.18),
+                inset 0 -.5px 0 rgba(255,255,255,.06),
+                0 1px 4px rgba(0,0,0,.08) !important;
+            text-shadow: 0 .5px 1px rgba(0,0,0,.14) !important;
         }
         @media (max-width: 360px) {
             #page-catalog .catalog-photo-card-name {
-                font-size: 14px !important;
-                line-height: 18px !important;
-                min-height: 28px !important;
+                font-size: 10px !important;
+                line-height: 12px !important;
+                min-height: 15px !important;
                 left: 11px !important;
                 right: auto !important;
                 bottom: 10px !important;
                 max-width: calc(100% - 22px) !important;
-                padding: 4px 11px 5px !important;
+                padding: 1px 6px 2px !important;
             }
         }
 
