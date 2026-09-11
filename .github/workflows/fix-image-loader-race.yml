@@ -1,0 +1,71 @@
+name: Fix product image loader race
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-image-loader-race.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Make sharp loader the single card image owner
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          card = Path('card-quality.js')
+          s = card.read_text(encoding='utf-8')
+          old = """        const absolute = new URL(sharpUrl, location.href).href;
+        const fullFallback = getFullUrl(prod);
+        img.onerror = () => {
+"""
+          new = """        const absolute = new URL(sharpUrl, location.href).href;
+        const fullFallback = getFullUrl(prod);
+
+        // index.html still has the old delayed full-image upgrader. It schedules
+        // an `upgrade` callback and later reads data-full-src again. Point that
+        // legacy callback at the exact same sharp URL so it cannot start a
+        // second full-size request or replace an already visible sharp image.
+        // MutationObserver runs before requestIdleCallback / 300ms timeout, so
+        // this takes ownership before the legacy upgrader actually fires.
+        if (img.dataset.fullSrc) img.dataset.fullSrc = sharpUrl;
+
+        img.onerror = () => {
+"""
+          if old not in s:
+              raise SystemExit('mountSharpImage anchor not found')
+          card.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          index = Path('index.html')
+          b = index.read_bytes()
+          old_ver = b'/card-quality.js?v=20260911sharp2'
+          new_ver = b'/card-quality.js?v=20260911sharp3'
+          if old_ver not in b:
+              raise SystemExit('card-quality sharp2 loader not found')
+          index.write_bytes(b.replace(old_ver, new_ver, 1))
+          PY
+
+          node --check card-quality.js
+          grep -q 'img.dataset.fullSrc = sharpUrl' card-quality.js
+          grep -q '20260911sharp3' index.html
+
+      - name: Commit image race fix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix-image-loader-race.yml
+          git add card-quality.js index.html
+          git commit -m 'Stop duplicate product image upgrades'
+          git push origin HEAD:main
