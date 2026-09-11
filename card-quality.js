@@ -326,7 +326,8 @@
     function getSharpCardUrl(prod) {
         const source = getFullUrl(prod);
         if (!source) return '';
-        return `/_vercel/image?url=${encodeURIComponent(source)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
+        const absoluteSource = new URL(source, location.origin).href;
+        return `/_vercel/image?url=${encodeURIComponent(absoluteSource)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
     }
 
     function getCardIndexFromContainer(container) {
@@ -370,6 +371,12 @@
         if (placeholder) placeholder.remove();
         if (!oldImg) container.prepend(img);
         const absolute = new URL(sharpUrl, location.href).href;
+        const fullFallback = getFullUrl(prod);
+        img.onerror = () => {
+            if (img.dataset.fullFallbackTried === '1' || !fullFallback) return;
+            img.dataset.fullFallbackTried = '1';
+            img.src = fullFallback;
+        };
         if (img.src !== absolute) img.src = sharpUrl;
         img.dataset.imageQuality = 'sharp';
     }
