@@ -127,23 +127,24 @@
             width: auto !important;
             display: inline-block !important;
             box-sizing: border-box !important;
-            padding: 2px 6px !important;
+            padding: 1px 5px !important;
             border-radius: 999px !important;
             color: #ffffff !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
             font-size: 16px !important;
             line-height: 1.08 !important;
             font-weight: 400 !important;
             letter-spacing: -.2px !important;
             text-wrap: normal !important;
-            background: rgba(255,255,255,.16) !important;
-            border: 1px solid rgba(255,255,255,.24) !important;
-            -webkit-backdrop-filter: blur(12px) saturate(165%) !important;
-            backdrop-filter: blur(12px) saturate(165%) !important;
+            background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.06)) !important;
+            border: 1px solid rgba(255,255,255,.28) !important;
+            -webkit-backdrop-filter: blur(12px) saturate(140%) !important;
+            backdrop-filter: blur(12px) saturate(140%) !important;
             box-shadow:
-                inset 0 1px 0 rgba(255,255,255,.24),
+                inset 0 1px 0 rgba(255,255,255,.18),
                 inset 0 -1px 0 rgba(255,255,255,.07),
-                0 4px 14px rgba(0,0,0,.14) !important;
-            text-shadow: 0 1px 5px rgba(0,0,0,.42) !important;
+                0 2px 5px rgba(0,0,0,.12) !important;
+            text-shadow: 0 1px 2px rgba(0,0,0,.48) !important;
         }
         @media (max-width: 360px) {
             #page-catalog .catalog-photo-card-name {
@@ -152,7 +153,7 @@
                 right: auto !important;
                 bottom: 10px !important;
                 max-width: calc(100% - 22px) !important;
-                padding: 2px 6px !important;
+                padding: 1px 5px !important;
             }
         }
 
