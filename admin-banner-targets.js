@@ -253,6 +253,7 @@
 (() => {
     'use strict';
 
+    let rootCategoriesCache = [];
     let categoriesCache = [];
     let imagesCache = {};
     let artworkLoaded = false;
@@ -276,6 +277,16 @@
         return result;
     }
 
+    const DEFAULT_VISUALS = [
+        { test: /мерч/i, y: '0%' },
+        { test: /колб/i, y: '16.6667%' },
+        { test: /смес/i, y: '33.3333%' },
+        { test: /кальян/i, y: '50%' },
+        { test: /угол/i, y: '66.6667%' },
+        { test: /аксессуар/i, y: '83.3333%' },
+        { test: /чаш/i, y: '100%' }
+    ];
+
     function artworkStyle() {
         if (document.getElementById('catalog-artwork-admin-style')) return;
         const style = document.createElement('style');
@@ -284,6 +295,8 @@
             .catalog-artwork-admin { margin-top:18px; }
             .catalog-artwork-card { background:#fff; border-radius:14px; padding:12px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,.05); display:grid; grid-template-columns:112px minmax(0,1fr); gap:12px; align-items:center; }
             .catalog-artwork-preview { width:112px; aspect-ratio:1/1; border-radius:18px; overflow:hidden; background:#fff; background-repeat:no-repeat; background-position:center; box-shadow:0 1px 5px rgba(24,24,28,.08); display:flex; align-items:center; justify-content:center; }
+            .catalog-artwork-card.cover { grid-template-columns:150px minmax(0,1fr); }
+            .catalog-artwork-card.cover .catalog-artwork-preview { width:150px; aspect-ratio:1.48/1; border-radius:12px; background-color:#272a2f; }
             .catalog-artwork-preview-fallback { display:flex; width:54%; aspect-ratio:1/1; align-items:center; justify-content:center; border-radius:50%; background:linear-gradient(145deg,#f0ecee,#e4dadd); color:#6b2d38; font-size:24px; font-weight:850; letter-spacing:-.04em; }
             .catalog-artwork-name { font-size:14px; font-weight:800; margin-bottom:6px; }
             .catalog-artwork-path { color:#8e8e93; font-size:10.5px; line-height:1.3; margin:-2px 0 5px; }
@@ -298,6 +311,8 @@
             @media (max-width:620px) {
                 .catalog-artwork-card { grid-template-columns:88px minmax(0,1fr); gap:10px; }
                 .catalog-artwork-preview { width:88px; border-radius:16px; }
+                .catalog-artwork-card.cover { grid-template-columns:112px minmax(0,1fr); }
+                .catalog-artwork-card.cover .catalog-artwork-preview { width:112px; }
             }
         `;
         document.head.appendChild(style);
@@ -311,9 +326,12 @@
         section.id = 'catalog-artwork-admin';
         section.className = 'catalog-artwork-admin';
         section.innerHTML = `
-            <div class="section-heading">Логотипы категорий</div>
-            <p class="sub" style="margin-top:-6px; margin-bottom:12px;">Загрузите логотип для любой категории или подкатегории. Он появится на плитках внутри каталога; без логотипа показывается аккуратная заглушка с названием.</p>
-            <div id="catalog-artwork-list"><div class="catalog-artwork-loading">Откройте раздел «Каталог», чтобы загрузить категории.</div></div>`;
+            <div class="section-heading">Картинки карточек страницы «Каталог»</div>
+            <p class="sub" style="margin-top:-6px; margin-bottom:12px;">Отдельные большие обложки верхнеуровневых категорий. Здесь остаётся прежнее управление картинками страницы «Каталог».</p>
+            <div id="catalog-cover-list"><div class="catalog-artwork-loading">Откройте раздел «Каталог», чтобы загрузить категории.</div></div>
+            <div class="section-heading" style="margin-top:24px;">Логотипы подкатегорий</div>
+            <p class="sub" style="margin-top:-6px; margin-bottom:12px;">Логотипы для компактных свайп-плиток внутри товарных категорий. Без логотипа показывается аккуратная заглушка с названием.</p>
+            <div id="subcategory-logo-list"><div class="catalog-artwork-loading">Откройте раздел «Каталог», чтобы загрузить подкатегории.</div></div>`;
         panel.appendChild(section);
     }
 
@@ -322,50 +340,68 @@
             .map(part => part[0]).join('').toLocaleUpperCase('ru') || '?';
     }
 
-    function setFallbackPreview(preview, category) {
+    function visualFor(name, index) {
+        const found = DEFAULT_VISUALS.find(item => item.test.test(String(name || '')));
+        return found?.y || `${Math.max(0, Math.min(6, index)) * (100 / 6)}%`;
+    }
+
+    function setLogoFallbackPreview(preview, category) {
         preview.style.backgroundImage = '';
         preview.style.backgroundSize = '';
         preview.innerHTML = `<span class="catalog-artwork-preview-fallback">${safe(initials(category.name))}</span>`;
     }
 
-    function setCustomPreview(preview, imageUrl) {
+    function setCoverFallbackPreview(preview, category, index) {
+        preview.innerHTML = '';
+        preview.style.backgroundImage = `linear-gradient(90deg,rgba(14,15,18,.32),rgba(14,15,18,.02)),url('/assets/category-sprite.jpg?v=20260910b')`;
+        preview.style.backgroundSize = '100% 100%, auto 700%';
+        preview.style.backgroundPosition = `center, right ${visualFor(category.name, index)}`;
+    }
+
+    function setCustomPreview(preview, imageUrl, isCover) {
         preview.innerHTML = '';
         preview.style.backgroundImage = `url("${String(imageUrl || '').replace(/"/g, '%22')}")`;
-        preview.style.backgroundSize = '76% 76%';
+        preview.style.backgroundSize = isCover ? 'cover' : '76% 76%';
         preview.style.backgroundPosition = 'center';
     }
 
     function renderArtworkList() {
         ensureArtworkUi();
-        const list = document.getElementById('catalog-artwork-list');
+        renderArtworkGroup('catalog-cover-list', rootCategoriesCache, true);
+        renderArtworkGroup('subcategory-logo-list', categoriesCache, false);
+    }
+
+    function renderArtworkGroup(listId, source, isCover) {
+        const list = document.getElementById(listId);
         if (!list) return;
-        if (!categoriesCache.length) {
-            list.innerHTML = '<div class="catalog-artwork-loading">Категории пока не найдены.</div>';
+        if (!source.length) {
+            list.innerHTML = `<div class="catalog-artwork-loading">${isCover ? 'Категории' : 'Подкатегории'} пока не найдены.</div>`;
             return;
         }
-
         list.innerHTML = '';
-        categoriesCache.forEach((category, index) => {
+        source.forEach((category, index) => {
             const id = String(category.id || '');
             const current = String(imagesCache[id] || '');
             const card = document.createElement('div');
-            card.className = 'catalog-artwork-card';
+            card.className = 'catalog-artwork-card' + (isCover ? ' cover' : '');
             card.innerHTML = `
                 <div class="catalog-artwork-preview"></div>
                 <div>
                     <div class="catalog-artwork-name">${safe(category.name || 'Категория')}</div>
-                    ${category.depth ? `<div class="catalog-artwork-path">${safe(category.pathLabel)}</div>` : ''}
-                    <div class="catalog-artwork-state">${current ? 'Логотип загружен' : 'Показывается заглушка'}</div>
+                    ${!isCover && category.pathLabel ? `<div class="catalog-artwork-path">${safe(category.pathLabel)}</div>` : ''}
+                    <div class="catalog-artwork-state">${current ? (isCover ? 'Используется своя картинка' : 'Логотип загружен') : (isCover ? 'Используется стандартная картинка' : 'Показывается заглушка')}</div>
                     <div class="catalog-artwork-actions">
-                        <button type="button" class="catalog-artwork-btn primary choose">${current ? 'Заменить' : 'Загрузить'}</button>
-                        ${current ? '<button type="button" class="catalog-artwork-btn reset">Удалить логотип</button>' : ''}
+                        <button type="button" class="catalog-artwork-btn primary choose">${isCover ? 'Выбрать фото' : (current ? 'Заменить' : 'Загрузить')}</button>
+                        ${current ? `<button type="button" class="catalog-artwork-btn reset">${isCover ? 'Вернуть стандартную' : 'Удалить логотип'}</button>` : ''}
                         <input class="file" type="file" accept="image/jpeg,image/png,image/webp" hidden>
                     </div>
                     <div class="catalog-artwork-status"></div>
                 </div>`;
 
             const preview = card.querySelector('.catalog-artwork-preview');
-            if (current) setCustomPreview(preview, current); else setFallbackPreview(preview, category);
+            if (current) setCustomPreview(preview, current, isCover);
+            else if (isCover) setCoverFallbackPreview(preview, category, index);
+            else setLogoFallbackPreview(preview, category);
 
             const fileInput = card.querySelector('.file');
             const choose = card.querySelector('.choose');
@@ -381,11 +417,11 @@
                 status.textContent = 'Подготавливаем и сохраняем…';
                 status.style.color = '#8e8e93';
                 try {
-                    const dataUrl = await compressImage(file);
+                    const dataUrl = await compressImage(file, isCover);
                     await saveArtwork(id, dataUrl);
                     imagesCache[id] = dataUrl;
                     renderArtworkList();
-                    const fresh = [...document.querySelectorAll('.catalog-artwork-card')][index]?.querySelector('.catalog-artwork-status');
+                    const fresh = [...document.getElementById(listId).querySelectorAll('.catalog-artwork-card')][index]?.querySelector('.catalog-artwork-status');
                     if (fresh) { fresh.textContent = 'Сохранено ✓'; fresh.style.color = '#1f7a4d'; }
                 } catch (e) {
                     status.textContent = 'Ошибка: ' + (e.message || 'не удалось сохранить');
@@ -398,14 +434,14 @@
             if (reset) reset.addEventListener('click', async () => {
                 reset.disabled = true;
                 choose.disabled = true;
-                status.textContent = 'Возвращаем стандартную…';
+                status.textContent = isCover ? 'Возвращаем стандартную…' : 'Удаляем логотип…';
                 status.style.color = '#8e8e93';
                 try {
                     await saveArtwork(id, '');
                     imagesCache[id] = '';
                     renderArtworkList();
-                    const fresh = [...document.querySelectorAll('.catalog-artwork-card')][index]?.querySelector('.catalog-artwork-status');
-                    if (fresh) { fresh.textContent = 'Логотип удалён ✓'; fresh.style.color = '#1f7a4d'; }
+                    const fresh = [...document.getElementById(listId).querySelectorAll('.catalog-artwork-card')][index]?.querySelector('.catalog-artwork-status');
+                    if (fresh) { fresh.textContent = isCover ? 'Стандартная картинка возвращена ✓' : 'Логотип удалён ✓'; fresh.style.color = '#1f7a4d'; }
                 } catch (e) {
                     status.textContent = 'Ошибка: ' + (e.message || 'не удалось сохранить');
                     status.style.color = '#d9482b';
@@ -418,7 +454,7 @@
         });
     }
 
-    function compressImage(file) {
+    function compressImage(file, isCover = false) {
         return new Promise((resolve, reject) => {
             if (!file.type.startsWith('image/')) { reject(new Error('Выберите изображение')); return; }
             const reader = new FileReader();
@@ -427,7 +463,7 @@
                 const image = new Image();
                 image.onerror = () => reject(new Error('Не удалось открыть изображение'));
                 image.onload = () => {
-                    const maxSide = 512;
+                    const maxSide = isCover ? 900 : 512;
                     const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
                     const width = Math.max(1, Math.round(image.naturalWidth * scale));
                     const height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -435,10 +471,15 @@
                     canvas.width = width;
                     canvas.height = height;
                     const ctx = canvas.getContext('2d');
-                    ctx.clearRect(0, 0, width, height);
+                    if (isCover) {
+                        ctx.fillStyle = '#292b30';
+                        ctx.fillRect(0, 0, width, height);
+                    } else {
+                        ctx.clearRect(0, 0, width, height);
+                    }
                     ctx.drawImage(image, 0, 0, width, height);
-                    let result = canvas.toDataURL('image/webp', 0.86);
-                    if (result.length > 470000) result = canvas.toDataURL('image/webp', 0.68);
+                    let result = isCover ? canvas.toDataURL('image/jpeg', 0.78) : canvas.toDataURL('image/webp', 0.86);
+                    if (result.length > 470000) result = isCover ? canvas.toDataURL('image/jpeg', 0.62) : canvas.toDataURL('image/webp', 0.68);
                     if (result.length > 495000) { reject(new Error('Фото получилось слишком большим. Возьмите изображение меньшего размера.')); return; }
                     resolve(result);
                 };
@@ -464,14 +505,17 @@
         ensureArtworkUi();
         if (artworkLoading || (artworkLoaded && !force)) return;
         artworkLoading = true;
-        const list = document.getElementById('catalog-artwork-list');
-        if (list) list.innerHTML = '<div class="catalog-artwork-loading">Загружаем категории и картинки…</div>';
+        const coverList = document.getElementById('catalog-cover-list');
+        const logoList = document.getElementById('subcategory-logo-list');
+        if (coverList) coverList.innerHTML = '<div class="catalog-artwork-loading">Загружаем категории и картинки…</div>';
+        if (logoList) logoList.innerHTML = '<div class="catalog-artwork-loading">Загружаем подкатегории и логотипы…</div>';
         try {
             const catalogResponse = await fetch('/api/get-data', { cache: 'no-store' });
             const catalogData = await catalogResponse.json();
             if (!catalogResponse.ok || !Array.isArray(catalogData.categories)) throw new Error(catalogData.error || 'Каталог недоступен');
-            categoriesCache = flattenCategoryTree(catalogData.categories || []);
-            const ids = categoriesCache.map(category => String(category.id || '')).filter(Boolean);
+            rootCategoriesCache = catalogData.categories || [];
+            categoriesCache = flattenCategoryTree(rootCategoriesCache).filter(category => category.depth > 0);
+            const ids = [...rootCategoriesCache, ...categoriesCache].map(category => String(category.id || '')).filter(Boolean);
             const batches = [];
             for (let i = 0; i < ids.length; i += 30) batches.push(ids.slice(i, i + 30));
             const imageGroups = await Promise.all(batches.map(async batch => {
@@ -484,7 +528,9 @@
             artworkLoaded = true;
             renderArtworkList();
         } catch (e) {
-            if (list) list.innerHTML = `<div class="catalog-artwork-loading" style="color:#d9482b;">${safe(e.message || 'Ошибка загрузки')}</div>`;
+            const errorHtml = `<div class="catalog-artwork-loading" style="color:#d9482b;">${safe(e.message || 'Ошибка загрузки')}</div>`;
+            if (coverList) coverList.innerHTML = errorHtml;
+            if (logoList) logoList.innerHTML = errorHtml;
         } finally {
             artworkLoading = false;
         }
