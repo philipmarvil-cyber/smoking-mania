@@ -26,110 +26,61 @@ jobs:
 
           card = Path('card-quality.js')
           s = card.read_text(encoding='utf-8')
+          s = s.replace('    const CARD_IMAGE_QUALITY = 88;\n', '    const CARD_IMAGE_QUALITY = 82;\n', 1)
+          s = s.replace('    const SHARP_EAGER_COUNT = isMobileWebView ? 8 : 10;\n', '    const SHARP_EAGER_COUNT = isMobileWebView ? 4 : 8;\n', 1)
+          s = s.replace("    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '700px 0px' : '1000px 0px';\n", "    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '420px 0px' : '800px 0px';\n", 1)
 
-          old_constants = """    const CARD_IMAGE_WIDTH = 640;
-    const CARD_IMAGE_QUALITY = 88;
-    const SHARP_EAGER_COUNT = isMobileWebView ? 8 : 10;
-    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '700px 0px' : '1000px 0px';
-"""
-          new_constants = """    const CARD_IMAGE_WIDTH = 640;
-    const CARD_IMAGE_QUALITY = 82;
-    // На телефоне одновременно приоритизируем только первый экран (2x2).
-    // Восемь eager-картинок делили мобильный канал и каждая появлялась позже.
-    const SHARP_EAGER_COUNT = isMobileWebView ? 4 : 8;
-    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '420px 0px' : '800px 0px';
-"""
-          if old_constants not in s:
-              raise SystemExit('sharp constants block not found')
-          s = s.replace(old_constants, new_constants, 1)
+          anchor = '    function getCardIndexFromContainer(container) {\n'
+          preload_code = (
+              "    // На мобильном начинаем те же первые sharp-запросы уже при касании по бренду.\n"
+              "    // Когда карточки появятся после клика, браузер переиспользует активные запросы.\n"
+              "    const sharpTapPreloads = new Map();\n"
+              "    const sharpTapFolders = new Set();\n\n"
+              "    function prewarmTappedCategory(folderId) {\n"
+              "        const key = String(folderId || '');\n"
+              "        if (!key || sharpTapFolders.has(key)) return;\n"
+              "        if (typeof allProducts === 'undefined' || !Array.isArray(allProducts)) return;\n"
+              "        const products = allProducts\n"
+              "            .filter(prod => String(prod.folderId || '') === key && getSharpCardUrl(prod))\n"
+              "            .sort((a, b) => Number(!!a.outOfStock) - Number(!!b.outOfStock))\n"
+              "            .slice(0, 4);\n"
+              "        if (!products.length) return;\n"
+              "        sharpTapFolders.add(key);\n"
+              "        products.forEach(prod => {\n"
+              "            const url = getSharpCardUrl(prod);\n"
+              "            if (!url || sharpTapPreloads.has(url)) return;\n"
+              "            const preload = new Image();\n"
+              "            preload.decoding = 'async';\n"
+              "            try { preload.fetchPriority = 'high'; } catch (e) {}\n"
+              "            preload.setAttribute('fetchpriority', 'high');\n"
+              "            sharpTapPreloads.set(url, preload);\n"
+              "            const cleanup = () => setTimeout(() => sharpTapPreloads.delete(url), 30000);\n"
+              "            preload.addEventListener('load', cleanup, { once: true });\n"
+              "            preload.addEventListener('error', cleanup, { once: true });\n"
+              "            preload.src = url;\n"
+              "        });\n"
+              "    }\n\n"
+              "    if (isMobileWebView) {\n"
+              "        document.addEventListener('pointerdown', event => {\n"
+              "            const target = event.target instanceof Element ? event.target : null;\n"
+              "            const chip = target?.closest('#page-category .subcat-logo-card');\n"
+              "            const folderId = String(chip?.dataset?.categoryLogoId || '');\n"
+              "            if (folderId) prewarmTappedCategory(folderId);\n"
+              "        }, { capture: true, passive: true });\n"
+              "    }\n\n"
+          )
+          if 'const sharpTapPreloads = new Map();' not in s:
+              if anchor not in s:
+                  raise SystemExit('card index anchor not found')
+              s = s.replace(anchor, preload_code + anchor, 1)
 
-          anchor = """    function getCardIndexFromContainer(container) {
-"""
-          preload_code = r'''    // Начинаем загрузку первых sharp-картинок ещё на pointerdown по логотипу
-    // подкатегории. К моменту renderCategoryScreen браузер уже имеет активный
-    // запрос на тот же URL и переиспользует его вместо второго скачивания.
-    // Это не добавляет обращений к МойСклад — только сдвигает те же 4 запроса
-    // на несколько десятков/сотен миллисекунд раньше.
-    const sharpPreloads = new Map();
-    const sharpPrewarmedFolders = new Set();
-
-    function findCategoryNode(nodes, id) {
-        const wanted = String(id || '');
-        for (const node of (nodes || [])) {
-            if (String(node?.id || '') === wanted) return node;
-            const nested = findCategoryNode(node?.subcategories || [], wanted);
-            if (nested) return nested;
-        }
-        return null;
-    }
-
-    function collectCategoryIds(node, result = new Set()) {
-        if (!node) return result;
-        if (node.id) result.add(String(node.id));
-        (node.subcategories || []).forEach(child => collectCategoryIds(child, result));
-        return result;
-    }
-
-    function prewarmCategorySharp(folderId, limit = 4) {
-        const key = String(folderId || '');
-        if (!key || sharpPrewarmedFolders.has(key)) return;
-        if (typeof allProducts === 'undefined' || !Array.isArray(allProducts)) return;
-        if (typeof categories === 'undefined' || !Array.isArray(categories)) return;
-
-        const node = findCategoryNode(categories, key);
-        const ids = node ? collectCategoryIds(node) : new Set([key]);
-        const products = allProducts
-            .filter(prod => ids.has(String(prod.folderId || '')) && getSharpCardUrl(prod))
-            .sort((a, b) => Number(!!a.outOfStock) - Number(!!b.outOfStock))
-            .slice(0, limit);
-        if (!products.length) return;
-
-        sharpPrewarmedFolders.add(key);
-        products.forEach(prod => {
-            const url = getSharpCardUrl(prod);
-            if (!url || sharpPreloads.has(url)) return;
-            const preload = new Image();
-            preload.decoding = 'async';
-            try { preload.fetchPriority = 'high'; } catch (e) {}
-            preload.setAttribute('fetchpriority', 'high');
-            sharpPreloads.set(url, preload);
-            const cleanup = () => setTimeout(() => sharpPreloads.delete(url), 30000);
-            preload.addEventListener('load', cleanup, { once: true });
-            preload.addEventListener('error', cleanup, { once: true });
-            preload.src = url;
-        });
-    }
-
-    if (isMobileWebView) {
-        document.addEventListener('pointerdown', event => {
-            const target = event.target instanceof Element ? event.target : null;
-            const chip = target?.closest('#page-category .subcat-logo-card');
-            if (!chip) return;
-            const folderId = String(chip.dataset.categoryLogoId || '');
-            if (folderId) prewarmCategorySharp(folderId, 4);
-        }, { capture: true, passive: true });
-    }
-
-'''
-          if anchor not in s:
-              raise SystemExit('card index anchor not found')
-          s = s.replace(anchor, preload_code + anchor, 1)
           card.write_text(s, encoding='utf-8')
-
-          index = Path('index.html')
-          b = index.read_bytes()
-          old = b'/card-quality.js?v=20260911sharp1'
-          new = b'/card-quality.js?v=20260911sharp2'
-          if old not in b:
-              raise SystemExit('card-quality loader version not found')
-          index.write_bytes(b.replace(old, new, 1))
           PY
 
           node --check card-quality.js
           grep -q 'CARD_IMAGE_QUALITY = 82' card-quality.js
           grep -q 'SHARP_EAGER_COUNT = isMobileWebView ? 4' card-quality.js
-          grep -q 'prewarmCategorySharp' card-quality.js
-          grep -q '20260911sharp2' index.html
+          grep -q 'prewarmTappedCategory' card-quality.js
 
       - name: Commit mobile sharp loading fix
         shell: bash
@@ -137,6 +88,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git rm .github/workflows/mobile-sharp-prefetch.yml
-          git add card-quality.js index.html
+          git add card-quality.js
           git commit -m 'Start sharp product images earlier on mobile'
           git push origin HEAD:main
