@@ -1,6 +1,7 @@
 import { kvGetJson, kvGetCatalog } from './_catalog-lib.js';
 
 const LOG_KEY = 'notify-subs:v1';
+const PURCHASED_PREFIX = 'waitlist-purchased:v1:';
 
 function cleanUserId(value) {
     const id = String(value || '').trim();
@@ -22,11 +23,15 @@ export default async function handler(req, res) {
     }
 
     try {
-        const [log, catalog] = await Promise.all([
+        const [log, catalog, purchasedRaw] = await Promise.all([
             kvGetJson(LOG_KEY),
-            kvGetCatalog().catch(() => null)
+            kvGetCatalog().catch(() => null),
+            kvGetJson(PURCHASED_PREFIX + telegramUserId).catch(() => null)
         ]);
         const latestByProduct = new Map();
+        const purchased = purchasedRaw && typeof purchasedRaw === 'object' && !Array.isArray(purchasedRaw)
+            ? purchasedRaw
+            : {};
 
         // Журнал хранится от новых к старым. Берём последнюю заявку пользователя
         // по каждому товару. Сработавшие заявки больше не удаляем из ответа:
@@ -47,7 +52,15 @@ export default async function handler(req, res) {
             (Array.isArray(catalog?.products) ? catalog.products : [])
                 .map(product => [String(product.id), product])
         );
-        const candidates = [...latestByProduct.values()];
+
+        // Если после нажатия «Уведомить» клиент уже заказал этот товар,
+        // больше не показываем его в списке ожидания. Если позже клиент снова
+        // нажмёт «Уведомить», новая заявка будет свежее отметки покупки и товар
+        // сможет появиться в списке снова.
+        const candidates = [...latestByProduct.values()].filter(item => {
+            const purchasedAt = Number(purchased[item.productId]) || 0;
+            return !purchasedAt || purchasedAt < item.at;
+        });
         const items = [];
 
         for (let i = 0; i < candidates.length; i += 25) {
