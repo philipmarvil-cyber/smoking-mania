@@ -163,6 +163,18 @@
             }
         }
 
+        /* iOS WebView: убираем лишние анимации/перерисовки именно в drill-down категорий. */
+        .tg-ios #page-category .subcat-logo-card,
+        .tg-ios #page-category .subcat-logo-media {
+            transition: none !important;
+        }
+        .tg-ios #page-category .subcat-logo-card:active {
+            transform: none !important;
+        }
+        .tg-ios #page-category .product-card {
+            contain: paint;
+        }
+
         .nav-bar,
         .nav-bar .nav-item,
         .nav-bar .nav-item * {
@@ -211,11 +223,54 @@
         document.addEventListener('DOMContentLoaded', removeSupportButton, { once: true });
     }
 
+    // На iPhone переход между ветками дерева не должен прогонять весь общий
+    // renderScreen: он трогает все страницы, nav, scroll restoration и трижды
+    // пересчитывает layout. Остаёмся в том же category-screen и меняем только
+    // pathIds — goBack уже умеет подниматься по этому пути на уровень назад.
+    if (isIOS) {
+        document.addEventListener('click', event => {
+            const target = event.target instanceof Element ? event.target : null;
+            const chip = target?.closest('#page-category .subcat-logo-card');
+            if (!chip || !chip.querySelector('.subcat-logo-arrow')) return;
+
+            const screen = typeof window.currentScreen === 'function' ? window.currentScreen() : null;
+            if (!screen || screen.type !== 'category') return;
+            if (typeof categories === 'undefined' || !Array.isArray(categories)) return;
+
+            const root = categories.find(cat => cat.id === screen.categoryId);
+            if (!root) return;
+            let node = root;
+            for (const id of (screen.pathIds || [])) {
+                const next = (node.subcategories || []).find(sub => sub.id === id);
+                if (!next) break;
+                node = next;
+            }
+
+            const rawId = String(chip.dataset.categoryLogoId || '');
+            const child = (node.subcategories || []).find(sub => String(sub.id) === rawId);
+            if (!child || !(child.subcategories || []).length) return;
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            chip.classList.add('active');
+
+            requestAnimationFrame(() => {
+                screen.pathIds = [...(screen.pathIds || []), child.id];
+                screen.subFolderIds = null;
+                if (typeof window.renderCategoryScreen === 'function') {
+                    window.renderCategoryScreen(screen);
+                    window.scrollTo(0, 1);
+                }
+            });
+        }, true);
+    }
+
     // На главной оставляем лёгкие миниатюры и дозагрузку full рядом с экраном.
-    // В категориях и результатах поиска сразу используем versioned full-URL,
-    // иначе WebView успевает показать старую кэшированную miniature,
-    // а через 1–2 секунды резко подменяет её на актуальное изображение.
-    const MAX_CONCURRENT = 2;
+    // На iOS в категориях тоже грузим full лениво: мгновенный апгрейд 20+ фото
+    // одновременно был одним из главных источников фризов при смене подкатегории.
+    const MAX_CONCURRENT = isIOS ? 1 : 2;
+    const HQ_DELAY = isIOS ? 120 : 220;
+    const HQ_ROOT_MARGIN = isIOS ? '90px 0px' : '220px 0px';
     const queue = [];
     let active = 0;
 
@@ -282,16 +337,17 @@
                         img._hqTimer = null;
                         observer.unobserve(img);
                         enqueue(img);
-                    }, 220);
+                    }, HQ_DELAY);
                 }
             } else if (img._hqTimer) {
                 clearTimeout(img._hqTimer);
                 img._hqTimer = null;
             }
         });
-    }, { rootMargin: '220px 0px', threshold: 0.01 });
+    }, { rootMargin: HQ_ROOT_MARGIN, threshold: 0.01 });
 
     function shouldUseFreshFullImmediately(img) {
+        if (isIOS && img.closest('#page-category')) return false;
         return !!img.closest('#page-category, #catalog-product-results, #home-search-results, #favorites-container.favorites-waitlist-mode');
     }
 
