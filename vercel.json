@@ -1,5 +1,15 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
+  "images": {
+    "sizes": [384, 640, 750, 1080],
+    "localPatterns": [
+      { "pathname": "^/api/product-image$" }
+    ],
+    "minimumCacheTTL": 2592000,
+    "qualities": [82],
+    "formats": ["image/webp"]
+  },
   "functions": {
     "api/sync-catalog.js": { "maxDuration": 60 },
     "api/order-webhook.js": { "maxDuration": 30 },
