@@ -142,6 +142,64 @@
     `;
     document.head.appendChild(style);
 
+    // На iPhone/Android карточки категории сразу показывают лёгкую miniature.
+    // Она уже versioned и агрессивно кэшируется /api/product-image, поэтому
+    // повторные заходы должны брать её из WebView/CDN cache практически сразу.
+    // Full-фото в двухколоночной сетке не нужно: оно создаёт лишний decode/IO и
+    // как раз давало задержку после предыдущей антилаг-оптимизации.
+    const telegramPlatform = String(window.Telegram?.WebApp?.platform || '').toLowerCase();
+    const mobileUA = String(navigator.userAgent || '');
+    const isMobileTelegram = telegramPlatform === 'ios' || telegramPlatform === 'android' || /iPhone|iPad|iPod|Android/i.test(mobileUA);
+
+    function tuneCategoryThumb(img) {
+        if (!isMobileTelegram || !img || !img.closest('#page-category')) return;
+
+        // card-quality.js видит это состояние и не запускает delayed full-upgrade.
+        img.dataset.hqState = 'mini-only';
+        img.decoding = 'async';
+
+        const card = img.closest('.product-card');
+        const container = card?.parentElement;
+        let cardIndex = -1;
+        if (card && container) {
+            let visibleIndex = 0;
+            for (const child of container.children) {
+                if (!child.classList?.contains('product-card')) continue;
+                if (child === card) { cardIndex = visibleIndex; break; }
+                visibleIndex++;
+            }
+        }
+
+        // Первые 6 карточек — то, что пользователь реально видит сразу.
+        // Их браузеру запрещаем откладывать как lazy; остальные остаются lazy,
+        // чтобы не забивать сеть/декодер и не возвращать лаги при быстрых тапах.
+        if (cardIndex >= 0 && cardIndex < 6) {
+            img.loading = 'eager';
+            try { img.fetchPriority = cardIndex < 4 ? 'high' : 'auto'; } catch (e) {}
+            img.setAttribute('fetchpriority', cardIndex < 4 ? 'high' : 'auto');
+        } else {
+            img.loading = 'lazy';
+            try { img.fetchPriority = 'auto'; } catch (e) {}
+            img.setAttribute('fetchpriority', 'auto');
+        }
+    }
+
+    function tuneCategoryThumbs(root = document) {
+        if (!isMobileTelegram) return;
+        if (root.matches?.('#page-category .product-card .product-image-container img')) tuneCategoryThumb(root);
+        root.querySelectorAll?.('#page-category .product-card .product-image-container img').forEach(tuneCategoryThumb);
+    }
+
+    tuneCategoryThumbs();
+    if (isMobileTelegram) {
+        const categoryThumbObserver = new MutationObserver(records => {
+            records.forEach(record => record.addedNodes.forEach(node => {
+                if (node.nodeType === 1) tuneCategoryThumbs(node);
+            }));
+        });
+        categoryThumbObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
     function getUserId() {
         const fromTelegram = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
         if (fromTelegram) return String(fromTelegram);
