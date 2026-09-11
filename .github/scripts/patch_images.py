@@ -107,11 +107,13 @@ if old_start in w:
     w = w[:a] + w[b:]
 waitlist.write_text(w, encoding='utf-8')
 
+# index.html исторически CRLF + локальные trailing spaces. Меняем только байты
+# URL скрипта, чтобы не переформатировать весь файл и не трогать старую разметку.
 index = Path('index.html')
-h = index.read_text(encoding='utf-8')
-old = '/card-quality.js?v=20260817a'
-new = '/card-quality.js?v=20260911cdn1'
+h = index.read_bytes()
+old = b'/card-quality.js?v=20260817a'
+new = b'/card-quality.js?v=20260911cdn1'
 if old not in h and new not in h:
     raise SystemExit('card-quality loader not found')
 h = h.replace(old, new, 1)
-index.write_text(h, encoding='utf-8')
+index.write_bytes(h)
