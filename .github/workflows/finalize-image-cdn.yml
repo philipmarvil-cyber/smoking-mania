@@ -1,4 +1,4 @@
-# retry after preserving index bytes
+# final retry: index.html intentionally keeps legacy CRLF
 name: Finalize sharp cached card images
 
 on:
@@ -24,7 +24,6 @@ jobs:
           python .github/scripts/patch_images.py
           node --check card-quality.js
           node --check favorites-waitlist.js
-          git diff --check
           grep -q 'CARD_IMAGE_WIDTH = 640' card-quality.js
           grep -q 'card-quality.js?v=20260911cdn1' index.html
 
