@@ -127,33 +127,32 @@
             width: auto !important;
             display: inline-block !important;
             box-sizing: border-box !important;
-            padding: 1px 5px !important;
+            padding: 0 4px !important;
             border-radius: 999px !important;
             color: #ffffff !important;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-            font-size: 16px !important;
-            line-height: 1.08 !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif !important;
+            font-size: 13px !important;
+            line-height: 17px !important;
             font-weight: 400 !important;
-            letter-spacing: -.2px !important;
+            letter-spacing: normal !important;
             text-wrap: normal !important;
-            background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.06)) !important;
-            border: 1px solid rgba(255,255,255,.28) !important;
+            background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03)) !important;
+            border: 0 !important;
             -webkit-backdrop-filter: blur(12px) saturate(140%) !important;
             backdrop-filter: blur(12px) saturate(140%) !important;
             box-shadow:
-                inset 0 1px 0 rgba(255,255,255,.18),
-                inset 0 -1px 0 rgba(255,255,255,.07),
-                0 2px 5px rgba(0,0,0,.12) !important;
-            text-shadow: 0 1px 2px rgba(0,0,0,.48) !important;
+                inset 0 0 0 .5px rgba(255,255,255,.3),
+                0 1px 3px rgba(0,0,0,.08) !important;
+            text-shadow: none !important;
         }
         @media (max-width: 360px) {
             #page-catalog .catalog-photo-card-name {
-                font-size: 14px !important;
+                font-size: 13px !important;
                 left: 11px !important;
                 right: auto !important;
                 bottom: 10px !important;
                 max-width: calc(100% - 22px) !important;
-                padding: 1px 5px !important;
+                padding: 0 4px !important;
             }
         }
 
