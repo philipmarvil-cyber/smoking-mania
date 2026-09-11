@@ -120,39 +120,46 @@
             opacity: .72 !important;
         }
 
-        /* Названия категорий: прозрачная стеклянная iOS-подложка. */
+        /* Названия категорий: стеклянная капсула как плашка «Новый Бренд». */
         #page-catalog .catalog-photo-card-name {
             right: auto !important;
-            max-width: calc(100% - 26px) !important;
             width: auto !important;
-            display: inline-block !important;
+            max-width: calc(100% - 26px) !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
             box-sizing: border-box !important;
-            padding: 0 4px !important;
+            min-height: 30px !important;
+            padding: 4px 13px 5px !important;
             border-radius: 999px !important;
             color: #ffffff !important;
-            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif !important;
-            font-size: 13px !important;
-            line-height: 17px !important;
-            font-weight: 400 !important;
-            letter-spacing: normal !important;
-            text-wrap: normal !important;
-            background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03)) !important;
-            border: 0 !important;
-            -webkit-backdrop-filter: blur(12px) saturate(140%) !important;
-            backdrop-filter: blur(12px) saturate(140%) !important;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif !important;
+            font-size: 15px !important;
+            line-height: 20px !important;
+            font-weight: 600 !important;
+            letter-spacing: 0 !important;
+            white-space: nowrap !important;
+            text-wrap: nowrap !important;
+            background: rgba(175, 184, 184, .22) !important;
+            border: 1px solid rgba(255,255,255,.34) !important;
+            -webkit-backdrop-filter: blur(10px) saturate(145%) !important;
+            backdrop-filter: blur(10px) saturate(145%) !important;
             box-shadow:
-                inset 0 0 0 .5px rgba(255,255,255,.3),
-                0 1px 3px rgba(0,0,0,.08) !important;
-            text-shadow: none !important;
+                inset 0 1px 0 rgba(255,255,255,.18),
+                inset 0 -1px 0 rgba(255,255,255,.06),
+                0 2px 7px rgba(0,0,0,.10) !important;
+            text-shadow: 0 1px 2px rgba(0,0,0,.16) !important;
         }
         @media (max-width: 360px) {
             #page-catalog .catalog-photo-card-name {
-                font-size: 13px !important;
+                font-size: 14px !important;
+                line-height: 18px !important;
+                min-height: 28px !important;
                 left: 11px !important;
                 right: auto !important;
                 bottom: 10px !important;
                 max-width: calc(100% - 22px) !important;
-                padding: 0 4px !important;
+                padding: 4px 11px 5px !important;
             }
         }
 
