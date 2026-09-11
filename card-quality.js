@@ -289,28 +289,25 @@
         }, true);
     }
 
-    // Instant-first: miniature никогда не убираем, пока резкая CDN-картинка
-    // реально не загрузилась. Раньше мы сразу меняли img.src на /_vercel/image,
-    // из-за чего при быстром скролле WebView показывал пустую белую карточку.
-    // Теперь первый кадр всегда берётся из лёгкой versioned miniature, а 640px
-    // WebP подменяет её только после onload. Это сохраняет резкость без мигания.
+    // Sharp-first: в товарной сетке больше не показываем miniature вообще.
+    // Карточка сразу получает одну резкую 640px WebP-версию из Vercel Image
+    // Optimization. Это одновременно убирает «мыло» и двойную загрузку
+    // miniature -> HQ. Повторные открытия берутся из versioned CDN/browser cache.
     const CARD_IMAGE_WIDTH = 640;
-    const CARD_IMAGE_QUALITY = 82;
-    const MINI_EAGER_COUNT = isMobileWebView ? 8 : 10;
-    const HQ_MAX_CONCURRENT = isMobileWebView ? 1 : 2;
-    const hqQueue = [];
-    let hqActive = 0;
+    const CARD_IMAGE_QUALITY = 88;
+    const SHARP_EAGER_COUNT = isMobileWebView ? 8 : 10;
+    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '700px 0px' : '1000px 0px';
 
     function getProductById(pid) {
         if (!pid || typeof allProducts === 'undefined') return null;
         return allProducts.find(prod => String(prod.id) === String(pid)) || null;
     }
 
-    function getProductForImage(img) {
-        return getProductById(img.closest('.product-image-container')?.dataset.pid);
+    function getProductForContainer(container) {
+        return getProductById(container?.dataset?.pid);
     }
 
-    function getMiniUrl(prod) {
+    function getBaseImageUrl(prod) {
         if (!prod?.id) return '';
         if (prod.img) return prod.img;
         const count = Number(prod.imageCount) || 0;
@@ -320,13 +317,13 @@
     }
 
     function getFullUrl(prod) {
-        const mini = getMiniUrl(prod);
-        if (!mini) return '';
-        if (/[?&]size=full(?:&|$)/.test(mini)) return mini;
-        return `${mini}${mini.includes('?') ? '&' : '?'}size=full`;
+        const base = getBaseImageUrl(prod);
+        if (!base) return '';
+        if (/[?&]size=full(?:&|$)/.test(base)) return base;
+        return `${base}${base.includes('?') ? '&' : '?'}size=full`;
     }
 
-    function getCardCdnUrl(prod) {
+    function getSharpCardUrl(prod) {
         const source = getFullUrl(prod);
         if (!source) return '';
         return `/_vercel/image?url=${encodeURIComponent(source)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
@@ -345,78 +342,23 @@
         return -1;
     }
 
-    function getCardIndex(img) {
-        return getCardIndexFromContainer(img.closest('.product-image-container'));
-    }
+    function mountSharpImage(container) {
+        if (!container || container.dataset.sharpMounted === '1') return;
+        const prod = getProductForContainer(container);
+        const sharpUrl = getSharpCardUrl(prod);
+        if (!sharpUrl) return;
 
-    function isStaleCategoryImage(img) {
-        if (!img?.closest('#page-category')) return false;
-        return Number(img.dataset.categoryImageEpoch || -1) !== categoryImageEpoch;
-    }
+        container.dataset.sharpMounted = '1';
+        const oldImg = container.querySelector(':scope > img');
+        const placeholder = container.querySelector(':scope > .no-photo');
+        const img = oldImg || document.createElement('img');
+        const index = getCardIndexFromContainer(container);
 
-    function pumpHq() {
-        while (hqActive < HQ_MAX_CONCURRENT && hqQueue.length) {
-            const job = hqQueue.shift();
-            const img = job?.img;
-            if (!img || !document.contains(img) || isStaleCategoryImage(img)) continue;
-            if (img.dataset.hqState !== 'queued') continue;
-
-            hqActive++;
-            img.dataset.hqState = 'loading';
-            const preload = new Image();
-            preload.decoding = 'async';
-            preload.onload = () => {
-                if (document.contains(img) && !isStaleCategoryImage(img)) {
-                    img.src = job.url;
-                    img.dataset.hqState = 'done';
-                    img.classList.add('hq-ready');
-                }
-                hqActive--;
-                pumpHq();
-            };
-            preload.onerror = () => {
-                if (document.contains(img)) img.dataset.hqState = 'mini-only';
-                hqActive--;
-                pumpHq();
-            };
-            preload.src = job.url;
-        }
-    }
-
-    function enqueueHq(img) {
-        if (!img || isStaleCategoryImage(img)) return;
-        if (img.dataset.hqState && img.dataset.hqState !== 'mini' && img.dataset.hqState !== 'mini-only') return;
-        const prod = getProductForImage(img);
-        const url = getCardCdnUrl(prod);
-        if (!url) return;
-        const absolute = new URL(url, location.href).href;
-        if (img.src === absolute) {
-            img.dataset.hqState = 'done';
-            return;
-        }
-        img.dataset.hqState = 'queued';
-        hqQueue.push({ img, url });
-        pumpHq();
-    }
-
-    const hqObserver = new IntersectionObserver(entries => {
-        entries.forEach(entry => {
-            if (!entry.isIntersecting) return;
-            hqObserver.unobserve(entry.target);
-            enqueueHq(entry.target);
-        });
-    }, { rootMargin: isMobileWebView ? '260px 0px' : '650px 0px', threshold: 0.01 });
-
-    function prepareMini(img) {
-        const prod = getProductForImage(img);
-        const miniUrl = getMiniUrl(prod);
-        if (!miniUrl) return false;
-
-        const index = getCardIndex(img);
         img.decoding = 'async';
-        if (index >= 0 && index < MINI_EAGER_COUNT) {
+        img.alt = '';
+        if (index >= 0 && index < SHARP_EAGER_COUNT) {
             img.loading = 'eager';
-            const priority = index < 6 ? 'high' : 'auto';
+            const priority = index < 4 ? 'high' : 'auto';
             try { img.fetchPriority = priority; } catch (e) {}
             img.setAttribute('fetchpriority', priority);
         } else {
@@ -425,64 +367,42 @@
             img.setAttribute('fetchpriority', 'auto');
         }
 
-        if (!img.getAttribute('src')) img.src = miniUrl;
-        return true;
+        if (placeholder) placeholder.remove();
+        if (!oldImg) container.prepend(img);
+        const absolute = new URL(sharpUrl, location.href).href;
+        if (img.src !== absolute) img.src = sharpUrl;
+        img.dataset.imageQuality = 'sharp';
     }
 
-    function armHqAfterMini(img) {
-        if (!img || img.dataset.hqArm === '1') return;
-        img.dataset.hqArm = '1';
+    const sharpObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            sharpObserver.unobserve(entry.target);
+            mountSharpImage(entry.target);
+        });
+    }, { rootMargin: SHARP_PREFETCH_MARGIN, threshold: 0.01 });
 
-        const startHq = () => {
-            if (!document.contains(img) || isStaleCategoryImage(img)) return;
-            if (!img.naturalWidth) return;
-            img.dataset.miniReady = '1';
-            hqObserver.observe(img);
-        };
+    function watchContainer(container) {
+        if (!container?.matches?.('.product-image-container')) return;
+        if (container.dataset.sharpObserved === '1') return;
+        const prod = getProductForContainer(container);
+        if (!getSharpCardUrl(prod)) return;
+        container.dataset.sharpObserved = '1';
 
-        // На мобильной сети full/640px больше не конкурирует с miniature.
-        // Сначала пользователь гарантированно получает маленькое фото,
-        // и только после его onload начинаем фоновое улучшение качества.
-        if (img.complete && img.naturalWidth > 0) {
-            startHq();
+        const index = getCardIndexFromContainer(container);
+        if (index >= 0 && index < SHARP_EAGER_COUNT) {
+            mountSharpImage(container);
         } else {
-            img.addEventListener('load', startHq, { once: true });
+            sharpObserver.observe(container);
         }
     }
 
-    function watchImage(img) {
-        if (!img || img.dataset.hqObserved || img.closest('.product-card') === null) return;
-        if (!prepareMini(img)) return;
-        img.dataset.hqObserved = '1';
-        if (img.closest('#page-category')) img.dataset.categoryImageEpoch = String(categoryImageEpoch);
-        img.dataset.hqState = 'mini';
-        armHqAfterMini(img);
-    }
-
-    function rescueNoPhoto(container) {
-        if (!container?.matches?.('.product-image-container')) return;
-        const placeholder = container.querySelector(':scope > .no-photo');
-        if (!placeholder) return;
-        const prod = getProductById(container.dataset.pid);
-        const miniUrl = getMiniUrl(prod);
-        if (!miniUrl) return;
-
-        const img = document.createElement('img');
-        img.src = miniUrl;
-        img.alt = '';
-        placeholder.replaceWith(img);
-        watchImage(img);
-    }
-
     function scan(root = document) {
-        if (root.matches?.('.product-image-container')) rescueNoPhoto(root);
-        root.querySelectorAll?.('.product-image-container').forEach(rescueNoPhoto);
-        if (root.matches?.('.product-card .product-image-container img')) watchImage(root);
-        root.querySelectorAll?.('.product-card .product-image-container img').forEach(watchImage);
+        if (root.matches?.('.product-image-container')) watchContainer(root);
+        root.querySelectorAll?.('.product-image-container').forEach(watchContainer);
     }
 
     scan();
-
     const mutations = new MutationObserver(records => {
         records.forEach(record => {
             record.addedNodes.forEach(node => {
