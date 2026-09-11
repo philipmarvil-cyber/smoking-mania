@@ -8,6 +8,11 @@
 
     const style = document.createElement('style');
     style.textContent = `
+        #page-favorites .header {
+            min-height: calc(108px + env(safe-area-inset-top)) !important;
+            padding-top: calc(env(safe-area-inset-top) + 8px) !important;
+            padding-bottom: 12px !important;
+        }
         #page-favorites .favorites-section-tabs {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -91,11 +96,13 @@
         #favorites-container.favorites-waitlist-mode .waitlist-available-card {
             position: relative;
         }
-        #favorites-container.favorites-waitlist-mode .waitlist-stock-badge {
+        #favorites-container.favorites-waitlist-mode .product-image-container .waitlist-stock-badge {
             position: absolute;
-            z-index: 4;
-            top: 8px;
-            right: 8px;
+            z-index: 3;
+            left: 4px;
+            right: auto;
+            top: auto;
+            bottom: 4px;
             padding: 5px 8px;
             border-radius: 999px;
             background: #34c759;
@@ -279,7 +286,8 @@
         if (products.length && typeof window.renderProductCardsInto === 'function') {
             window.renderProductCardsInto(container, products);
             container.querySelectorAll('.product-card').forEach(card => {
-                const pid = String(card.querySelector('.product-image-container')?.dataset.pid || '');
+                const image = card.querySelector('.product-image-container');
+                const pid = String(image?.dataset.pid || '');
                 const item = itemById.get(pid);
                 if (!item) return;
 
@@ -288,7 +296,7 @@
                     const badge = document.createElement('div');
                     badge.className = 'waitlist-stock-badge';
                     badge.textContent = 'В наличии';
-                    card.appendChild(badge);
+                    (image || card).appendChild(badge);
                 } else {
                     const button = card.querySelector('.notify-btn');
                     if (button) {
