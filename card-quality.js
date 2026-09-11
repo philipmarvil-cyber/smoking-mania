@@ -411,6 +411,15 @@
         if (!oldImg) container.prepend(img);
         const absolute = new URL(sharpUrl, location.href).href;
         const fullFallback = getFullUrl(prod);
+
+        // В index.html всё ещё есть старый отложенный upgrade: после рендера
+        // он ждёт idle/300ms, затем снова читает data-full-src и раньше начинал
+        // второй запрос на огромный full. Из-за гонки sharp успевал появиться,
+        // затем src менялся, картинка исчезала и загружалась повторно.
+        // MutationObserver выполняется раньше этого callback, поэтому отдаём
+        // legacy-upgrader тот же sharp URL: второго скачивания/переключения нет.
+        if (img.dataset.fullSrc) img.dataset.fullSrc = sharpUrl;
+
         img.onerror = () => {
             if (img.dataset.fullFallbackTried === '1' || !fullFallback) return;
             img.dataset.fullFallbackTried = '1';
