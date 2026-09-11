@@ -4,8 +4,13 @@
     // Все пользовательские экраны держим на той же компактной верхней
     // геометрии, что и главная: одинаковая высота шапки и safe-area отступы.
     const telegramPlatform = String(window.Telegram?.WebApp?.platform || '').toLowerCase();
-    const isIOS = telegramPlatform === 'ios' || /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+    const userAgent = String(navigator.userAgent || '');
+    const isIOS = telegramPlatform === 'ios' || /iPhone|iPad|iPod/i.test(userAgent);
+    const isAndroid = telegramPlatform === 'android' || /Android/i.test(userAgent);
+    const isMobileWebView = isIOS || isAndroid;
     document.documentElement.classList.toggle('tg-ios', isIOS);
+    document.documentElement.classList.toggle('tg-android', isAndroid);
+    document.documentElement.classList.toggle('tg-mobile', isMobileWebView);
 
     const homeLayoutStyle = document.createElement('style');
     homeLayoutStyle.textContent = `
@@ -163,15 +168,15 @@
             }
         }
 
-        /* iOS WebView: убираем лишние анимации/перерисовки именно в drill-down категорий. */
-        .tg-ios #page-category .subcat-logo-card,
-        .tg-ios #page-category .subcat-logo-media {
+        /* Telegram WebView на iPhone/Android: меньше композиционных работ при drill-down. */
+        .tg-mobile #page-category .subcat-logo-card,
+        .tg-mobile #page-category .subcat-logo-media {
             transition: none !important;
         }
-        .tg-ios #page-category .subcat-logo-card:active {
+        .tg-mobile #page-category .subcat-logo-card:active {
             transform: none !important;
         }
-        .tg-ios #page-category .product-card {
+        .tg-mobile #page-category .product-card {
             contain: paint;
         }
 
@@ -223,16 +228,35 @@
         document.addEventListener('DOMContentLoaded', removeSupportButton, { once: true });
     }
 
-    // На iPhone переход между ветками дерева не должен прогонять весь общий
-    // renderScreen: он трогает все страницы, nav, scroll restoration и трижды
-    // пересчитывает layout. Остаёмся в том же category-screen и меняем только
-    // pathIds — goBack уже умеет подниматься по этому пути на уровень назад.
-    if (isIOS) {
+    // Частые быстрые тапы раньше успевали запустить несколько тяжёлых рендеров
+    // подряд. На мобильном WebView принимаем максимум один action примерно за
+    // один короткий UI-такт; лишние двойные тапы гасим до штатного onclick.
+    let categoryTapLockedUntil = 0;
+    let categoryImageEpoch = 0;
+
+    if (isMobileWebView) {
         document.addEventListener('click', event => {
             const target = event.target instanceof Element ? event.target : null;
             const chip = target?.closest('#page-category .subcat-logo-card');
+            const allButton = target?.closest('#page-category #subcat-all-button');
+            if (!chip && !allButton) return;
+
+            const now = performance.now();
+            if (now < categoryTapLockedUntil) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                return;
+            }
+            categoryTapLockedUntil = now + 170;
+            categoryImageEpoch++;
+
+            // Для листовых плиток и «Все товары» достаточно штатного обработчика;
+            // throttle выше не даёт запустить его несколько раз подряд.
             if (!chip || !chip.querySelector('.subcat-logo-arrow')) return;
 
+            // Вложенная ветка: не прогоняем общий renderScreen. Он трогает все
+            // страницы, nav и несколько раз восстанавливает scroll — на iOS и
+            // Android это особенно дорого при серии быстрых кликов.
             const screen = typeof window.currentScreen === 'function' ? window.currentScreen() : null;
             if (!screen || screen.type !== 'category') return;
             if (typeof categories === 'undefined' || !Array.isArray(categories)) return;
@@ -265,12 +289,12 @@
         }, true);
     }
 
-    // На главной оставляем лёгкие миниатюры и дозагрузку full рядом с экраном.
-    // На iOS в категориях тоже грузим full лениво: мгновенный апгрейд 20+ фото
-    // одновременно был одним из главных источников фризов при смене подкатегории.
-    const MAX_CONCURRENT = isIOS ? 1 : 2;
-    const HQ_DELAY = isIOS ? 120 : 220;
-    const HQ_ROOT_MARGIN = isIOS ? '90px 0px' : '220px 0px';
+    // На мобильных в категориях full-фото грузим только рядом с экраном и по
+    // одной штуке. Это не даёт старому уровню дерева забить WebView декодированием
+    // изображений, если пользователь сразу ткнул следующую подкатегорию.
+    const MAX_CONCURRENT = isMobileWebView ? 1 : 2;
+    const HQ_DELAY = isMobileWebView ? 170 : 220;
+    const HQ_ROOT_MARGIN = isMobileWebView ? '70px 0px' : '220px 0px';
     const queue = [];
     let active = 0;
 
@@ -286,10 +310,15 @@
         return `${prod.img}${prod.img.includes('?') ? '&' : '?'}size=full`;
     }
 
+    function isStaleCategoryImage(img) {
+        if (!img?.closest('#page-category')) return false;
+        return Number(img.dataset.categoryImageEpoch || -1) !== categoryImageEpoch;
+    }
+
     function pump() {
         while (active < MAX_CONCURRENT && queue.length) {
             const img = queue.shift();
-            if (!img || !document.contains(img) || img.dataset.hqState !== 'queued') continue;
+            if (!img || !document.contains(img) || img.dataset.hqState !== 'queued' || isStaleCategoryImage(img)) continue;
 
             const prod = getProductForImage(img);
             const fullUrl = getFullUrl(prod);
@@ -303,7 +332,7 @@
             const preload = new Image();
             preload.decoding = 'async';
             preload.onload = () => {
-                if (document.contains(img)) {
+                if (document.contains(img) && !isStaleCategoryImage(img)) {
                     img.src = fullUrl;
                     img.dataset.hqState = 'done';
                     img.classList.add('hq-ready');
@@ -321,7 +350,7 @@
     }
 
     function enqueue(img) {
-        if (!img || img.dataset.hqState) return;
+        if (!img || img.dataset.hqState || isStaleCategoryImage(img)) return;
         img.dataset.hqState = 'queued';
         queue.push(img);
         pump();
@@ -331,7 +360,6 @@
         entries.forEach(entry => {
             const img = entry.target;
             if (entry.isIntersecting) {
-                // Если карточку просто быстро проскроллили, full даже не стартует.
                 if (!img._hqTimer && !img.dataset.hqState) {
                     img._hqTimer = setTimeout(() => {
                         img._hqTimer = null;
@@ -347,13 +375,14 @@
     }, { rootMargin: HQ_ROOT_MARGIN, threshold: 0.01 });
 
     function shouldUseFreshFullImmediately(img) {
-        if (isIOS && img.closest('#page-category')) return false;
+        if (isMobileWebView && img.closest('#page-category')) return false;
         return !!img.closest('#page-category, #catalog-product-results, #home-search-results, #favorites-container.favorites-waitlist-mode');
     }
 
     function watchImage(img) {
         if (!img || img.dataset.hqObserved || img.closest('.product-card') === null) return;
         img.dataset.hqObserved = '1';
+        if (img.closest('#page-category')) img.dataset.categoryImageEpoch = String(categoryImageEpoch);
 
         if (shouldUseFreshFullImmediately(img)) {
             const prod = getProductForImage(img);
