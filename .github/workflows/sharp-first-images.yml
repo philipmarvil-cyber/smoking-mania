@@ -20,148 +20,21 @@ jobs:
 
       - name: Switch product cards to sharp-first images
         shell: bash
+        env:
+          SHARP_BLOCK_B64: "ICAgIC8vIFNoYXJwLWZpcnN0OiDQsiDRgtC+0LLQsNGA0L3QvtC5INGB0LXRgtC60LUg0LHQvtC70YzRiNC1INC90LUg0L/QvtC60LDQt9GL0LLQsNC10LwgbWluaWF0dXJlINCy0L7QvtCx0YnQtS4KICAgIC8vINCa0LDRgNGC0L7Rh9C60LAg0YHRgNCw0LfRgyDQv9C+0LvRg9GH0LDQtdGCINC+0LTQvdGDINGA0LXQt9C60YPRjiA2NDBweCBXZWJQLdCy0LXRgNGB0LjRjiDQuNC3IFZlcmNlbCBJbWFnZQogICAgLy8gT3B0aW1pemF0aW9uLiDQrdGC0L4g0L7QtNC90L7QstGA0LXQvNC10L3QvdC+INGD0LHQuNGA0LDQtdGCIMKr0LzRi9C70L7CuyDQuCDQtNCy0L7QudC90YPRjiDQt9Cw0LPRgNGD0LfQutGDCiAgICAvLyBtaW5pYXR1cmUgLT4gSFEuINCf0L7QstGC0L7RgNC90YvQtSDQvtGC0LrRgNGL0YLQuNGPINCx0LXRgNGD0YLRgdGPINC40LcgdmVyc2lvbmVkIENETi9icm93c2VyIGNhY2hlLgogICAgY29uc3QgQ0FSRF9JTUFHRV9XSURUSCA9IDY0MDsKICAgIGNvbnN0IENBUkRfSU1BR0VfUVVBTElUWSA9IDg4OwogICAgY29uc3QgU0hBUlBfRUFHRVJfQ09VTlQgPSBpc01vYmlsZVdlYlZpZXcgPyA4IDogMTA7CiAgICBjb25zdCBTSEFSUF9QUkVGRVRDSF9NQVJHSU4gPSBpc01vYmlsZVdlYlZpZXcgPyAnNzAwcHggMHB4JyA6ICcxMDAwcHggMHB4JzsKCiAgICBmdW5jdGlvbiBnZXRQcm9kdWN0QnlJZChwaWQpIHsKICAgICAgICBpZiAoIXBpZCB8fCB0eXBlb2YgYWxsUHJvZHVjdHMgPT09ICd1bmRlZmluZWQnKSByZXR1cm4gbnVsbDsKICAgICAgICByZXR1cm4gYWxsUHJvZHVjdHMuZmluZChwcm9kID0+IFN0cmluZyhwcm9kLmlkKSA9PT0gU3RyaW5nKHBpZCkpIHx8IG51bGw7CiAgICB9CgogICAgZnVuY3Rpb24gZ2V0UHJvZHVjdEZvckNvbnRhaW5lcihjb250YWluZXIpIHsKICAgICAgICByZXR1cm4gZ2V0UHJvZHVjdEJ5SWQoY29udGFpbmVyPy5kYXRhc2V0Py5waWQpOwogICAgfQoKICAgIGZ1bmN0aW9uIGdldEJhc2VJbWFnZVVybChwcm9kKSB7CiAgICAgICAgaWYgKCFwcm9kPy5pZCkgcmV0dXJuICcnOwogICAgICAgIGlmIChwcm9kLmltZykgcmV0dXJuIHByb2QuaW1nOwogICAgICAgIGNvbnN0IGNvdW50ID0gTnVtYmVyKHByb2QuaW1hZ2VDb3VudCkgfHwgMDsKICAgICAgICBjb25zdCB2ZXJzaW9uID0gU3RyaW5nKHByb2QuaW1hZ2VWZXJzaW9uIHx8ICcwJyk7CiAgICAgICAgaWYgKGNvdW50IDw9IDAgfHwgdmVyc2lvbiA9PT0gJzAnKSByZXR1cm4gJyc7CiAgICAgICAgcmV0dXJuIGAvYXBpL3Byb2R1Y3QtaW1hZ2U/aWQ9JHtlbmNvZGVVUklDb21wb25lbnQocHJvZC5pZCl9JnY9JHtlbmNvZGVVUklDb21wb25lbnQodmVyc2lvbil9YDsKICAgIH0KCiAgICBmdW5jdGlvbiBnZXRGdWxsVXJsKHByb2QpIHsKICAgICAgICBjb25zdCBiYXNlID0gZ2V0QmFzZUltYWdlVXJsKHByb2QpOwogICAgICAgIGlmICghYmFzZSkgcmV0dXJuICcnOwogICAgICAgIGlmICgvWz8mXXNpemU9ZnVsbCg/OiZ8JCkvLnRlc3QoYmFzZSkpIHJldHVybiBiYXNlOwogICAgICAgIHJldHVybiBgJHtiYXNlfSR7YmFzZS5pbmNsdWRlcygnPycpID8gJyYnIDogJz8nfXNpemU9ZnVsbGA7CiAgICB9CgogICAgZnVuY3Rpb24gZ2V0U2hhcnBDYXJkVXJsKHByb2QpIHsKICAgICAgICBjb25zdCBzb3VyY2UgPSBnZXRGdWxsVXJsKHByb2QpOwogICAgICAgIGlmICghc291cmNlKSByZXR1cm4gJyc7CiAgICAgICAgcmV0dXJuIGAvX3ZlcmNlbC9pbWFnZT91cmw9JHtlbmNvZGVVUklDb21wb25lbnQoc291cmNlKX0mdz0ke0NBUkRfSU1BR0VfV0lEVEh9JnE9JHtDQVJEX0lNQUdFX1FVQUxJVFl9YDsKICAgIH0KCiAgICBmdW5jdGlvbiBnZXRDYXJkSW5kZXhGcm9tQ29udGFpbmVyKGNvbnRhaW5lcikgewogICAgICAgIGNvbnN0IGNhcmQgPSBjb250YWluZXI/LmNsb3Nlc3QoJy5wcm9kdWN0LWNhcmQnKTsKICAgICAgICBjb25zdCBwYXJlbnQgPSBjYXJkPy5wYXJlbnRFbGVtZW50OwogICAgICAgIGlmICghY2FyZCB8fCAhcGFyZW50KSByZXR1cm4gLTE7CiAgICAgICAgbGV0IGluZGV4ID0gMDsKICAgICAgICBmb3IgKGNvbnN0IGNoaWxkIG9mIHBhcmVudC5jaGlsZHJlbikgewogICAgICAgICAgICBpZiAoIWNoaWxkLmNsYXNzTGlzdD8uY29udGFpbnMoJ3Byb2R1Y3QtY2FyZCcpKSBjb250aW51ZTsKICAgICAgICAgICAgaWYgKGNoaWxkID09PSBjYXJkKSByZXR1cm4gaW5kZXg7CiAgICAgICAgICAgIGluZGV4Kys7CiAgICAgICAgfQogICAgICAgIHJldHVybiAtMTsKICAgIH0KCiAgICBmdW5jdGlvbiBtb3VudFNoYXJwSW1hZ2UoY29udGFpbmVyKSB7CiAgICAgICAgaWYgKCFjb250YWluZXIgfHwgY29udGFpbmVyLmRhdGFzZXQuc2hhcnBNb3VudGVkID09PSAnMScpIHJldHVybjsKICAgICAgICBjb25zdCBwcm9kID0gZ2V0UHJvZHVjdEZvckNvbnRhaW5lcihjb250YWluZXIpOwogICAgICAgIGNvbnN0IHNoYXJwVXJsID0gZ2V0U2hhcnBDYXJkVXJsKHByb2QpOwogICAgICAgIGlmICghc2hhcnBVcmwpIHJldHVybjsKCiAgICAgICAgY29udGFpbmVyLmRhdGFzZXQuc2hhcnBNb3VudGVkID0gJzEnOwogICAgICAgIGNvbnN0IG9sZEltZyA9IGNvbnRhaW5lci5xdWVyeVNlbGVjdG9yKCc6c2NvcGUgPiBpbWcnKTsKICAgICAgICBjb25zdCBwbGFjZWhvbGRlciA9IGNvbnRhaW5lci5xdWVyeVNlbGVjdG9yKCc6c2NvcGUgPiAubm8tcGhvdG8nKTsKICAgICAgICBjb25zdCBpbWcgPSBvbGRJbWcgfHwgZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnaW1nJyk7CiAgICAgICAgY29uc3QgaW5kZXggPSBnZXRDYXJkSW5kZXhGcm9tQ29udGFpbmVyKGNvbnRhaW5lcik7CgogICAgICAgIGltZy5kZWNvZGluZyA9ICdhc3luYyc7CiAgICAgICAgaW1nLmFsdCA9ICcnOwogICAgICAgIGlmIChpbmRleCA+PSAwICYmIGluZGV4IDwgU0hBUlBfRUFHRVJfQ09VTlQpIHsKICAgICAgICAgICAgaW1nLmxvYWRpbmcgPSAnZWFnZXInOwogICAgICAgICAgICBjb25zdCBwcmlvcml0eSA9IGluZGV4IDwgNCA/ICdoaWdoJyA6ICdhdXRvJzsKICAgICAgICAgICAgdHJ5IHsgaW1nLmZldGNoUHJpb3JpdHkgPSBwcmlvcml0eTsgfSBjYXRjaCAoZSkge30KICAgICAgICAgICAgaW1nLnNldEF0dHJpYnV0ZSgnZmV0Y2hwcmlvcml0eScsIHByaW9yaXR5KTsKICAgICAgICB9IGVsc2UgewogICAgICAgICAgICBpbWcubG9hZGluZyA9ICdsYXp5JzsKICAgICAgICAgICAgdHJ5IHsgaW1nLmZldGNoUHJpb3JpdHkgPSAnYXV0byc7IH0gY2F0Y2ggKGUpIHt9CiAgICAgICAgICAgIGltZy5zZXRBdHRyaWJ1dGUoJ2ZldGNocHJpb3JpdHknLCAnYXV0bycpOwogICAgICAgIH0KCiAgICAgICAgaWYgKHBsYWNlaG9sZGVyKSBwbGFjZWhvbGRlci5yZW1vdmUoKTsKICAgICAgICBpZiAoIW9sZEltZykgY29udGFpbmVyLnByZXBlbmQoaW1nKTsKICAgICAgICBjb25zdCBhYnNvbHV0ZSA9IG5ldyBVUkwoc2hhcnBVcmwsIGxvY2F0aW9uLmhyZWYpLmhyZWY7CiAgICAgICAgaWYgKGltZy5zcmMgIT09IGFic29sdXRlKSBpbWcuc3JjID0gc2hhcnBVcmw7CiAgICAgICAgaW1nLmRhdGFzZXQuaW1hZ2VRdWFsaXR5ID0gJ3NoYXJwJzsKICAgIH0KCiAgICBjb25zdCBzaGFycE9ic2VydmVyID0gbmV3IEludGVyc2VjdGlvbk9ic2VydmVyKGVudHJpZXMgPT4gewogICAgICAgIGVudHJpZXMuZm9yRWFjaChlbnRyeSA9PiB7CiAgICAgICAgICAgIGlmICghZW50cnkuaXNJbnRlcnNlY3RpbmcpIHJldHVybjsKICAgICAgICAgICAgc2hhcnBPYnNlcnZlci51bm9ic2VydmUoZW50cnkudGFyZ2V0KTsKICAgICAgICAgICAgbW91bnRTaGFycEltYWdlKGVudHJ5LnRhcmdldCk7CiAgICAgICAgfSk7CiAgICB9LCB7IHJvb3RNYXJnaW46IFNIQVJQX1BSRUZFVENIX01BUkdJTiwgdGhyZXNob2xkOiAwLjAxIH0pOwoKICAgIGZ1bmN0aW9uIHdhdGNoQ29udGFpbmVyKGNvbnRhaW5lcikgewogICAgICAgIGlmICghY29udGFpbmVyPy5tYXRjaGVzPy4oJy5wcm9kdWN0LWltYWdlLWNvbnRhaW5lcicpKSByZXR1cm47CiAgICAgICAgaWYgKGNvbnRhaW5lci5kYXRhc2V0LnNoYXJwT2JzZXJ2ZWQgPT09ICcxJykgcmV0dXJuOwogICAgICAgIGNvbnN0IHByb2QgPSBnZXRQcm9kdWN0Rm9yQ29udGFpbmVyKGNvbnRhaW5lcik7CiAgICAgICAgaWYgKCFnZXRTaGFycENhcmRVcmwocHJvZCkpIHJldHVybjsKICAgICAgICBjb250YWluZXIuZGF0YXNldC5zaGFycE9ic2VydmVkID0gJzEnOwoKICAgICAgICBjb25zdCBpbmRleCA9IGdldENhcmRJbmRleEZyb21Db250YWluZXIoY29udGFpbmVyKTsKICAgICAgICBpZiAoaW5kZXggPj0gMCAmJiBpbmRleCA8IFNIQVJQX0VBR0VSX0NPVU5UKSB7CiAgICAgICAgICAgIG1vdW50U2hhcnBJbWFnZShjb250YWluZXIpOwogICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgIHNoYXJwT2JzZXJ2ZXIub2JzZXJ2ZShjb250YWluZXIpOwogICAgICAgIH0KICAgIH0KCiAgICBmdW5jdGlvbiBzY2FuKHJvb3QgPSBkb2N1bWVudCkgewogICAgICAgIGlmIChyb290Lm1hdGNoZXM/LignLnByb2R1Y3QtaW1hZ2UtY29udGFpbmVyJykpIHdhdGNoQ29udGFpbmVyKHJvb3QpOwogICAgICAgIHJvb3QucXVlcnlTZWxlY3RvckFsbD8uKCcucHJvZHVjdC1pbWFnZS1jb250YWluZXInKS5mb3JFYWNoKHdhdGNoQ29udGFpbmVyKTsKICAgIH0KCiAgICBzY2FuKCk7CiAgICBjb25zdCBtdXRhdGlvbnMgPSBuZXcgTXV0YXRpb25PYnNlcnZlcihyZWNvcmRzID0+IHsKICAgICAgICByZWNvcmRzLmZvckVhY2gocmVjb3JkID0+IHsKICAgICAgICAgICAgcmVjb3JkLmFkZGVkTm9kZXMuZm9yRWFjaChub2RlID0+IHsKICAgICAgICAgICAgICAgIGlmIChub2RlLm5vZGVUeXBlID09PSAxKSBzY2FuKG5vZGUpOwogICAgICAgICAgICB9KTsKICAgICAgICB9KTsKICAgIH0pOwogICAgbXV0YXRpb25zLm9ic2VydmUoZG9jdW1lbnQuYm9keSwgeyBjaGlsZExpc3Q6IHRydWUsIHN1YnRyZWU6IHRydWUgfSk7Cgo="
         run: |
           python - <<'PY'
+          import base64, os
           from pathlib import Path
-
           card = Path('card-quality.js')
           s = card.read_text(encoding='utf-8')
           start_marker = '    // Instant-first: miniature никогда не убираем, пока резкая CDN-картинка\n'
           end_marker = '    // Дополнительный раздел «Список ожидания» внутри избранного. Загружаем\n'
           start = s.index(start_marker)
           end = s.index(end_marker, start)
+          replacement = base64.b64decode(os.environ['SHARP_BLOCK_B64']).decode('utf-8')
+          card.write_text(s[:start] + replacement + s[end:], encoding='utf-8')
 
-          replacement = r'''    // Sharp-first: в товарной сетке больше не показываем miniature вообще.
-    // Карточка сразу получает одну резкую 640px WebP-версию из Vercel Image
-    // Optimization. Это одновременно убирает «мыло» и двойную загрузку
-    // miniature -> HQ. Повторные открытия берутся из versioned CDN/browser cache.
-    const CARD_IMAGE_WIDTH = 640;
-    const CARD_IMAGE_QUALITY = 88;
-    const SHARP_EAGER_COUNT = isMobileWebView ? 8 : 10;
-    const SHARP_PREFETCH_MARGIN = isMobileWebView ? '700px 0px' : '1000px 0px';
-
-    function getProductById(pid) {
-        if (!pid || typeof allProducts === 'undefined') return null;
-        return allProducts.find(prod => String(prod.id) === String(pid)) || null;
-    }
-
-    function getProductForContainer(container) {
-        return getProductById(container?.dataset?.pid);
-    }
-
-    function getBaseImageUrl(prod) {
-        if (!prod?.id) return '';
-        if (prod.img) return prod.img;
-        const count = Number(prod.imageCount) || 0;
-        const version = String(prod.imageVersion || '0');
-        if (count <= 0 || version === '0') return '';
-        return `/api/product-image?id=${encodeURIComponent(prod.id)}&v=${encodeURIComponent(version)}`;
-    }
-
-    function getFullUrl(prod) {
-        const base = getBaseImageUrl(prod);
-        if (!base) return '';
-        if (/[?&]size=full(?:&|$)/.test(base)) return base;
-        return `${base}${base.includes('?') ? '&' : '?'}size=full`;
-    }
-
-    function getSharpCardUrl(prod) {
-        const source = getFullUrl(prod);
-        if (!source) return '';
-        return `/_vercel/image?url=${encodeURIComponent(source)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
-    }
-
-    function getCardIndexFromContainer(container) {
-        const card = container?.closest('.product-card');
-        const parent = card?.parentElement;
-        if (!card || !parent) return -1;
-        let index = 0;
-        for (const child of parent.children) {
-            if (!child.classList?.contains('product-card')) continue;
-            if (child === card) return index;
-            index++;
-        }
-        return -1;
-    }
-
-    function mountSharpImage(container) {
-        if (!container || container.dataset.sharpMounted === '1') return;
-        const prod = getProductForContainer(container);
-        const sharpUrl = getSharpCardUrl(prod);
-        if (!sharpUrl) return;
-
-        container.dataset.sharpMounted = '1';
-        const oldImg = container.querySelector(':scope > img');
-        const placeholder = container.querySelector(':scope > .no-photo');
-        const img = oldImg || document.createElement('img');
-        const index = getCardIndexFromContainer(container);
-
-        img.decoding = 'async';
-        img.alt = '';
-        if (index >= 0 && index < SHARP_EAGER_COUNT) {
-            img.loading = 'eager';
-            const priority = index < 4 ? 'high' : 'auto';
-            try { img.fetchPriority = priority; } catch (e) {}
-            img.setAttribute('fetchpriority', priority);
-        } else {
-            img.loading = 'lazy';
-            try { img.fetchPriority = 'auto'; } catch (e) {}
-            img.setAttribute('fetchpriority', 'auto');
-        }
-
-        // Не оставляем старую miniature даже на один кадр: пользователь либо
-        // сразу видит резкую cached/CDN-картинку, либо нейтральный фон карточки
-        // до её появления. Мыльного промежуточного состояния больше нет.
-        if (placeholder) placeholder.remove();
-        if (!oldImg) container.prepend(img);
-        const absolute = new URL(sharpUrl, location.href).href;
-        if (img.src !== absolute) img.src = sharpUrl;
-        img.dataset.imageQuality = 'sharp';
-    }
-
-    const sharpObserver = new IntersectionObserver(entries => {
-        entries.forEach(entry => {
-            if (!entry.isIntersecting) return;
-            sharpObserver.unobserve(entry.target);
-            mountSharpImage(entry.target);
-        });
-    }, { rootMargin: SHARP_PREFETCH_MARGIN, threshold: 0.01 });
-
-    function watchContainer(container) {
-        if (!container?.matches?.('.product-image-container')) return;
-        if (container.dataset.sharpObserved === '1') return;
-        const prod = getProductForContainer(container);
-        if (!getSharpCardUrl(prod)) return;
-        container.dataset.sharpObserved = '1';
-
-        const index = getCardIndexFromContainer(container);
-        if (index >= 0 && index < SHARP_EAGER_COUNT) {
-            mountSharpImage(container);
-        } else {
-            sharpObserver.observe(container);
-        }
-    }
-
-    function scan(root = document) {
-        if (root.matches?.('.product-image-container')) watchContainer(root);
-        root.querySelectorAll?.('.product-image-container').forEach(watchContainer);
-    }
-
-    scan();
-    const mutations = new MutationObserver(records => {
-        records.forEach(record => {
-            record.addedNodes.forEach(node => {
-                if (node.nodeType === 1) scan(node);
-            });
-        });
-    });
-    mutations.observe(document.body, { childList: true, subtree: true });
-
-'''
-          s = s[:start] + replacement + s[end:]
-          card.write_text(s, encoding='utf-8')
-
-          # Bust Telegram WebView's script cache while preserving index.html CRLF.
           index = Path('index.html')
           b = index.read_bytes()
           old = b'/card-quality.js?v=20260911instant3'
@@ -173,7 +46,6 @@ jobs:
 
           node --check card-quality.js
           grep -q 'CARD_IMAGE_QUALITY = 88' card-quality.js
-          grep -q "SHARP_PREFETCH_MARGIN" card-quality.js
           grep -q '20260911sharp1' index.html
 
       - name: Commit sharp-first image pipeline
