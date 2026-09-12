@@ -441,20 +441,7 @@
         if (!container?.matches?.('.product-image-container')) return;
         if (container.dataset.sharpObserved === '1') return;
         const prod = getProductForContainer(container);
-        const sharpUrl = getSharpCardUrl(prod);
-        if (!sharpUrl) return;
-
-        // Важно: legacy-upgrader из index.html планируется синхронно сразу после
-        // создания карточки, а фактически запускается позже через idle/timeout.
-        // Раньше для НЕвидимых карточек мы переписывали data-full-src только когда
-        // они доходили до IntersectionObserver, и за это время старый callback уже
-        // начинал качать огромный full из МойСклад. Это забивало канал и делало
-        // часть следующих sharp-картинок медленными. Переписываем URL сразу для
-        // каждой карточки: legacy-код, если успеет запуститься, скачает тот же 640px
-        // WebP, а не второй тяжёлый оригинал.
-        const legacyImg = container.querySelector(':scope > img');
-        if (legacyImg?.dataset.fullSrc) legacyImg.dataset.fullSrc = sharpUrl;
-
+        if (!getSharpCardUrl(prod)) return;
         container.dataset.sharpObserved = '1';
 
         const index = getCardIndexFromContainer(container);
