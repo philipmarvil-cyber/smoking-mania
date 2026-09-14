@@ -10,6 +10,8 @@
     const CATALOG_CACHE_KEY = 'catalog_cache_v3';
     const BLOB_STALL_FALLBACK_MS = 700;
     const HARD_RECOVERY_MS = 1400;
+    const FALLBACK_CARD_WIDTH = 640;
+    const FALLBACK_CARD_QUALITY = 82;
 
     function products() {
         try {
@@ -54,10 +56,6 @@
             base = `/api/product-image?id=${encodeURIComponent(product.id)}&v=${encodeURIComponent(version)}`;
         }
 
-        // The recovery path used to reuse the small catalog thumbnail. That made
-        // the formerly blank cards finally appear, but visibly blurry. Ask the
-        // same endpoint for the full source so recovered cards stay as sharp as
-        // the normal Blob cards. External/non-product-image URLs are left alone.
         try {
             const url = new URL(base, location.origin);
             if (url.pathname === '/api/product-image') {
@@ -68,6 +66,21 @@
             }
         } catch (e) {}
         return base;
+    }
+
+    // Старые товары без cardImg раньше падали напрямую на size=full. Картинка
+    // там качественная, но слишком тяжёлая для Telegram WebView, поэтому карточка
+    // могла оставаться белой до конца. Просим Vercel один раз сделать из того же
+    // full-источника нормальную 640px WebP-карточку — резкую, но лёгкую.
+    function optimizedFallbackUrl(product) {
+        const source = detailUrl(product);
+        if (!source) return '';
+        try {
+            const absolute = new URL(source, location.origin).href;
+            return `/_vercel/image?url=${encodeURIComponent(absolute)}&w=${FALLBACK_CARD_WIDTH}&q=${FALLBACK_CARD_QUALITY}`;
+        } catch (e) {
+            return source;
+        }
     }
 
     function cardIndex(container) {
@@ -95,7 +108,7 @@
     }
 
     function hardRecover(container, product) {
-        const fallback = detailUrl(product);
+        const fallback = optimizedFallbackUrl(product);
         if (!container || !fallback || container.dataset.hardImageRecovered === '1') return;
         const current = container.querySelector(':scope > img');
         if (current && current.complete && current.naturalWidth > 0) return;
@@ -110,7 +123,18 @@
         fresh.onload = () => {
             if (fresh.naturalWidth > 0) container.querySelector(':scope > .no-photo')?.remove();
         };
-        fresh.onerror = () => ensurePlaceholder(container);
+        // Если оптимизатор не смог обработать конкретный старый файл, последняя
+        // страховка — тот же full endpoint напрямую. Он медленнее, но не оставит
+        // карточку навсегда белой.
+        fresh.onerror = () => {
+            const raw = detailUrl(product);
+            if (raw && fresh.dataset.rawFallbackTried !== '1') {
+                fresh.dataset.rawFallbackTried = '1';
+                fresh.src = raw;
+                return;
+            }
+            ensurePlaceholder(container);
+        };
         if (current) current.replaceWith(fresh);
         else container.prepend(fresh);
         fresh.src = fallback;
@@ -122,8 +146,9 @@
         if (!product) return;
 
         const direct = blobUrl(product);
-        const fallback = detailUrl(product);
-        const primary = direct || fallback;
+        const fallback = optimizedFallbackUrl(product);
+        const rawFallback = detailUrl(product);
+        const primary = direct || fallback || rawFallback;
         if (!primary) return;
 
         const index = cardIndex(container);
@@ -142,6 +167,7 @@
         img.setAttribute('fetchpriority', high ? 'high' : 'auto');
 
         let fallbackTried = false;
+        let rawFallbackTried = false;
         let stallTimer = null;
         let hardTimer = null;
 
@@ -157,6 +183,13 @@
             img.src = fallback;
         };
 
+        const switchToRawFallback = () => {
+            if (rawFallbackTried || !rawFallback) return false;
+            rawFallbackTried = true;
+            img.src = rawFallback;
+            return true;
+        };
+
         img.onload = () => {
             clearTimers();
             if (img.naturalWidth > 0) container.querySelector(':scope > .no-photo')?.remove();
@@ -167,6 +200,7 @@
                 switchToFallback();
                 return;
             }
+            if (switchToRawFallback()) return;
             ensurePlaceholder(container);
         };
 
