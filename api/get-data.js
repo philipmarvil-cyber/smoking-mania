@@ -4,6 +4,21 @@
 import { kvGetCatalog, kvSetCatalog, loadCatalogData, refreshAllStock, kvGetJson } from './_catalog-lib.js';
 import { PRODUCT_IMAGE_BLOB_INDEX_KEY, normalizeProductImageBlobIndex, directBlobCardUrl } from './blob-image-index.js';
 
+function requestOrigin(req) {
+    const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    return host ? `${proto}://${host}` : '';
+}
+
+function optimizedFallbackCardUrl(req, product) {
+    if (!product?.id || !product?.img || Number(product.imageCount || 0) <= 0) return '';
+    const version = String(product.imageVersion || '0');
+    if (version === '0') return '';
+    const origin = requestOrigin(req);
+    if (!origin) return '';
+    return `${origin}/api/product-card?id=${encodeURIComponent(product.id)}&v=${encodeURIComponent(version)}`;
+}
+
 export default async function handler(req, res) {
     try {
         let catalog = await kvGetCatalog();
@@ -23,8 +38,21 @@ export default async function handler(req, res) {
         const rawBlobIndex = await kvGetJson(PRODUCT_IMAGE_BLOB_INDEX_KEY).catch(() => null);
         const blobIndex = normalizeProductImageBlobIndex(rawBlobIndex);
         const products = (catalog.products || []).map(product => {
-            const cardImg = directBlobCardUrl(blobIndex, product);
-            return cardImg ? { ...product, cardImg, imageDelivery: 'vercel-blob' } : product;
+            const blobCard = directBlobCardUrl(blobIndex, product);
+            if (blobCard) {
+                return { ...product, cardImg: blobCard, imageDelivery: 'vercel-blob' };
+            }
+
+            // Для старых/ещё не мигрированных позиций тоже отдаём абсолютный
+            // cardImg. Фронтенд считает такой URL готовой карточкой и НЕ пытается
+            // повторно заворачивать его в /_vercel/image с абсолютным source URL
+            // (тот путь Vercel отклоняет без remotePatterns). /api/product-card
+            // делает same-origin redirect на Image Optimization с ЛОКАЛЬНЫМ
+            // /api/product-image как source, что разрешено нашим localPatterns.
+            const fallbackCard = optimizedFallbackCardUrl(req, product);
+            return fallbackCard
+                ? { ...product, cardImg: fallbackCard, imageDelivery: 'vercel-optimizer-fallback' }
+                : product;
         });
 
         res.setHeader(
