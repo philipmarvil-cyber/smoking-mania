@@ -4,10 +4,11 @@
     // The API already returns cardImg (Vercel Blob), but index.html's applyCatalog
     // currently drops that field while building allProducts. Restore it from the
     // raw catalog cache so cards can use the CDN URL directly instead of waiting
-    // on /api/product-image. This is the root cause of the intermittent blanks.
+    // on /api/product-image.
     const EAGER_COUNT = 12;
     const PREFETCH_MARGIN = '2400px 0px';
     const CATALOG_CACHE_KEY = 'catalog_cache_v3';
+    const BLOB_STALL_FALLBACK_MS = 700;
 
     function products() {
         try {
@@ -80,9 +81,12 @@
         const product = productById(container.dataset.pid);
         if (!product) return;
 
-        // Fast path: direct immutable Blob CDN. Detail/API path is only fallback.
-        const primary = blobUrl(product) || detailUrl(product);
+        // Fast path: direct immutable Blob CDN. Product endpoint is the reliable
+        // fallback for stale/missing Blob entries and for requests that never fail
+        // explicitly but simply hang inside Telegram WebView.
+        const direct = blobUrl(product);
         const fallback = detailUrl(product);
+        const primary = direct || fallback;
         if (!primary) return;
 
         const index = cardIndex(container);
@@ -101,21 +105,48 @@
         img.setAttribute('fetchpriority', high ? 'high' : 'auto');
 
         let fallbackTried = false;
+        let stallTimer = null;
+
+        const clearStallTimer = () => {
+            if (stallTimer) {
+                clearTimeout(stallTimer);
+                stallTimer = null;
+            }
+        };
+
+        const switchToFallback = () => {
+            if (fallbackTried || !fallback || fallback === primary) return;
+            fallbackTried = true;
+            clearStallTimer();
+            img.src = fallback;
+        };
+
         img.onload = () => {
+            clearStallTimer();
             if (img.naturalWidth > 0) container.querySelector(':scope > .no-photo')?.remove();
             container.dataset.fastImageMounted = '1';
         };
         img.onerror = () => {
             if (!fallbackTried && fallback && fallback !== primary) {
-                fallbackTried = true;
-                img.src = fallback;
+                switchToFallback();
                 return;
             }
+            clearStallTimer();
             ensurePlaceholder(container);
         };
 
         const absolute = new URL(primary, location.href).href;
         if (img.src !== absolute || !img.complete || img.naturalWidth === 0) img.src = primary;
+
+        // Some Blob records are stale or Telegram leaves their request pending
+        // indefinitely. Do not leave a white card forever: if the CDN image has
+        // not decoded quickly, switch to the exact endpoint that the detail page
+        // already proves can serve the product image.
+        if (direct && fallback && fallback !== primary) {
+            stallTimer = setTimeout(() => {
+                if (!img.complete || img.naturalWidth === 0) switchToFallback();
+            }, BLOB_STALL_FALLBACK_MS);
+        }
     }
 
     const observer = new IntersectionObserver(entries => {
@@ -181,7 +212,7 @@
     mutations.observe(document.body, { childList: true, subtree: true });
 
     const core = document.createElement('script');
-    core.src = '/favorites-waitlist-core.js?v=20260915img3';
+    core.src = '/favorites-waitlist-core.js?v=20260915img4';
     core.async = false;
     document.head.appendChild(core);
 })();
