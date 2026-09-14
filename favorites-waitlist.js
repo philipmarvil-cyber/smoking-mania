@@ -9,6 +9,7 @@
     const PREFETCH_MARGIN = '2400px 0px';
     const CATALOG_CACHE_KEY = 'catalog_cache_v3';
     const BLOB_STALL_FALLBACK_MS = 700;
+    const HARD_RECOVERY_MS = 1400;
 
     function products() {
         try {
@@ -76,6 +77,33 @@
         return placeholder;
     }
 
+    function hardRecover(container, product) {
+        const fallback = detailUrl(product);
+        if (!container || !fallback || container.dataset.hardImageRecovered === '1') return;
+        const current = container.querySelector(':scope > img');
+        if (current && current.complete && current.naturalWidth > 0) return;
+
+        // Replace the element instead of merely changing src. card-quality.js and
+        // this loader can both touch the same <img>; on some Telegram WebViews a
+        // request that got stuck before the handlers were replaced stays stuck on
+        // that element. A fresh node starts the same proven detail-page request
+        // without inheriting the stale network/decoder state.
+        container.dataset.hardImageRecovered = '1';
+        const fresh = document.createElement('img');
+        fresh.alt = '';
+        fresh.loading = 'eager';
+        fresh.decoding = 'async';
+        try { fresh.fetchPriority = 'high'; } catch (e) {}
+        fresh.setAttribute('fetchpriority', 'high');
+        fresh.onload = () => {
+            if (fresh.naturalWidth > 0) container.querySelector(':scope > .no-photo')?.remove();
+        };
+        fresh.onerror = () => ensurePlaceholder(container);
+        if (current) current.replaceWith(fresh);
+        else container.prepend(fresh);
+        fresh.src = fallback;
+    }
+
     function mountImage(container, forceHigh = false) {
         if (!container?.matches?.('.product-image-container')) return;
         const product = productById(container.dataset.pid);
@@ -106,23 +134,22 @@
 
         let fallbackTried = false;
         let stallTimer = null;
+        let hardTimer = null;
 
-        const clearStallTimer = () => {
-            if (stallTimer) {
-                clearTimeout(stallTimer);
-                stallTimer = null;
-            }
+        const clearTimers = () => {
+            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
+            if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
         };
 
         const switchToFallback = () => {
             if (fallbackTried || !fallback || fallback === primary) return;
             fallbackTried = true;
-            clearStallTimer();
+            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
             img.src = fallback;
         };
 
         img.onload = () => {
-            clearStallTimer();
+            clearTimers();
             if (img.naturalWidth > 0) container.querySelector(':scope > .no-photo')?.remove();
             container.dataset.fastImageMounted = '1';
         };
@@ -131,22 +158,27 @@
                 switchToFallback();
                 return;
             }
-            clearStallTimer();
             ensurePlaceholder(container);
         };
 
         const absolute = new URL(primary, location.href).href;
         if (img.src !== absolute || !img.complete || img.naturalWidth === 0) img.src = primary;
 
-        // Some Blob records are stale or Telegram leaves their request pending
-        // indefinitely. Do not leave a white card forever: if the CDN image has
-        // not decoded quickly, switch to the exact endpoint that the detail page
-        // already proves can serve the product image.
         if (direct && fallback && fallback !== primary) {
             stallTimer = setTimeout(() => {
                 if (!img.complete || img.naturalWidth === 0) switchToFallback();
             }, BLOB_STALL_FALLBACK_MS);
         }
+
+        // Final guard for the few products that stay blank even after src was
+        // switched. This is intentionally slower than the normal CDN path and
+        // only affects images that are still actually blank.
+        hardTimer = setTimeout(() => {
+            const active = container.querySelector(':scope > img');
+            if (!active || !active.complete || active.naturalWidth === 0) {
+                hardRecover(container, product);
+            }
+        }, HARD_RECOVERY_MS);
     }
 
     const observer = new IntersectionObserver(entries => {
@@ -212,7 +244,7 @@
     mutations.observe(document.body, { childList: true, subtree: true });
 
     const core = document.createElement('script');
-    core.src = '/favorites-waitlist-core.js?v=20260915img4';
+    core.src = '/favorites-waitlist-core.js?v=20260915img5';
     core.async = false;
     document.head.appendChild(core);
 })();
