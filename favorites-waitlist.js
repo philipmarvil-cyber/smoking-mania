@@ -1,11 +1,13 @@
 (() => {
     'use strict';
 
-    // Catalog cards now use the same image source as the product detail page.
-    // cardImg is only a fallback/prewarm source; this avoids intermittent blank
-    // cards when Telegram WebView stalls on a direct Blob request.
+    // The API already returns cardImg (Vercel Blob), but index.html's applyCatalog
+    // currently drops that field while building allProducts. Restore it from the
+    // raw catalog cache so cards can use the CDN URL directly instead of waiting
+    // on /api/product-image. This is the root cause of the intermittent blanks.
     const EAGER_COUNT = 12;
     const PREFETCH_MARGIN = '2400px 0px';
+    const CATALOG_CACHE_KEY = 'catalog_cache_v3';
 
     function products() {
         try {
@@ -13,9 +15,31 @@
         } catch (e) { return []; }
     }
 
+    function hydrateBlobUrlsFromCache() {
+        let raw;
+        try { raw = JSON.parse(localStorage.getItem(CATALOG_CACHE_KEY) || 'null'); } catch (e) { return 0; }
+        if (!raw || !Array.isArray(raw.products)) return 0;
+        const byId = new Map(raw.products.map(p => [String(p.id), p]));
+        let changed = 0;
+        products().forEach(product => {
+            const source = byId.get(String(product.id));
+            const url = String(source?.cardImg || '');
+            if (/^https:\/\//i.test(url) && product.cardImg !== url) {
+                product.cardImg = url;
+                changed++;
+            }
+        });
+        return changed;
+    }
+
     function productById(id) {
         const key = String(id || '');
         return key ? (products().find(p => String(p.id) === key) || null) : null;
+    }
+
+    function blobUrl(product) {
+        const value = String(product?.cardImg || '');
+        return /^https:\/\//i.test(value) ? value : '';
     }
 
     function detailUrl(product) {
@@ -24,12 +48,7 @@
         const count = Number(product?.imageCount) || 0;
         const version = String(product?.imageVersion || '0');
         if (!product?.id || count <= 0 || version === '0') return '';
-        return `/api/product-image?id=${encodeURIComponent(product.id)}&v=${encodeURIComponent(version)}&size=full`;
-    }
-
-    function blobUrl(product) {
-        const value = String(product?.cardImg || '');
-        return /^https:\/\//i.test(value) ? value : '';
+        return `/api/product-image?id=${encodeURIComponent(product.id)}&v=${encodeURIComponent(version)}`;
     }
 
     function cardIndex(container) {
@@ -61,11 +80,10 @@
         const product = productById(container.dataset.pid);
         if (!product) return;
 
-        // Important: exactly the same source that detail view uses first.
-        const primary = detailUrl(product);
-        const secondary = blobUrl(product);
-        const source = primary || secondary;
-        if (!source) return;
+        // Fast path: direct immutable Blob CDN. Detail/API path is only fallback.
+        const primary = blobUrl(product) || detailUrl(product);
+        const fallback = detailUrl(product);
+        if (!primary) return;
 
         const index = cardIndex(container);
         const high = forceHigh || (index >= 0 && index < EAGER_COUNT);
@@ -82,22 +100,22 @@
         try { img.fetchPriority = high ? 'high' : 'auto'; } catch (e) {}
         img.setAttribute('fetchpriority', high ? 'high' : 'auto');
 
-        let triedSecondary = false;
+        let fallbackTried = false;
         img.onload = () => {
             if (img.naturalWidth > 0) container.querySelector(':scope > .no-photo')?.remove();
             container.dataset.fastImageMounted = '1';
         };
         img.onerror = () => {
-            if (!triedSecondary && secondary && secondary !== source) {
-                triedSecondary = true;
-                img.src = secondary;
+            if (!fallbackTried && fallback && fallback !== primary) {
+                fallbackTried = true;
+                img.src = fallback;
                 return;
             }
             ensurePlaceholder(container);
         };
 
-        const absolute = new URL(source, location.href).href;
-        if (img.src !== absolute || !img.complete || img.naturalWidth === 0) img.src = source;
+        const absolute = new URL(primary, location.href).href;
+        if (img.src !== absolute || !img.complete || img.naturalWidth === 0) img.src = primary;
     }
 
     const observer = new IntersectionObserver(entries => {
@@ -127,35 +145,33 @@
 
     function installRendererGuard() {
         const current = window.renderProductCardsInto;
-        if (typeof current !== 'function' || current.__detailImageCards === true) return;
-        const wrapped = function renderProductCardsWithDetailImages(container, list) {
+        if (typeof current !== 'function' || current.__blobCacheHydratedCards === true) return;
+        const wrapped = function renderProductCardsWithHydratedBlob(container, list) {
+            hydrateBlobUrlsFromCache();
             const result = current.call(this, container, list);
             scan(container);
             return result;
         };
+        wrapped.__blobCacheHydratedCards = true;
         wrapped.__detailImageCards = true;
         wrapped.__fastImageGuard = true;
         wrapped.__directBlobCards = true;
         window.renderProductCardsInto = wrapped;
     }
 
-    // Warm the first detail-image sources as soon as product data is available.
-    function prewarmFirstImages() {
-        products().slice(0, EAGER_COUNT).forEach(product => {
-            const src = detailUrl(product);
-            if (!src) return;
-            const preload = new Image();
-            preload.decoding = 'async';
-            try { preload.fetchPriority = 'high'; } catch (e) {}
-            preload.src = src;
-        });
+    function refreshHydration() {
+        const changed = hydrateBlobUrlsFromCache();
+        if (changed) scan();
     }
 
+    // Cache is available immediately on repeat visits; the fresh /api/get-data
+    // response rewrites it shortly afterwards. Re-hydrate after both moments.
+    refreshHydration();
     installRendererGuard();
     scan();
-    prewarmFirstImages();
-    setTimeout(() => { installRendererGuard(); scan(); prewarmFirstImages(); }, 0);
-    setTimeout(() => { installRendererGuard(); scan(); }, 500);
+    setTimeout(() => { refreshHydration(); installRendererGuard(); scan(); }, 0);
+    setTimeout(() => { refreshHydration(); installRendererGuard(); scan(); }, 500);
+    setTimeout(() => { refreshHydration(); scan(); }, 1500);
 
     const mutations = new MutationObserver(records => {
         records.forEach(record => record.addedNodes.forEach(node => {
@@ -165,7 +181,7 @@
     mutations.observe(document.body, { childList: true, subtree: true });
 
     const core = document.createElement('script');
-    core.src = '/favorites-waitlist-core.js?v=20260915img2';
+    core.src = '/favorites-waitlist-core.js?v=20260915img3';
     core.async = false;
     document.head.appendChild(core);
 })();
