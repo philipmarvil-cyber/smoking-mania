@@ -76,8 +76,8 @@ export default async function handler(req, res) {
                     res.setHeader('X-Ms-Image-Bytes', String(buffer.length));
                     return res.status(200).send(buffer);
                 }
-                // Если Blob временно недоступен, не ломаем карточку — ниже
-                // остаётся старый надёжный fallback через МойСклад.
+                // Если Blob временно недоступен или ссылка устарела после замены
+                // фотографии в МойСклад, ниже остаётся fallback через МойСклад.
             }
         }
 
@@ -121,7 +121,23 @@ export default async function handler(req, res) {
 
         if (!href) return res.status(404).send('У товара нет фото');
 
-        const { buffer, contentType } = await fetchBinary(href);
+        let binary;
+        try {
+            binary = await fetchBinary(href);
+        } catch (firstError) {
+            // В МойСклад фото можно заменить, не меняя количество изображений.
+            // Тогда старый downloadHref остаётся в нашем KV под прежней версией,
+            // хотя сам файл уже удалён. Не оставляем карточку белой: один раз
+            // перечитываем /images, перезаписываем оба href-кэша и повторяем.
+            console.warn('[product-image] stale image href, refreshing:', id, firstError?.message);
+            const fresh = await fetchAndCacheImageLinks(id, v);
+            const freshHref = wantFull ? fresh.fulls?.[index] : fresh.minis?.[index];
+            if (!freshHref || freshHref === href) throw firstError;
+            href = freshHref;
+            binary = await fetchBinary(href);
+        }
+
+        const { buffer, contentType } = binary;
         res.setHeader('Content-Type', contentType);
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         res.setHeader('CDN-Cache-Control', 'public, max-age=31536000, stale-while-revalidate=2592000');
