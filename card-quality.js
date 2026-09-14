@@ -336,20 +336,21 @@
         return `/_vercel/image?url=${encodeURIComponent(absoluteSource)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
     }
 
-    // Чтобы браузер даже не успевал начать старый /api/product-image запрос,
-    // подставляем cardImg в момент создания карточки. Оригинальные allProducts
-    // не меняем: detail/full и fallback продолжают работать по старой схеме.
+    // Мигрированные Blob-карточки сначала рендерим без src. Иначе index.html
+    // создаёт <img loading="lazy">, и Telegram WebView иногда успевает поставить
+    // даже видимую картинку в низкий приоритет. Сразу после синхронного первого
+    // чанка scan() создаёт img сам: первые карточки получают eager/high ДО paint.
+    // Оригинальные allProducts не меняем: detail/full и fallback остаются прежними.
     function installDirectBlobRenderer() {
         const current = window.renderProductCardsInto;
         if (typeof current !== 'function' || current.__directBlobCards === true) return;
         const wrapped = function renderProductCardsDirectFromBlob(container, list) {
             const prepared = Array.isArray(list)
-                ? list.map(prod => {
-                    const direct = getDirectBlobCardUrl(prod);
-                    return direct ? { ...prod, img: direct } : prod;
-                })
+                ? list.map(prod => getDirectBlobCardUrl(prod) ? { ...prod, img: '' } : prod)
                 : list;
-            return current.call(this, container, prepared);
+            const result = current.call(this, container, prepared);
+            scan(container);
+            return result;
         };
         wrapped.__directBlobCards = true;
         window.renderProductCardsInto = wrapped;
