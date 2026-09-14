@@ -1,39 +1,35 @@
 (() => {
     'use strict';
 
-    // Hotfix слоя карточек: грузим видимые фото агрессивнее и не оставляем
-    // белую карточку, если прямой Blob URL ответил медленно/ошибкой.
-    const EAGER_COUNT = 10;
-    const PREFETCH_MARGIN = '1800px 0px';
-    const DIRECT_FALLBACK_DELAY = 900;
+    // Catalog cards now use the same image source as the product detail page.
+    // cardImg is only a fallback/prewarm source; this avoids intermittent blank
+    // cards when Telegram WebView stalls on a direct Blob request.
+    const EAGER_COUNT = 12;
+    const PREFETCH_MARGIN = '2400px 0px';
 
     function products() {
         try {
             return (typeof allProducts !== 'undefined' && Array.isArray(allProducts)) ? allProducts : [];
-        } catch (e) {
-            return [];
-        }
+        } catch (e) { return []; }
     }
 
     function productById(id) {
         const key = String(id || '');
-        if (!key) return null;
-        return products().find(product => String(product.id) === key) || null;
+        return key ? (products().find(p => String(p.id) === key) || null) : null;
     }
 
-    function directUrl(product) {
-        const value = String(product?.cardImg || '');
-        return /^https:\/\//i.test(value) ? value : '';
-    }
-
-    function fallbackUrl(product) {
-        const direct = directUrl(product);
+    function detailUrl(product) {
         const legacy = String(product?.img || '');
-        if (legacy && legacy !== direct) return legacy;
+        if (legacy) return legacy;
         const count = Number(product?.imageCount) || 0;
         const version = String(product?.imageVersion || '0');
         if (!product?.id || count <= 0 || version === '0') return '';
         return `/api/product-image?id=${encodeURIComponent(product.id)}&v=${encodeURIComponent(version)}&size=full`;
+    }
+
+    function blobUrl(product) {
+        const value = String(product?.cardImg || '');
+        return /^https:\/\//i.test(value) ? value : '';
     }
 
     function cardIndex(container) {
@@ -65,9 +61,11 @@
         const product = productById(container.dataset.pid);
         if (!product) return;
 
-        const primary = directUrl(product) || fallbackUrl(product);
-        const fallback = fallbackUrl(product);
-        if (!primary) return;
+        // Important: exactly the same source that detail view uses first.
+        const primary = detailUrl(product);
+        const secondary = blobUrl(product);
+        const source = primary || secondary;
+        if (!source) return;
 
         const index = cardIndex(container);
         const high = forceHigh || (index >= 0 && index < EAGER_COUNT);
@@ -75,54 +73,31 @@
         if (!img) {
             img = document.createElement('img');
             img.alt = '';
-            img.decoding = 'async';
             container.prepend(img);
         }
 
-        const placeholder = ensurePlaceholder(container);
-        if (img.complete && img.naturalWidth > 0) placeholder.remove();
-
+        ensurePlaceholder(container);
         img.loading = high ? 'eager' : 'lazy';
+        img.decoding = 'async';
         try { img.fetchPriority = high ? 'high' : 'auto'; } catch (e) {}
         img.setAttribute('fetchpriority', high ? 'high' : 'auto');
-        img.decoding = 'async';
 
-        let switchedToFallback = false;
-        let timer = null;
-        const finish = () => {
-            if (timer) clearTimeout(timer);
+        let triedSecondary = false;
+        img.onload = () => {
             if (img.naturalWidth > 0) container.querySelector(':scope > .no-photo')?.remove();
             container.dataset.fastImageMounted = '1';
         };
-        const switchToFallback = () => {
-            if (switchedToFallback || !fallback || fallback === primary) return;
-            switchedToFallback = true;
-            img.src = fallback;
-        };
-
-        img.onload = finish;
         img.onerror = () => {
-            if (!switchedToFallback && fallback && fallback !== primary) {
-                switchToFallback();
+            if (!triedSecondary && secondary && secondary !== source) {
+                triedSecondary = true;
+                img.src = secondary;
                 return;
             }
-            if (timer) clearTimeout(timer);
             ensurePlaceholder(container);
         };
 
-        const absolutePrimary = new URL(primary, location.href).href;
-        if (img.src !== absolutePrimary || !img.complete || img.naturalWidth === 0) {
-            img.src = primary;
-        }
-
-        // Blob CDN обычно отвечает сразу. Если Telegram WebView завис именно на
-        // этом запросе, не ждём вечность: через короткий таймаут пробуем старый
-        // endpoint изображения. Это закрывает случай «фото то есть, то бело».
-        if (directUrl(product) && fallback && fallback !== primary) {
-            timer = setTimeout(() => {
-                if (!img.complete || img.naturalWidth === 0) switchToFallback();
-            }, DIRECT_FALLBACK_DELAY);
-        }
+        const absolute = new URL(source, location.href).href;
+        if (img.src !== absolute || !img.complete || img.naturalWidth === 0) img.src = source;
     }
 
     const observer = new IntersectionObserver(entries => {
@@ -152,21 +127,36 @@
 
     function installRendererGuard() {
         const current = window.renderProductCardsInto;
-        if (typeof current !== 'function' || current.__fastImageGuard === true) return;
-        const wrapped = function renderProductCardsFastAndSafe(container, list) {
+        if (typeof current !== 'function' || current.__detailImageCards === true) return;
+        const wrapped = function renderProductCardsWithDetailImages(container, list) {
             const result = current.call(this, container, list);
             scan(container);
             return result;
         };
+        wrapped.__detailImageCards = true;
         wrapped.__fastImageGuard = true;
-        // card-quality.js проверяет этот флаг в своих отложенных install-вызовах.
-        // Сохраняем его, чтобы он не завернул наш guard ещё раз через 500 мс.
         wrapped.__directBlobCards = true;
         window.renderProductCardsInto = wrapped;
     }
 
+    // Warm the first detail-image sources as soon as product data is available.
+    function prewarmFirstImages() {
+        products().slice(0, EAGER_COUNT).forEach(product => {
+            const src = detailUrl(product);
+            if (!src) return;
+            const preload = new Image();
+            preload.decoding = 'async';
+            try { preload.fetchPriority = 'high'; } catch (e) {}
+            preload.src = src;
+        });
+    }
+
     installRendererGuard();
     scan();
+    prewarmFirstImages();
+    setTimeout(() => { installRendererGuard(); scan(); prewarmFirstImages(); }, 0);
+    setTimeout(() => { installRendererGuard(); scan(); }, 500);
+
     const mutations = new MutationObserver(records => {
         records.forEach(record => record.addedNodes.forEach(node => {
             if (node.nodeType === 1) scan(node);
@@ -174,9 +164,8 @@
     });
     mutations.observe(document.body, { childList: true, subtree: true });
 
-    // Сохраняем прежнюю логику «Списка ожидания» отдельным неизменённым файлом.
     const core = document.createElement('script');
-    core.src = '/favorites-waitlist-core.js?v=20260915img1';
+    core.src = '/favorites-waitlist-core.js?v=20260915img2';
     core.async = false;
     document.head.appendChild(core);
 })();
