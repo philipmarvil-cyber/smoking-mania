@@ -10,7 +10,7 @@ const COOLDOWN_KEY = 'product-image-blob-cooldown:v1';
 const BLOB_KEY_PREFIX = 'product-image-blob:v1:';
 const BATCH_SIZE = 4;
 const MAX_SCAN_PER_RUN = 80;
-const COOLDOWN_MS = 4 * 60 * 1000;
+const COOLDOWN_MS = 60 * 1000;
 const CARD_WIDTH = 640;
 const CARD_QUALITY = 82;
 
