@@ -46,11 +46,28 @@
 
     function detailUrl(product) {
         const legacy = String(product?.img || '');
-        if (legacy) return legacy;
-        const count = Number(product?.imageCount) || 0;
-        const version = String(product?.imageVersion || '0');
-        if (!product?.id || count <= 0 || version === '0') return '';
-        return `/api/product-image?id=${encodeURIComponent(product.id)}&v=${encodeURIComponent(version)}`;
+        let base = legacy;
+        if (!base) {
+            const count = Number(product?.imageCount) || 0;
+            const version = String(product?.imageVersion || '0');
+            if (!product?.id || count <= 0 || version === '0') return '';
+            base = `/api/product-image?id=${encodeURIComponent(product.id)}&v=${encodeURIComponent(version)}`;
+        }
+
+        // The recovery path used to reuse the small catalog thumbnail. That made
+        // the formerly blank cards finally appear, but visibly blurry. Ask the
+        // same endpoint for the full source so recovered cards stay as sharp as
+        // the normal Blob cards. External/non-product-image URLs are left alone.
+        try {
+            const url = new URL(base, location.origin);
+            if (url.pathname === '/api/product-image') {
+                url.searchParams.set('size', 'full');
+                return url.origin === location.origin
+                    ? `${url.pathname}${url.search}`
+                    : url.href;
+            }
+        } catch (e) {}
+        return base;
     }
 
     function cardIndex(container) {
@@ -83,11 +100,6 @@
         const current = container.querySelector(':scope > img');
         if (current && current.complete && current.naturalWidth > 0) return;
 
-        // Replace the element instead of merely changing src. card-quality.js and
-        // this loader can both touch the same <img>; on some Telegram WebViews a
-        // request that got stuck before the handlers were replaced stays stuck on
-        // that element. A fresh node starts the same proven detail-page request
-        // without inheriting the stale network/decoder state.
         container.dataset.hardImageRecovered = '1';
         const fresh = document.createElement('img');
         fresh.alt = '';
@@ -109,9 +121,6 @@
         const product = productById(container.dataset.pid);
         if (!product) return;
 
-        // Fast path: direct immutable Blob CDN. Product endpoint is the reliable
-        // fallback for stale/missing Blob entries and for requests that never fail
-        // explicitly but simply hang inside Telegram WebView.
         const direct = blobUrl(product);
         const fallback = detailUrl(product);
         const primary = direct || fallback;
@@ -170,9 +179,6 @@
             }, BLOB_STALL_FALLBACK_MS);
         }
 
-        // Final guard for the few products that stay blank even after src was
-        // switched. This is intentionally slower than the normal CDN path and
-        // only affects images that are still actually blank.
         hardTimer = setTimeout(() => {
             const active = container.querySelector(':scope > img');
             if (!active || !active.complete || active.naturalWidth === 0) {
@@ -227,8 +233,6 @@
         if (changed) scan();
     }
 
-    // Cache is available immediately on repeat visits; the fresh /api/get-data
-    // response rewrites it shortly afterwards. Re-hydrate after both moments.
     refreshHydration();
     installRendererGuard();
     scan();
@@ -244,7 +248,7 @@
     mutations.observe(document.body, { childList: true, subtree: true });
 
     const core = document.createElement('script');
-    core.src = '/favorites-waitlist-core.js?v=20260915img5';
+    core.src = '/favorites-waitlist-core.js?v=20260915img6';
     core.async = false;
     document.head.appendChild(core);
 })();
