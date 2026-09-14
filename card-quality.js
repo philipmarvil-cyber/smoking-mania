@@ -289,10 +289,9 @@
         }, true);
     }
 
-    // Sharp-first: в товарной сетке больше не показываем miniature вообще.
-    // Карточка сразу получает одну резкую 640px WebP-версию из Vercel Image
-    // Optimization. Это одновременно убирает «мыло» и двойную загрузку
-    // miniature -> HQ. Повторные открытия берутся из versioned CDN/browser cache.
+    // Sharp-first: если карточная версия уже есть в Vercel Blob, берём её
+    // НАПРЯМУЮ с Blob CDN. Для ещё не мигрированных товаров сохраняется старый
+    // sharp-path через /api/product-image + Vercel Image Optimization.
     const CARD_IMAGE_WIDTH = 640;
     const CARD_IMAGE_QUALITY = 82;
     const SHARP_EAGER_COUNT = isMobileWebView ? 4 : 8;
@@ -305,6 +304,11 @@
 
     function getProductForContainer(container) {
         return getProductById(container?.dataset?.pid);
+    }
+
+    function getDirectBlobCardUrl(prod) {
+        const url = String(prod?.cardImg || '');
+        return /^https:\/\//i.test(url) ? url : '';
     }
 
     function getBaseImageUrl(prod) {
@@ -324,11 +328,35 @@
     }
 
     function getSharpCardUrl(prod) {
+        const direct = getDirectBlobCardUrl(prod);
+        if (direct) return direct;
         const source = getFullUrl(prod);
         if (!source) return '';
         const absoluteSource = new URL(source, location.origin).href;
         return `/_vercel/image?url=${encodeURIComponent(absoluteSource)}&w=${CARD_IMAGE_WIDTH}&q=${CARD_IMAGE_QUALITY}`;
     }
+
+    // Чтобы браузер даже не успевал начать старый /api/product-image запрос,
+    // подставляем cardImg в момент создания карточки. Оригинальные allProducts
+    // не меняем: detail/full и fallback продолжают работать по старой схеме.
+    function installDirectBlobRenderer() {
+        const current = window.renderProductCardsInto;
+        if (typeof current !== 'function' || current.__directBlobCards === true) return;
+        const wrapped = function renderProductCardsDirectFromBlob(container, list) {
+            const prepared = Array.isArray(list)
+                ? list.map(prod => {
+                    const direct = getDirectBlobCardUrl(prod);
+                    return direct ? { ...prod, img: direct } : prod;
+                })
+                : list;
+            return current.call(this, container, prepared);
+        };
+        wrapped.__directBlobCards = true;
+        window.renderProductCardsInto = wrapped;
+    }
+    installDirectBlobRenderer();
+    setTimeout(installDirectBlobRenderer, 0);
+    setTimeout(installDirectBlobRenderer, 500);
 
     // На мобильном начинаем те же первые sharp-запросы уже при касании по бренду.
     // Когда карточки появятся после клика, браузер переиспользует активные запросы.
@@ -412,12 +440,8 @@
         const absolute = new URL(sharpUrl, location.href).href;
         const fullFallback = getFullUrl(prod);
 
-        // В index.html всё ещё есть старый отложенный upgrade: после рендера
-        // он ждёт idle/300ms, затем снова читает data-full-src и раньше начинал
-        // второй запрос на огромный full. Из-за гонки sharp успевал появиться,
-        // затем src менялся, картинка исчезала и загружалась повторно.
-        // MutationObserver выполняется раньше этого callback, поэтому отдаём
-        // legacy-upgrader тот же sharp URL: второго скачивания/переключения нет.
+        // Legacy-upgrader получает тот же URL. Для Blob-карточки это уже прямой
+        // CDN URL; для fallback — тот же sharp URL, поэтому второго скачивания нет.
         if (img.dataset.fullSrc) img.dataset.fullSrc = sharpUrl;
 
         img.onerror = () => {
@@ -426,7 +450,7 @@
             img.src = fullFallback;
         };
         if (img.src !== absolute) img.src = sharpUrl;
-        img.dataset.imageQuality = 'sharp';
+        img.dataset.imageQuality = getDirectBlobCardUrl(prod) ? 'blob-direct' : 'sharp';
     }
 
     const sharpObserver = new IntersectionObserver(entries => {
