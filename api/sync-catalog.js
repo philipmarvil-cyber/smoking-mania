@@ -6,6 +6,10 @@ const CARD_IMAGE_WIDTH = 640;
 const CARD_IMAGE_QUALITY = 82;
 const MAX_IMAGES_TO_WARM = 8;
 const WARM_START_DEADLINE_MS = 45 * 1000;
+// Одноразовый cache-bust после исправления stale/empty downloadHref.
+// imageVersion/Blob keys не меняем: уже мигрированные карточки не перезаливаются,
+// но Telegram/iOS больше не может использовать старый immutable URL с пустым ответом.
+const IMAGE_RECOVERY_EPOCH = '20260915a';
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -111,6 +115,16 @@ export default async function handler(req, res) {
         }
 
         const data = await loadCatalogData();
+        // Старые карточки могли быть закэшированы Telegram/iOS как immutable ещё
+        // в момент, когда МойСклад отдавал HTTP 200 с нулевым body. Меняем только
+        // внешний URL источника один раз; v остаётся прежним, поэтому Blob cache
+        // и миграция не инвалидируются.
+        data.products.forEach(product => {
+            if (!product?.img) return;
+            const separator = product.img.includes('?') ? '&' : '?';
+            product.img = `${product.img}${separator}r=${IMAGE_RECOVERY_EPOCH}`;
+        });
+
         const saved = await kvSetCatalog({ ...data, syncedAt: Date.now() });
         if (!saved) throw new Error('Не удалось сохранить обновлённый каталог в KV');
 
