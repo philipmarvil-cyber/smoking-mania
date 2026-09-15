@@ -35,6 +35,7 @@ const NEW_THRESHOLD_MS = 20 * 24 * 60 * 60 * 1000; // 20 дней
 // (см. buildCategoryTree ниже).
 const HIDDEN_CATEGORY_NAMES = [
     'sale (распродажа)',
+    'дисконт',
     'электронки',
     'жевательный табак',
     'самокруточный табак',
