@@ -11,10 +11,6 @@ function requestOrigin(req) {
 }
 
 function optimizedFallbackCardUrl(req, product) {
-    // `img` is only the legacy cached href. Some perfectly valid MoySklad
-    // products have imageCount/imageVersion but no `img`, so requiring it here
-    // made their catalogue card permanently blank and also hid the real image
-    // endpoint that can resolve the href by product id.
     if (!product?.id || Number(product.imageCount || 0) <= 0) return '';
     const version = String(product.imageVersion || '0');
     if (version === '0') return '';
@@ -44,7 +40,20 @@ export default async function handler(req, res) {
         const products = (catalog.products || []).map(product => {
             const blobCard = directBlobCardUrl(blobIndex, product);
             if (blobCard) {
-                return { ...product, cardImg: blobCard, imageDelivery: 'vercel-blob' };
+                // index.html historically keeps only `img` when it copies the
+                // catalogue into allProducts. Supplying cardImg alone therefore
+                // silently threw away the direct Blob URL and cards fell back to
+                // the slower product-image/MoySklad route. Make the already
+                // migrated 640px WebP the primary display image as well. Add a
+                // harmless query marker so the legacy detail code can append
+                // `&size=full` without turning it into part of the Blob pathname.
+                const directDisplay = `${blobCard}?delivery=blob`;
+                return {
+                    ...product,
+                    img: directDisplay,
+                    cardImg: directDisplay,
+                    imageDelivery: 'vercel-blob'
+                };
             }
 
             const fallbackCard = optimizedFallbackCardUrl(req, product);
