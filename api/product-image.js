@@ -124,17 +124,20 @@ export default async function handler(req, res) {
         let binary;
         try {
             binary = await fetchBinary(href);
+            // MoySklad can return HTTP 200 for a stale downloadHref while the
+            // response body is empty. Treat that exactly like a failed download
+            // so the existing stale-href recovery below actually runs.
+            if (!binary?.buffer?.length) throw new Error('МойСклад вернул пустой файл изображения');
         } catch (firstError) {
-            // В МойСклад фото можно заменить, не меняя количество изображений.
-            // Тогда старый downloadHref остаётся в нашем KV под прежней версией,
-            // хотя сам файл уже удалён. Не оставляем карточку белой: один раз
-            // перечитываем /images, перезаписываем оба href-кэша и повторяем.
-            console.warn('[product-image] stale image href, refreshing:', id, firstError?.message);
+            console.warn('[product-image] stale/empty image href, refreshing:', id, firstError?.message);
             const fresh = await fetchAndCacheImageLinks(id, v);
             const freshHref = wantFull ? fresh.fulls?.[index] : fresh.minis?.[index];
-            if (!freshHref || freshHref === href) throw firstError;
+            if (!freshHref) throw firstError;
             href = freshHref;
             binary = await fetchBinary(href);
+            if (!binary?.buffer?.length) {
+                throw new Error(`МойСклад вернул пустой файл изображения после обновления ссылки${freshHref === href ? '' : ''}`);
+            }
         }
 
         const { buffer, contentType } = binary;
