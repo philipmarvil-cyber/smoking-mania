@@ -294,7 +294,7 @@
         const y = Number(screen?.scrollY) || 0;
         window.scrollTo(0, y);
         requestAnimationFrame(() => window.scrollTo(0, y));
-        try { window.Telegram?.WebApp?.BackButton?.hide(); } catch (e) {}
+        try { window.Telegram?.WebApp?.BackButton?.show(); } catch (e) {}
         if (typeof ensureDocumentIsScrollable === 'function') {
             ensureDocumentIsScrollable();
             setTimeout(ensureDocumentIsScrollable, 100);
@@ -326,6 +326,15 @@
             if (ROOT_TABS.has(type)) rootTab = type;
             return originalSwitchTab(type);
         };
+    }
+
+    const telegramBackButton = window.Telegram?.WebApp?.BackButton;
+    if (telegramBackButton && !window.__smokingCatalogBackBound) {
+        window.__smokingCatalogBackBound = true;
+        telegramBackButton.onClick(() => {
+            const current = typeof currentScreen === 'function' ? currentScreen() : null;
+            if (current?.type === 'catalog') window.switchTab?.('shop');
+        });
     }
 
     function install() {
