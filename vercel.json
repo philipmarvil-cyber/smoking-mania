@@ -27,11 +27,13 @@
   "functions": {
     "api/sync-catalog.js": { "maxDuration": 60 },
     "api/migrate-product-images.js": { "maxDuration": 60 },
+    "api/refresh-product-images.js": { "maxDuration": 60 },
     "api/order-webhook.js": { "maxDuration": 30 },
     "api/get-data.js": { "maxDuration": 30 }
   },
   "crons": [
     { "path": "/api/sync-catalog", "schedule": "0 3 * * *" },
+    { "path": "/api/refresh-product-images", "schedule": "* * * * *" },
     { "path": "/api/migrate-product-images", "schedule": "* * * * *" }
   ]
 }
