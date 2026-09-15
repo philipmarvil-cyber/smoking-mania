@@ -302,10 +302,46 @@
 (() => {
     'use strict';
 
-    let artwork = {};
-    const loadedIds = new Set();
-    const loadingIds = new Set();
+    const ARTWORK_CACHE_KEY = 'smokingmania:category-artwork:v2';
+    const ARTWORK_KNOWN_KEY = 'smokingmania:category-artwork-known:v2';
     const connectedArtworkHosts = new Set();
+    const sessionFetchedIds = new Set();
+    const loadingIds = new Set();
+    const warmQueued = new Set();
+    const warmQueue = [];
+    let warmActive = 0;
+    let artwork = {};
+    let knownIds = new Set();
+    let bootstrapAttempts = 0;
+
+    function readLocalCache() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(ARTWORK_CACHE_KEY) || '{}');
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                artwork = Object.fromEntries(Object.entries(parsed).filter(([id, url]) => id && typeof url === 'string'));
+            }
+        } catch (e) {}
+        try {
+            const parsed = JSON.parse(localStorage.getItem(ARTWORK_KNOWN_KEY) || '[]');
+            if (Array.isArray(parsed)) knownIds = new Set(parsed.map(String).filter(Boolean));
+        } catch (e) {}
+        Object.keys(artwork).forEach(id => knownIds.add(id));
+    }
+
+    function persistLocalCache() {
+        try {
+            const cachedArtwork = {};
+            const cachedKnown = [];
+            knownIds.forEach(id => {
+                const value = typeof artwork[id] === 'string' ? artwork[id] : '';
+                if (value && !/^https?:\/\//i.test(value)) return;
+                cachedKnown.push(id);
+                cachedArtwork[id] = value;
+            });
+            localStorage.setItem(ARTWORK_CACHE_KEY, JSON.stringify(cachedArtwork));
+            localStorage.setItem(ARTWORK_KNOWN_KEY, JSON.stringify(cachedKnown));
+        } catch (e) {}
+    }
 
     function topCategories() {
         try {
@@ -315,13 +351,26 @@
         }
     }
 
+    function collectTreeIds(nodes, out) {
+        (nodes || []).forEach(node => {
+            const id = String(node?.id || '');
+            if (id) out.push(id);
+            collectTreeIds(node?.subcategories || [], out);
+        });
+    }
+
     function neededCategoryIds() {
-        const ids = topCategories().map(category => String(category.id || '')).filter(Boolean);
+        const ids = [];
+        collectTreeIds(topCategories(), ids);
         document.querySelectorAll('[data-category-logo-id]').forEach(card => {
             const id = String(card.dataset.categoryLogoId || '');
             if (id) ids.push(id);
         });
         return [...new Set(ids)];
+    }
+
+    function setHidden(element, hidden) {
+        if (element && element.hidden !== hidden) element.hidden = hidden;
     }
 
     function preconnectArtworkUrl(value) {
@@ -337,128 +386,192 @@
         } catch (e) {}
     }
 
-    function applyArtwork() {
+    function runWarmQueue() {
+        while (warmActive < 2 && warmQueue.length) {
+            const url = warmQueue.shift();
+            warmActive += 1;
+            const image = new Image();
+            image.decoding = 'async';
+            const done = () => {
+                warmActive = Math.max(0, warmActive - 1);
+                runWarmQueue();
+            };
+            image.onload = done;
+            image.onerror = done;
+            image.src = url;
+        }
+    }
+
+    function queueWarm(value) {
+        const url = String(value || '');
+        if (!/^https?:\/\//i.test(url) || warmQueued.has(url)) return;
+        warmQueued.add(url);
+        preconnectArtworkUrl(url);
+        warmQueue.push(url);
+        runWarmQueue();
+    }
+
+    function resetCatalogCard(card) {
+        if (!card?.dataset?.artworkUrl && !card?.dataset?.artworkPending) return;
+        card.style.removeProperty('background-image');
+        card.style.removeProperty('background-size');
+        card.style.removeProperty('background-position');
+        card.style.removeProperty('background-repeat');
+        delete card.dataset.artworkUrl;
+        delete card.dataset.artworkPending;
+    }
+
+    function applyCatalogArtwork() {
         const source = topCategories();
         const grid = document.getElementById('catalog-photo-grid');
-        if (grid && source.length) {
-            const cards = [...grid.querySelectorAll('.catalog-photo-card')];
-            cards.forEach((card, index) => {
-                const category = source[index];
-                if (!category) return;
-                const imageUrl = String(artwork[String(category.id)] || '');
-                if (!imageUrl || card.dataset.artworkUrl === imageUrl) return;
-                preconnectArtworkUrl(imageUrl);
-
-                // Для большой обложки не убираем штатный спрайт, пока новая
-                // CDN-картинка реально не декодировалась. Поэтому при холодной
-                // загрузке пользователь видит готовую карточку, а не белый провал.
-                const preload = new Image();
-                preload.decoding = 'async';
-                preload.onload = () => {
-                    if (!card.isConnected) return;
-                    const escaped = imageUrl.replace(/"/g, '%22');
-                    card.style.backgroundImage = `linear-gradient(90deg,rgba(14,15,18,.74) 0%,rgba(14,15,18,.42) 38%,rgba(14,15,18,.10) 72%,rgba(14,15,18,.02) 100%),url("${escaped}")`;
-                    card.style.backgroundSize = '100% 100%, cover';
-                    card.style.backgroundPosition = 'center, center';
-                    card.style.backgroundRepeat = 'no-repeat';
-                    card.dataset.artworkUrl = imageUrl;
-                };
-                preload.src = imageUrl;
-            });
-        }
-
-        document.querySelectorAll('.subcat-logo-card[data-category-logo-id]').forEach(card => {
-            const imageUrl = String(artwork[String(card.dataset.categoryLogoId || '')] || '');
-            const image = card.querySelector('.subcat-logo-media img');
-            const fallback = card.querySelector('.subcat-logo-fallback');
-            if (!image || !fallback) return;
-            if (imageUrl) {
-                preconnectArtworkUrl(imageUrl);
-                if (image.dataset.artworkUrl !== imageUrl) {
-                    // Заглушка остаётся видимой до onload — нет белых пустых
-                    // кружков даже на первой загрузке после очистки кэша.
-                    image.hidden = true;
-                    fallback.hidden = false;
-                    image.loading = 'eager';
-                    image.decoding = 'async';
-                    try { image.fetchPriority = 'high'; } catch (e) {}
-                    image.setAttribute('fetchpriority', 'high');
-                    image.onload = () => {
-                        if (image.dataset.artworkUrl !== imageUrl) return;
-                        image.hidden = false;
-                        fallback.hidden = true;
-                    };
-                    image.onerror = () => {
-                        if (image.dataset.artworkUrl !== imageUrl) return;
-                        image.hidden = true;
-                        fallback.hidden = false;
-                    };
-                    image.dataset.artworkUrl = imageUrl;
-                    image.src = imageUrl;
-                } else if (image.complete && image.naturalWidth > 0) {
-                    image.hidden = false;
-                    fallback.hidden = true;
-                }
-            } else {
-                image.removeAttribute('src');
-                delete image.dataset.artworkUrl;
-                image.hidden = true;
-                fallback.hidden = false;
+        if (!grid || !source.length) return;
+        const cards = [...grid.querySelectorAll('.catalog-photo-card')];
+        cards.forEach((card, index) => {
+            const category = source[index];
+            if (!category) return;
+            const id = String(category.id || '');
+            if (!knownIds.has(id)) return;
+            const imageUrl = String(artwork[id] || '');
+            if (!imageUrl) {
+                resetCatalogCard(card);
+                return;
             }
+            if (card.dataset.artworkUrl === imageUrl || card.dataset.artworkPending === imageUrl) return;
+            preconnectArtworkUrl(imageUrl);
+            card.dataset.artworkPending = imageUrl;
+            const preload = new Image();
+            preload.decoding = 'async';
+            preload.onload = () => {
+                if (!card.isConnected || card.dataset.artworkPending !== imageUrl) return;
+                const escaped = imageUrl.replace(/"/g, '%22');
+                card.style.backgroundImage = `linear-gradient(90deg,rgba(14,15,18,.74) 0%,rgba(14,15,18,.42) 38%,rgba(14,15,18,.10) 72%,rgba(14,15,18,.02) 100%),url("${escaped}")`;
+                card.style.backgroundSize = '100% 100%, cover';
+                card.style.backgroundPosition = 'center, center';
+                card.style.backgroundRepeat = 'no-repeat';
+                card.dataset.artworkUrl = imageUrl;
+                delete card.dataset.artworkPending;
+            };
+            preload.onerror = () => {
+                if (card.dataset.artworkPending === imageUrl) delete card.dataset.artworkPending;
+            };
+            preload.src = imageUrl;
         });
     }
 
+    function applySubcategoryArtwork() {
+        document.querySelectorAll('.subcat-logo-card[data-category-logo-id]').forEach(card => {
+            const id = String(card.dataset.categoryLogoId || '');
+            const image = card.querySelector('.subcat-logo-media img');
+            const fallback = card.querySelector('.subcat-logo-fallback');
+            if (!image || !fallback || !id) return;
+
+            if (!knownIds.has(id)) {
+                setHidden(image, true);
+                setHidden(fallback, true);
+                return;
+            }
+
+            const imageUrl = String(artwork[id] || '');
+            if (!imageUrl) {
+                image.onload = null;
+                image.onerror = null;
+                if (image.hasAttribute('src')) image.removeAttribute('src');
+                if (image.dataset.artworkUrl) delete image.dataset.artworkUrl;
+                setHidden(image, true);
+                setHidden(fallback, false);
+                return;
+            }
+
+            preconnectArtworkUrl(imageUrl);
+            if (image.dataset.artworkUrl === imageUrl) {
+                if (image.complete && image.naturalWidth > 0) {
+                    setHidden(image, false);
+                    setHidden(fallback, true);
+                }
+                return;
+            }
+
+            setHidden(image, true);
+            setHidden(fallback, true);
+            image.decoding = 'async';
+            image.onload = () => {
+                if (image.dataset.artworkUrl !== imageUrl) return;
+                setHidden(image, false);
+                setHidden(fallback, true);
+            };
+            image.onerror = () => {
+                if (image.dataset.artworkUrl !== imageUrl) return;
+                setHidden(image, true);
+                setHidden(fallback, false);
+            };
+            image.dataset.artworkUrl = imageUrl;
+            if (image.getAttribute('src') !== imageUrl) image.src = imageUrl;
+        });
+    }
+
+    function applyArtwork() {
+        applyCatalogArtwork();
+        applySubcategoryArtwork();
+    }
+
+    function mergeResolvedArtwork(batch, images) {
+        let changed = false;
+        batch.forEach(id => {
+            if (!Object.prototype.hasOwnProperty.call(images, id)) return;
+            const next = typeof images[id] === 'string' ? images[id] : '';
+            if (!knownIds.has(id) || artwork[id] !== next) changed = true;
+            knownIds.add(id);
+            artwork[id] = next;
+            sessionFetchedIds.add(id);
+            if (next) queueWarm(next);
+        });
+        if (changed) persistLocalCache();
+    }
+
     async function loadArtwork() {
-        const ids = neededCategoryIds().filter(id => !loadedIds.has(id) && !loadingIds.has(id));
-        if (!ids.length) { applyArtwork(); return; }
+        // Важный порядок: локальный кэш применяется синхронно в том же task,
+        // до сетевого await и до следующего кадра Telegram WebView.
+        applyArtwork();
+
+        const ids = neededCategoryIds().filter(id => !sessionFetchedIds.has(id) && !loadingIds.has(id));
+        if (!ids.length) return;
         ids.forEach(id => loadingIds.add(id));
+
         try {
-            const batches = [];
-            for (let i = 0; i < ids.length; i += 30) batches.push(ids.slice(i, i + 30));
-            const results = await Promise.all(batches.map(async batch => {
-                // Стабильный порядок id даёт одинаковый URL запроса и позволяет
-                // CDN/HTTP cache переиспользовать маленький JSON с Blob URL.
-                const stableBatch = [...batch].sort();
-                const response = await fetch(`/api/banners?kind=category-images&ids=${encodeURIComponent(stableBatch.join(','))}`);
+            // Пачки идут последовательно: не создаём всплеск serverless/KV запросов
+            // и десятки одновременных декодирований на мобильном WebView.
+            for (let i = 0; i < ids.length; i += 30) {
+                const batch = ids.slice(i, i + 30).sort();
+                const response = await fetch(`/api/banners?kind=category-images&ids=${encodeURIComponent(batch.join(','))}`);
                 const data = await response.json();
                 if (!response.ok || !data?.success) throw new Error(data?.error || 'Картинки категорий недоступны');
-                return data.images || {};
-            }));
-            results.forEach(images => {
-                Object.assign(artwork, images);
-                Object.values(images).forEach(preconnectArtworkUrl);
-            });
-            ids.forEach(id => loadedIds.add(id));
-            applyArtwork();
+                mergeResolvedArtwork(batch, data.images || {});
+                applyArtwork();
+            }
         } catch (e) {
-            // При недоступном KV каталог продолжает работать на штатном спрайте.
+            // Ошибка логотипов никогда не должна блокировать каталог.
         } finally {
             ids.forEach(id => loadingIds.delete(id));
         }
     }
 
+    function bootstrapArtwork() {
+        applyArtwork();
+        const ids = neededCategoryIds();
+        if (ids.length) {
+            loadArtwork();
+            return;
+        }
+        bootstrapAttempts += 1;
+        if (bootstrapAttempts < 12) setTimeout(bootstrapArtwork, 400);
+    }
+
+    readLocalCache();
+    Object.values(artwork).forEach(queueWarm);
     window.__loadCategoryArtwork = loadArtwork;
-
-    const observer = new MutationObserver(() => {
-        applyArtwork();
-        loadArtwork();
-    });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-
-    let attempts = 0;
-    const timer = setInterval(() => {
-        attempts += 1;
-        loadArtwork();
-        applyArtwork();
-        if (loadedIds.size || attempts >= 30) clearInterval(timer);
-    }, 350);
+    setTimeout(bootstrapArtwork, 0);
 
     document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) {
-            // Не выбрасываем уже полученные URL при каждом сворачивании
-            // Telegram: они версионные и сами картинки кэшируются Blob CDN.
-            loadArtwork();
-            applyArtwork();
-        }
+        if (!document.hidden) applyArtwork();
     });
 })();

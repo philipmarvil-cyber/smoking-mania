@@ -241,6 +241,7 @@
             });
             grid.appendChild(card);
         });
+        window.__loadCategoryArtwork?.();
     }
 
     function handleCatalogProductSearch(query = '') {
