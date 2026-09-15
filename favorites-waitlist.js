@@ -6,9 +6,10 @@
     // raw catalog cache so cards can use the CDN URL directly instead of waiting
     // on /api/product-image.
     const EAGER_COUNT = 12;
-    const PREFETCH_MARGIN = '2400px 0px';
+    // Prefetch in BOTH axes. The previous two-value margin had 0px left/right,
+    // so a fast horizontal swipe reached cards before their <img> even existed.
+    const PREFETCH_MARGIN = '2400px 2400px';
     const CATALOG_CACHE_KEY = 'catalog_cache_v3';
-    const BLOB_STALL_FALLBACK_MS = 700;
     const HARD_RECOVERY_MS = 1400;
     const FALLBACK_CARD_WIDTH = 640;
     const FALLBACK_CARD_QUALITY = 82;
@@ -146,8 +147,11 @@
         if (!product) return;
 
         const direct = blobUrl(product);
-        const fallback = optimizedFallbackUrl(product);
-        const rawFallback = detailUrl(product);
+        // A direct Blob URL is already the final, optimized 640px card. Do not
+        // replace a merely-slow Blob request with /_vercel/image: that remote
+        // optimizer path is not allowed and returns HTTP 400 in production.
+        const fallback = direct ? '' : optimizedFallbackUrl(product);
+        const rawFallback = direct ? '' : detailUrl(product);
         const primary = direct || fallback || rawFallback;
         if (!primary) return;
 
@@ -161,26 +165,19 @@
         }
 
         ensurePlaceholder(container);
+        // Once our own observer has decided to prefetch, use eager loading.
+        // Otherwise WebKit may apply a second lazy-loading distance heuristic
+        // and postpone the network request again.
         img.loading = high ? 'eager' : 'lazy';
         img.decoding = 'async';
         try { img.fetchPriority = high ? 'high' : 'auto'; } catch (e) {}
         img.setAttribute('fetchpriority', high ? 'high' : 'auto');
 
-        let fallbackTried = false;
         let rawFallbackTried = false;
-        let stallTimer = null;
         let hardTimer = null;
 
         const clearTimers = () => {
-            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
             if (hardTimer) { clearTimeout(hardTimer); hardTimer = null; }
-        };
-
-        const switchToFallback = () => {
-            if (fallbackTried || !fallback || fallback === primary) return;
-            fallbackTried = true;
-            if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
-            img.src = fallback;
         };
 
         const switchToRawFallback = () => {
@@ -196,10 +193,6 @@
             container.dataset.fastImageMounted = '1';
         };
         img.onerror = () => {
-            if (!fallbackTried && fallback && fallback !== primary) {
-                switchToFallback();
-                return;
-            }
             if (switchToRawFallback()) return;
             ensurePlaceholder(container);
         };
@@ -207,18 +200,17 @@
         const absolute = new URL(primary, location.href).href;
         if (img.src !== absolute || !img.complete || img.naturalWidth === 0) img.src = primary;
 
-        if (direct && fallback && fallback !== primary) {
-            stallTimer = setTimeout(() => {
-                if (!img.complete || img.naturalWidth === 0) switchToFallback();
-            }, BLOB_STALL_FALLBACK_MS);
+        // Recovery timers are only for legacy/non-Blob images. Never interrupt
+        // a valid direct Blob request just because a slow phone/network needs
+        // more than 700/1400 ms to finish it.
+        if (!direct) {
+            hardTimer = setTimeout(() => {
+                const active = container.querySelector(':scope > img');
+                if (!active || !active.complete || active.naturalWidth === 0) {
+                    hardRecover(container, product);
+                }
+            }, HARD_RECOVERY_MS);
         }
-
-        hardTimer = setTimeout(() => {
-            const active = container.querySelector(':scope > img');
-            if (!active || !active.complete || active.naturalWidth === 0) {
-                hardRecover(container, product);
-            }
-        }, HARD_RECOVERY_MS);
     }
 
     const observer = new IntersectionObserver(entries => {
