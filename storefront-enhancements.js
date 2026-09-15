@@ -94,11 +94,6 @@
             box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
             cursor: pointer; -webkit-tap-highlight-color: transparent;
         }
-        .catalog-photo-card.catalog-discount-placeholder {
-            background-image: linear-gradient(135deg, rgba(50,52,58,.98), rgba(27,29,34,.98));
-            background-size: 100% 100%;
-            background-position: center;
-        }
         .catalog-photo-card:active { transform: scale(.985); opacity: .94; }
         .catalog-photo-card-name {
             position: absolute; left: 13px; right: 8px; bottom: 12px; z-index: 1;
@@ -220,20 +215,12 @@
         return { y: `${fallbackIndex * (100 / 6)}%` };
     }
 
-    function isDiscountCategory(name) {
-        return String(name || '').trim().toLocaleLowerCase('ru') === 'дисконт';
-    }
-
     function renderCatalogCards() {
         const page = ensureCatalogPage();
         const grid = page.querySelector('#catalog-photo-grid');
         if (!grid) return;
         grid.innerHTML = '';
-        const rawSource = (typeof categories !== 'undefined' && Array.isArray(categories)) ? categories : [];
-        const source = [
-            ...rawSource.filter(cat => !isDiscountCategory(cat?.name)),
-            ...rawSource.filter(cat => isDiscountCategory(cat?.name))
-        ];
+        const source = (typeof categories !== 'undefined' && Array.isArray(categories)) ? categories : [];
         if (!source.length) {
             const empty = document.createElement('div');
             empty.className = 'catalog-empty';
@@ -244,11 +231,7 @@
         source.forEach((cat, index) => {
             const card = document.createElement('div');
             card.className = 'catalog-photo-card';
-            if (isDiscountCategory(cat.name)) {
-                card.classList.add('catalog-discount-placeholder');
-            } else {
-                card.style.setProperty('--catalog-y', visualFor(cat.name, index).y);
-            }
+            card.style.setProperty('--catalog-y', visualFor(cat.name, index).y);
             const label = document.createElement('div');
             label.className = 'catalog-photo-card-name';
             label.textContent = cat.name || '';
