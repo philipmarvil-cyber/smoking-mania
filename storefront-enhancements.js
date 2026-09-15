@@ -220,7 +220,9 @@
         const grid = page.querySelector('#catalog-photo-grid');
         if (!grid) return;
         grid.innerHTML = '';
-        const source = (typeof categories !== 'undefined' && Array.isArray(categories)) ? categories : [];
+        const source = (typeof categories !== 'undefined' && Array.isArray(categories))
+            ? categories.filter(cat => String(cat?.name || '').trim().toLocaleLowerCase('ru') !== 'дисконт')
+            : [];
         if (!source.length) {
             const empty = document.createElement('div');
             empty.className = 'catalog-empty';
