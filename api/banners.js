@@ -12,10 +12,13 @@
 //   POST /api/banners?key=... { catalogCategoryImage: { categoryId, imageUrl } }
 //
 // В схеме v1 также храним внутреннюю цель баннера: товар / категория / URL.
+import { put } from '@vercel/blob';
+import { createHash } from 'node:crypto';
 import { kvGetJson, kvSetJson } from './_catalog-lib.js';
 
 export const BANNERS_KEY = 'home-banners:v1';
 const CATEGORY_IMAGE_KEY_PREFIX = 'catalog-category-image:v1:';
+const CATEGORY_BLOB_PREFIX = 'category-artwork';
 
 const DEFAULT_BANNERS = [
     {
@@ -48,22 +51,80 @@ function cleanCategoryImageUrl(value) {
     return null;
 }
 
+function decodeInlineImage(value) {
+    const match = /^data:image\/(jpeg|jpg|png|webp);base64,([a-z0-9+/=\r\n]+)$/i.exec(String(value || ''));
+    if (!match) return null;
+    const kind = match[1].toLowerCase();
+    const ext = kind === 'jpeg' ? 'jpg' : kind;
+    const contentType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+    const buffer = Buffer.from(match[2].replace(/\s+/g, ''), 'base64');
+    if (!buffer.length) return null;
+    return { buffer, ext, contentType };
+}
+
+// Старые логотипы/обложки хранились прямо в KV как огромный base64 data:-URL.
+// Каждый вход в категорию поэтому тащил через serverless JSON десятки/сотни КБ
+// на КАЖДУЮ картинку, после чего WebView ещё отдельно декодировал base64.
+// Переносим такие изображения в Vercel Blob один раз и дальше отдаём клиенту
+// маленькую постоянную https-ссылку на CDN. Новые загрузки идут сюда сразу.
+async function ensureCategoryImageOnBlob(categoryId, value) {
+    const decoded = decodeInlineImage(value);
+    if (!decoded || !process.env.BLOB_READ_WRITE_TOKEN) return value;
+
+    const digest = createHash('sha256').update(decoded.buffer).digest('hex').slice(0, 20);
+    const pathname = `${CATEGORY_BLOB_PREFIX}/${categoryId}/${digest}.${decoded.ext}`;
+    const blob = await put(pathname, decoded.buffer, {
+        access: 'public',
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 31536000,
+        contentType: decoded.contentType
+    });
+    return blob.url;
+}
+
+async function readCategoryImage(categoryId) {
+    const key = `${CATEGORY_IMAGE_KEY_PREFIX}${categoryId}`;
+    const raw = await kvGetJson(key);
+    if (typeof raw !== 'string' || !raw) return '';
+    if (!raw.startsWith('data:image/')) return raw;
+
+    try {
+        const fastUrl = await ensureCategoryImageOnBlob(categoryId, raw);
+        if (fastUrl && fastUrl !== raw) {
+            await kvSetJson(key, fastUrl);
+            return fastUrl;
+        }
+    } catch (e) {
+        console.warn('[category-artwork] lazy Blob migration skipped:', categoryId, e?.message);
+    }
+    // Если Blob временно недоступен, старый data:-URL всё равно остаётся рабочим.
+    return raw;
+}
+
 async function handleCategoryImagesGet(req, res) {
     const rawIds = String(req.query?.ids || '');
     const ids = [...new Set(rawIds.split(',').map(cleanCategoryId).filter(Boolean))].slice(0, 30);
     if (!ids.length) {
-        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60, stale-while-revalidate=300');
         res.status(200).json({ success: true, images: {} });
         return;
     }
 
     try {
-        const entries = await Promise.all(ids.map(async id => {
-            const value = await kvGetJson(`${CATEGORY_IMAGE_KEY_PREFIX}${id}`);
-            return [id, typeof value === 'string' ? value : ''];
-        }));
-        res.setHeader('Cache-Control', 'no-store');
-        res.status(200).json({ success: true, images: Object.fromEntries(entries) });
+        const entries = await Promise.all(ids.map(async id => [id, await readCategoryImage(id)]));
+        const images = Object.fromEntries(entries);
+        const stillInline = Object.values(images).some(value => String(value || '').startsWith('data:image/'));
+        // После миграции ответ — всего несколько коротких CDN URL, его можно
+        // спокойно кэшировать. Пока хоть один старый data:-URL ещё не переехал,
+        // не фиксируем тяжёлый JSON в CDN.
+        res.setHeader(
+            'Cache-Control',
+            stillInline
+                ? 'no-store'
+                : 'public, max-age=60, s-maxage=60, stale-while-revalidate=600'
+        );
+        res.status(200).json({ success: true, images });
     } catch (e) {
         res.status(200).json({ success: true, images: {} });
     }
@@ -108,9 +169,15 @@ async function handlePost(req, res) {
             return;
         }
         try {
-            const saved = await kvSetJson(`${CATEGORY_IMAGE_KEY_PREFIX}${categoryId}`, imageUrl);
+            // Новую локально загруженную картинку сразу складываем в Blob, а в
+            // KV сохраняем только URL. Поэтому пользовательская витрина больше
+            // никогда не должна получать тяжёлый base64 после новых загрузок.
+            const storedImageUrl = imageUrl
+                ? await ensureCategoryImageOnBlob(categoryId, imageUrl)
+                : '';
+            const saved = await kvSetJson(`${CATEGORY_IMAGE_KEY_PREFIX}${categoryId}`, storedImageUrl);
             if (!saved) throw new Error('KV не подтвердил сохранение');
-            res.status(200).json({ success: true, categoryId, imageUrl });
+            res.status(200).json({ success: true, categoryId, imageUrl: storedImageUrl });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message || 'Не удалось сохранить картинку категории' });
         }

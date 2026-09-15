@@ -305,6 +305,7 @@
     let artwork = {};
     const loadedIds = new Set();
     const loadingIds = new Set();
+    const connectedArtworkHosts = new Set();
 
     function topCategories() {
         try {
@@ -323,22 +324,48 @@
         return [...new Set(ids)];
     }
 
+    function preconnectArtworkUrl(value) {
+        try {
+            const url = new URL(String(value || ''), location.href);
+            if (url.protocol !== 'https:' || url.origin === location.origin || connectedArtworkHosts.has(url.origin)) return;
+            connectedArtworkHosts.add(url.origin);
+            const link = document.createElement('link');
+            link.rel = 'preconnect';
+            link.href = url.origin;
+            link.crossOrigin = 'anonymous';
+            document.head.appendChild(link);
+        } catch (e) {}
+    }
+
     function applyArtwork() {
         const source = topCategories();
         const grid = document.getElementById('catalog-photo-grid');
-        if (!grid || !source.length) return;
-        const cards = [...grid.querySelectorAll('.catalog-photo-card')];
-        cards.forEach((card, index) => {
-            const category = source[index];
-            if (!category) return;
-            const imageUrl = String(artwork[String(category.id)] || '');
-            if (!imageUrl) return;
-            const escaped = imageUrl.replace(/"/g, '%22');
-            card.style.backgroundImage = `linear-gradient(90deg,rgba(14,15,18,.74) 0%,rgba(14,15,18,.42) 38%,rgba(14,15,18,.10) 72%,rgba(14,15,18,.02) 100%),url("${escaped}")`;
-            card.style.backgroundSize = '100% 100%, cover';
-            card.style.backgroundPosition = 'center, center';
-            card.style.backgroundRepeat = 'no-repeat';
-        });
+        if (grid && source.length) {
+            const cards = [...grid.querySelectorAll('.catalog-photo-card')];
+            cards.forEach((card, index) => {
+                const category = source[index];
+                if (!category) return;
+                const imageUrl = String(artwork[String(category.id)] || '');
+                if (!imageUrl || card.dataset.artworkUrl === imageUrl) return;
+                preconnectArtworkUrl(imageUrl);
+
+                // Для большой обложки не убираем штатный спрайт, пока новая
+                // CDN-картинка реально не декодировалась. Поэтому при холодной
+                // загрузке пользователь видит готовую карточку, а не белый провал.
+                const preload = new Image();
+                preload.decoding = 'async';
+                preload.onload = () => {
+                    if (!card.isConnected) return;
+                    const escaped = imageUrl.replace(/"/g, '%22');
+                    card.style.backgroundImage = `linear-gradient(90deg,rgba(14,15,18,.74) 0%,rgba(14,15,18,.42) 38%,rgba(14,15,18,.10) 72%,rgba(14,15,18,.02) 100%),url("${escaped}")`;
+                    card.style.backgroundSize = '100% 100%, cover';
+                    card.style.backgroundPosition = 'center, center';
+                    card.style.backgroundRepeat = 'no-repeat';
+                    card.dataset.artworkUrl = imageUrl;
+                };
+                preload.src = imageUrl;
+            });
+        }
 
         document.querySelectorAll('.subcat-logo-card[data-category-logo-id]').forEach(card => {
             const imageUrl = String(artwork[String(card.dataset.categoryLogoId || '')] || '');
@@ -346,11 +373,35 @@
             const fallback = card.querySelector('.subcat-logo-fallback');
             if (!image || !fallback) return;
             if (imageUrl) {
-                image.src = imageUrl;
-                image.hidden = false;
-                fallback.hidden = true;
+                preconnectArtworkUrl(imageUrl);
+                if (image.dataset.artworkUrl !== imageUrl) {
+                    // Заглушка остаётся видимой до onload — нет белых пустых
+                    // кружков даже на первой загрузке после очистки кэша.
+                    image.hidden = true;
+                    fallback.hidden = false;
+                    image.loading = 'eager';
+                    image.decoding = 'async';
+                    try { image.fetchPriority = 'high'; } catch (e) {}
+                    image.setAttribute('fetchpriority', 'high');
+                    image.onload = () => {
+                        if (image.dataset.artworkUrl !== imageUrl) return;
+                        image.hidden = false;
+                        fallback.hidden = true;
+                    };
+                    image.onerror = () => {
+                        if (image.dataset.artworkUrl !== imageUrl) return;
+                        image.hidden = true;
+                        fallback.hidden = false;
+                    };
+                    image.dataset.artworkUrl = imageUrl;
+                    image.src = imageUrl;
+                } else if (image.complete && image.naturalWidth > 0) {
+                    image.hidden = false;
+                    fallback.hidden = true;
+                }
             } else {
                 image.removeAttribute('src');
+                delete image.dataset.artworkUrl;
                 image.hidden = true;
                 fallback.hidden = false;
             }
@@ -365,12 +416,18 @@
             const batches = [];
             for (let i = 0; i < ids.length; i += 30) batches.push(ids.slice(i, i + 30));
             const results = await Promise.all(batches.map(async batch => {
-                const response = await fetch(`/api/banners?kind=category-images&ids=${encodeURIComponent(batch.join(','))}`, { cache: 'no-store' });
+                // Стабильный порядок id даёт одинаковый URL запроса и позволяет
+                // CDN/HTTP cache переиспользовать маленький JSON с Blob URL.
+                const stableBatch = [...batch].sort();
+                const response = await fetch(`/api/banners?kind=category-images&ids=${encodeURIComponent(stableBatch.join(','))}`);
                 const data = await response.json();
                 if (!response.ok || !data?.success) throw new Error(data?.error || 'Картинки категорий недоступны');
                 return data.images || {};
             }));
-            results.forEach(images => Object.assign(artwork, images));
+            results.forEach(images => {
+                Object.assign(artwork, images);
+                Object.values(images).forEach(preconnectArtworkUrl);
+            });
             ids.forEach(id => loadedIds.add(id));
             applyArtwork();
         } catch (e) {
@@ -398,8 +455,10 @@
 
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
-            loadedIds.clear();
+            // Не выбрасываем уже полученные URL при каждом сворачивании
+            // Telegram: они версионные и сами картинки кэшируются Blob CDN.
             loadArtwork();
+            applyArtwork();
         }
     });
 })();
