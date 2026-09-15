@@ -11,7 +11,11 @@ function requestOrigin(req) {
 }
 
 function optimizedFallbackCardUrl(req, product) {
-    if (!product?.id || !product?.img || Number(product.imageCount || 0) <= 0) return '';
+    // `img` is only the legacy cached href. Some perfectly valid MoySklad
+    // products have imageCount/imageVersion but no `img`, so requiring it here
+    // made their catalogue card permanently blank and also hid the real image
+    // endpoint that can resolve the href by product id.
+    if (!product?.id || Number(product.imageCount || 0) <= 0) return '';
     const version = String(product.imageVersion || '0');
     if (version === '0') return '';
     const origin = requestOrigin(req);
@@ -43,12 +47,6 @@ export default async function handler(req, res) {
                 return { ...product, cardImg: blobCard, imageDelivery: 'vercel-blob' };
             }
 
-            // Для старых/ещё не мигрированных позиций тоже отдаём абсолютный
-            // cardImg. Фронтенд считает такой URL готовой карточкой и НЕ пытается
-            // повторно заворачивать его в /_vercel/image с абсолютным source URL
-            // (тот путь Vercel отклоняет без remotePatterns). /api/product-card
-            // делает same-origin redirect на Image Optimization с ЛОКАЛЬНЫМ
-            // /api/product-image как source, что разрешено нашим localPatterns.
             const fallbackCard = optimizedFallbackCardUrl(req, product);
             return fallbackCard
                 ? { ...product, cardImg: fallbackCard, imageDelivery: 'vercel-optimizer-fallback' }
