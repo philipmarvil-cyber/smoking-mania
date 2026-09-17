@@ -76,15 +76,19 @@
         function getCartSubtotal() {
             return Object.values(cart).reduce((sum, item) => sum + item.price * item.qty, 0);
         }
-        function isBulkDiscountActive() {
-            return getCartSubtotal() >= BULK_DISCOUNT_THRESHOLD;
-        }
         function getDiscountedUnitPrice(price) {
             return Math.round(price * (1 - BULK_DISCOUNT_RATE));
         }
         function isDiscountProduct(item) {
             if (item?.isDiscount) return true;
             return !!allProducts.find(product => product.id === item?.id)?.isDiscount;
+        }
+        function getBulkDiscountSubtotal() {
+            return Object.values(cart).reduce((sum, item) =>
+                sum + (isDiscountProduct(item) ? 0 : item.price * item.qty), 0);
+        }
+        function isBulkDiscountActive() {
+            return getBulkDiscountSubtotal() >= BULK_DISCOUNT_THRESHOLD;
         }
         function getEffectiveUnitPrice(item, discountActive = isBulkDiscountActive()) {
             return discountActive && !isDiscountProduct(item)
@@ -559,7 +563,8 @@
                 return;
             }
             const baseSubtotal = getCartSubtotal();
-            const discountActive = baseSubtotal >= BULK_DISCOUNT_THRESHOLD;
+            const bulkDiscountSubtotal = getBulkDiscountSubtotal();
+            const discountActive = bulkDiscountSubtotal >= BULK_DISCOUNT_THRESHOLD;
 
             container.innerHTML = '';
             let grandTotal = 0;
@@ -608,8 +613,8 @@
                 if (!hasEligibleItems) {
                     progressBar.innerHTML = '';
                 } else {
-                    const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - baseSubtotal);
-                    const pct = Math.min(100, Math.round((baseSubtotal / BULK_DISCOUNT_THRESHOLD) * 100));
+                    const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - bulkDiscountSubtotal);
+                    const pct = Math.min(100, Math.round((bulkDiscountSubtotal / BULK_DISCOUNT_THRESHOLD) * 100));
                     const savings = baseSubtotal - grandTotal;
                     progressBar.innerHTML = `
                         <div class="discount-progress-box">
@@ -1399,7 +1404,7 @@
             }
             const discounted = getDiscountedUnitPrice(prod.price);
             const active = isBulkDiscountActive();
-            const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - getCartSubtotal());
+            const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - getBulkDiscountSubtotal());
             const mainPrice = active ? discounted : prod.price;
             const subLine = active
                 ? `<span class="price-old">${prod.price.toLocaleString()} ₽</span>`
@@ -1441,7 +1446,7 @@
                 `;
             }
             const discounted = getDiscountedUnitPrice(price);
-            const subtotal = getCartSubtotal();
+            const subtotal = getBulkDiscountSubtotal();
             const active = subtotal >= BULK_DISCOUNT_THRESHOLD;
             const remaining = Math.max(0, BULK_DISCOUNT_THRESHOLD - subtotal);
             const noteText = active
