@@ -367,6 +367,7 @@ export async function loadCatalogData() {
 
     const products = visibleProductRows.map(product => {
         const folderId = extractId(product.productFolder?.meta?.href);
+        const isDiscount = discountFolderIds.has(folderId);
         const stock = stockById.hasOwnProperty(product.id)
             ? stockById[product.id]
             : (stockReportHasData ? 0 : null);
@@ -422,9 +423,10 @@ export async function loadCatalogData() {
             folderId,
             stock: stock === null ? null : Math.max(0, stock),
             outOfStock: stock === null ? false : stock <= 0,
+            isDiscount,
             // «Дисконт» остаётся обычной видимой категорией, но его товары
             // никогда не считаются новинками, включая все уровни вложенности.
-            isNew: !discountFolderIds.has(folderId) && seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS,
+            isNew: !isDiscount && seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS,
             firstSeenAt: seenAt === BASELINE ? 0 : seenAt
         };
     });

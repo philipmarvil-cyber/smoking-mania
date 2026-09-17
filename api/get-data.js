@@ -61,9 +61,12 @@ export default async function handler(req, res) {
         const rawBlobIndex = await kvGetJson(PRODUCT_IMAGE_BLOB_INDEX_KEY).catch(() => null);
         const blobIndex = normalizeProductImageBlobIndex(rawBlobIndex);
         const products = (catalog.products || []).map(rawProduct => {
-            const product = discountFolderIds.has(String(rawProduct?.folderId || ''))
-                ? { ...rawProduct, isNew: false }
-                : rawProduct;
+            const isDiscount = discountFolderIds.has(String(rawProduct?.folderId || ''));
+            const product = {
+                ...rawProduct,
+                isDiscount,
+                isNew: isDiscount ? false : !!rawProduct.isNew
+            };
             const blobCard = directBlobCardUrl(blobIndex, product);
             if (blobCard) {
                 // index.html historically keeps only `img` when it copies the
