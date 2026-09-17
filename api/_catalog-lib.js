@@ -35,13 +35,13 @@ const NEW_THRESHOLD_MS = 20 * 24 * 60 * 60 * 1000; // 20 дней
 // (см. buildCategoryTree ниже).
 const HIDDEN_CATEGORY_NAMES = [
     'sale (распродажа)',
-    'дисконт',
     'электронки',
     'жевательный табак',
     'самокруточный табак',
     'жидкости',
     'оэсдн'
 ];
+const DISCOUNT_CATEGORY_NAME = 'дисконт';
 
 // =====================================================================
 // Vercel KV (Upstash) через REST API напрямую, без доп. npm-пакетов.
@@ -345,6 +345,7 @@ export async function loadCatalogData() {
     // вложенности) исключаем целиком, ещё до всего остального — чтобы они
     // не попадали ни в каталог, ни в поиск, откуда бы он ни читал allProducts.
     const hiddenFolderIds = getHiddenFolderIds(folderRows);
+    const discountFolderIds = getFolderIdsWithDescendants(folderRows, [DISCOUNT_CATEGORY_NAME]);
     const visibleProductRows = productRows.filter(p => {
         const folderId = extractId(p.productFolder?.meta?.href);
         if (!folderId) return false;
@@ -421,7 +422,9 @@ export async function loadCatalogData() {
             folderId,
             stock: stock === null ? null : Math.max(0, stock),
             outOfStock: stock === null ? false : stock <= 0,
-            isNew: seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS,
+            // «Дисконт» остаётся обычной видимой категорией, но его товары
+            // никогда не считаются новинками, включая все уровни вложенности.
+            isNew: !discountFolderIds.has(folderId) && seenAt !== BASELINE && (now - seenAt) < NEW_THRESHOLD_MS,
             firstSeenAt: seenAt === BASELINE ? 0 : seenAt
         };
     });
@@ -627,12 +630,12 @@ function normalizeName(name) {
     return (name || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-// Находит id всех скрытых категорий (HIDDEN_CATEGORY_NAMES) и ЛЮБЫХ их
-// потомков, на любую глубину вложенности — не только прямые подкатегории.
-function getHiddenFolderIds(allFolders) {
-    const hiddenIds = new Set();
+// Находит id названных категорий и ЛЮБЫХ их потомков, на любую глубину
+// вложенности — используется и для скрытых разделов, и для «Дисконт».
+function getFolderIdsWithDescendants(allFolders, categoryNames) {
+    const folderIds = new Set();
     allFolders.forEach(f => {
-        if (HIDDEN_CATEGORY_NAMES.includes(normalizeName(f.name))) hiddenIds.add(f.id);
+        if (categoryNames.includes(normalizeName(f.name))) folderIds.add(f.id);
     });
     // Несколько проходов вниз по дереву, пока не перестанут находиться новые
     // потомки — так собираются все уровни вложенности, а не только первый.
@@ -641,13 +644,17 @@ function getHiddenFolderIds(allFolders) {
         changed = false;
         allFolders.forEach(f => {
             const parentId = getParentFolderId(f);
-            if (parentId && hiddenIds.has(parentId) && !hiddenIds.has(f.id)) {
-                hiddenIds.add(f.id);
+            if (parentId && folderIds.has(parentId) && !folderIds.has(f.id)) {
+                folderIds.add(f.id);
                 changed = true;
             }
         });
     }
-    return hiddenIds;
+    return folderIds;
+}
+
+function getHiddenFolderIds(allFolders) {
+    return getFolderIdsWithDescendants(allFolders, HIDDEN_CATEGORY_NAMES);
 }
 
 export function buildCategoryTree(allFolders) {
