@@ -159,6 +159,7 @@
         const NAV_TAB_INDEX = { shop: 0, favorites: 1, cart: 2, account: 3 };
 
         function renderScreen(screen) {
+            productRenderViewToken++;
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
 
@@ -180,6 +181,9 @@
             } else if (screen.type === 'newest') {
                 document.getElementById('page-newest').classList.add('active');
                 renderNewestScreen();
+            } else if (screen.type === 'discount') {
+                document.getElementById('page-discount').classList.add('active');
+                renderDiscountScreen();
             } else if (screen.type === 'detail') {
                 document.getElementById('page-detail').classList.add('active');
                 renderProductDetail(screen.productId);
@@ -926,10 +930,11 @@
             });
         }
 
-        // --- Главная страница: категории + новинки ---
+        // --- Главная страница: категории + новинки + дисконт ---
         function renderHome() {
             renderHomeCategories();
             renderHomeNewest();
+            renderHomeDiscount();
             const searchInput = document.getElementById('search-input');
             if (searchInput && searchInput.value.trim()) {
                 handleHomeSearch();
@@ -1011,6 +1016,23 @@
         function renderNewestScreen() {
             const newest = allProducts.filter(p => p.isNew);
             renderProductCardsInto(document.getElementById('newest-products-container'), newest);
+        }
+
+        function renderHomeDiscount() {
+            const section = document.getElementById('home-discount-section');
+            const wrap = document.getElementById('home-discount-container');
+            const discount = allProducts.filter(p => p.isDiscount);
+            if (!discount.length) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = '';
+            renderProductCardsInto(wrap, discount);
+        }
+
+        function renderDiscountScreen() {
+            const discount = allProducts.filter(p => p.isDiscount);
+            renderProductCardsInto(document.getElementById('discount-products-container'), discount);
         }
 
         function handleHomeSearch() {
@@ -1229,11 +1251,13 @@
         }
 
         // --- Карточки товаров (переиспользуется на главной, в поиске, в категориях) ---
-        // Уникальный токен текущего рендера — если пока идёт порционная
+        // Уникальный токен текущего рендера для каждого контейнера — если пока идёт порционная
         // отрисовка большого списка пользователь успел уйти на другой экран
         // или переключить фильтр, оставшиеся порции старого рендера должны
-        // молча остановиться, а не дописываться поверх нового контейнера.
-        let productRenderToken = 0;
+        // молча остановиться, а не дописываться поверх нового контейнера. Отдельный
+        // токен на контейнер позволяет одновременно строить «Новинки» и «Дисконт».
+        let productRenderViewToken = 0;
+        const productRenderTokens = new WeakMap();
 
         function renderProductBadgeHtml(prod) {
             if (prod.isDiscount) return '<div class="new-badge sale-badge">SALE</div>';
@@ -1242,7 +1266,9 @@
         }
 
         function renderProductCardsInto(container, list) {
-            const myToken = ++productRenderToken;
+            const myToken = (productRenderTokens.get(container) || 0) + 1;
+            const myViewToken = productRenderViewToken;
+            productRenderTokens.set(container, myToken);
             container.innerHTML = '';
             if (!list.length) {
                 container.innerHTML = '<div class="empty-state">Ничего не найдено</div>';
@@ -1334,7 +1360,10 @@
             let sentinel = null;
 
             function renderNextChunk() {
-                if (myToken !== productRenderToken) { if (chunkObserver) chunkObserver.disconnect(); return; }
+                if (myViewToken !== productRenderViewToken || myToken !== productRenderTokens.get(container)) {
+                    if (chunkObserver) chunkObserver.disconnect();
+                    return;
+                }
                 if (sentinel) { sentinel.remove(); sentinel = null; }
                 const fragment = document.createDocumentFragment();
                 const end = Math.min(index + CHUNK_SIZE, sortedList.length);
@@ -1981,6 +2010,14 @@
                 </div>
                 <div class="products-strip" id="home-newest-container"></div>
             </div>
+
+            <div id="home-discount-section">
+                <div class="section-title-row">
+                    <div class="section-title" style="margin:0;">Дисконт</div>
+                    <button class="section-title-all-btn" onclick="navigateTo({type:'discount'})">Все</button>
+                </div>
+                <div class="products-strip" id="home-discount-container"></div>
+            </div>
         </div>
 
         <div id="home-search-results" style="display:none;">
@@ -1993,6 +2030,10 @@
     <div id="page-newest" class="page">
         <div class="header" style="margin-top:0;"><span>Новинки</span></div>
         <div class="products-grid" id="newest-products-container" style="padding:15px 12px;"></div>
+    </div>
+    <div id="page-discount" class="page">
+        <div class="header" style="margin-top:0;"><span>Дисконт</span></div>
+        <div class="products-grid" id="discount-products-container" style="padding:15px 12px;"></div>
     </div>
 
     <!-- Остальные страницы -->
@@ -2140,6 +2181,8 @@
             }
             const newestSection = document.getElementById('home-newest-section');
             if (newestSection) newestSection.style.display = 'none';
+            const discountSection = document.getElementById('home-discount-section');
+            if (discountSection) discountSection.style.display = 'none';
         }
 
         // Не ждём два сетевых чтения Telegram CloudStorage перед каталогом.
