@@ -1423,10 +1423,15 @@
         // подсказка сколько ещё нужно докинуть в корзину до скидки 10%.
         function renderCardPriceHtml(prod) {
             if (prod.isDiscount) {
+                const oldPrice = Number(prod.oldPrice || 0);
+                const oldPriceHtml = Number.isFinite(oldPrice) && oldPrice > prod.price
+                    ? `<span class="price-old">${oldPrice.toLocaleString()} ₽</span>`
+                    : '';
                 return `
                     <div class="product-price-block" data-pricebox="${prod.id}">
                         <div class="product-price-row">
                             <span class="product-price">${prod.price.toLocaleString()} ₽</span>
+                            ${oldPriceHtml}
                         </div>
                     </div>
                 `;
@@ -1468,9 +1473,12 @@
         function renderPriceTiersHtml(prod) {
             const price = prod.price;
             if (prod.isDiscount) {
+                const oldPrice = Number(prod.oldPrice || 0);
+                const hasOldPrice = Number.isFinite(oldPrice) && oldPrice > price;
                 return `
                     <div class="price-tiers-box">
-                        <div class="price-tier-row"><span>Цена</span><span class="price-tier-value">${price.toLocaleString()} ₽</span></div>
+                        ${hasOldPrice ? `<div class="price-tier-row"><span>Цена без скидки</span><span class="price-tier-value struck">${oldPrice.toLocaleString()} ₽</span></div>` : ''}
+                        <div class="price-tier-row"><span>${hasOldPrice ? 'Цена со скидкой' : 'Цена'}</span><span class="price-tier-value">${price.toLocaleString()} ₽</span></div>
                     </div>
                 `;
             }
@@ -2136,6 +2144,7 @@
                 archived: !!prod.outOfStock,
                 folderId: prod.folderId || null,
                 isDiscount: !!prod.isDiscount,
+                oldPrice: Number(prod.oldPrice) || 0,
                 isNew: !!prod.isNew,
                 firstSeenAt: Number(prod.firstSeenAt) || 0,
                 imageCount: Number(prod.imageCount) || (prod.img ? 1 : 0),
