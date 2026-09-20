@@ -103,6 +103,7 @@
             <button class="tab-btn active" id="tab-btn-notify" onclick="switchTab('notify')">Уведомления</button>
             <button class="tab-btn" id="tab-btn-banners" onclick="switchTab('banners')">Баннеры</button>
             <button class="tab-btn" id="tab-btn-catalog" onclick="switchTab('catalog')">Каталог</button>
+            <button class="tab-btn" id="tab-btn-discount" onclick="switchTab('discount')">Дисконт</button>
         </div>
 
         <div class="tab-panel active" id="tab-panel-notify">
@@ -146,12 +147,14 @@
                 <button class="sync-catalog-btn" id="sync-catalog-btn" onclick="syncCatalogNow()">Обновить каталог сейчас</button>
                 <div class="catalog-sync-status" id="catalog-sync-status"></div>
             </div>
+        </div>
 
-            <div class="section-heading" style="margin-top:22px;">Дисконт — цена без скидки</div>
-            <p class="sub" style="margin-top:-6px;">Эта цена показывается зачёркнутой на карточке товара. Реальная цена продажи по-прежнему берётся из МойСклад.</p>
+        <div class="tab-panel" id="tab-panel-discount">
+            <div class="section-heading">Дисконт — цена без скидки</div>
+            <p class="sub" style="margin-top:-6px;">Для товаров из категории «Дисконт» можно задать цену до скидки. Она показывается зачёркнутой на карточке, а текущая цена продажи по-прежнему берётся из МойСклад.</p>
             <div class="catalog-sync-block">
                 <div id="discount-prices-list" class="discount-price-list">
-                    <div class="discount-price-empty">Откройте вкладку «Каталог», чтобы загрузить товары из категории «Дисконт».</div>
+                    <div class="discount-price-empty">Откройте вкладку «Дисконт», чтобы загрузить товары.</div>
                 </div>
                 <button class="sync-catalog-btn" id="discount-prices-save-btn" onclick="saveDiscountPrices()">Сохранить цены</button>
                 <div class="catalog-sync-status" id="discount-prices-status"></div>
@@ -283,10 +286,12 @@
         document.getElementById('tab-panel-notify').classList.toggle('active', name === 'notify');
         document.getElementById('tab-panel-banners').classList.toggle('active', name === 'banners');
         document.getElementById('tab-panel-catalog').classList.toggle('active', name === 'catalog');
+        document.getElementById('tab-panel-discount').classList.toggle('active', name === 'discount');
         document.getElementById('tab-btn-notify').classList.toggle('active', name === 'notify');
         document.getElementById('tab-btn-banners').classList.toggle('active', name === 'banners');
         document.getElementById('tab-btn-catalog').classList.toggle('active', name === 'catalog');
-        if (name === 'catalog') loadDiscountPrices();
+        document.getElementById('tab-btn-discount').classList.toggle('active', name === 'discount');
+        if (name === 'discount') loadDiscountPrices();
     }
 
     // Ручное обновление каталога — та же синхронизация, что раньше запускали,
