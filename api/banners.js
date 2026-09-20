@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import { kvGetJson, kvSetJson } from './_catalog-lib.js';
 
 export const BANNERS_KEY = 'home-banners:v1';
+const DISCOUNT_ORIGINAL_PRICES_KEY = 'discount-original-prices:v1';
 const CATEGORY_IMAGE_KEY_PREFIX = 'catalog-category-image:v1:';
 const CATEGORY_BLOB_PREFIX = 'category-artwork';
 
@@ -153,6 +154,30 @@ async function handlePost(req, res) {
     const providedKey = req.query?.key;
     if (providedKey !== requiredKey) {
         res.status(403).json({ success: false, error: 'Неверный ключ' });
+        return;
+    }
+
+    const discountOriginalPricesUpdate = req.body?.discountOriginalPrices;
+    if (
+        discountOriginalPricesUpdate &&
+        typeof discountOriginalPricesUpdate === 'object' &&
+        !Array.isArray(discountOriginalPricesUpdate)
+    ) {
+        const cleaned = {};
+        for (const [rawId, rawPrice] of Object.entries(discountOriginalPricesUpdate).slice(0, 5000)) {
+            const productId = String(rawId || '').replace(/[^a-z0-9-]/gi, '').slice(0, 80);
+            const price = Number(rawPrice);
+            if (!productId || !Number.isFinite(price) || price <= 0) continue;
+            cleaned[productId] = Math.round(price * 100) / 100;
+        }
+
+        try {
+            const saved = await kvSetJson(DISCOUNT_ORIGINAL_PRICES_KEY, cleaned);
+            if (!saved) throw new Error('KV не подтвердил сохранение');
+            res.status(200).json({ success: true, discountOriginalPrices: cleaned });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message || 'Не удалось сохранить цены до скидки' });
+        }
         return;
     }
 
