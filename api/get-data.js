@@ -4,6 +4,8 @@
 import { kvGetCatalog, kvSetCatalog, loadCatalogData, refreshAllStock, kvGetJson } from './_catalog-lib.js';
 import { PRODUCT_IMAGE_BLOB_INDEX_KEY, normalizeProductImageBlobIndex, directBlobCardUrl } from './blob-image-index.js';
 
+const DISCOUNT_ORIGINAL_PRICES_KEY = 'discount-original-prices:v1';
+
 function requestOrigin(req) {
     const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
     const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
@@ -58,13 +60,24 @@ export default async function handler(req, res) {
         // видимы как обычно, но isNew принудительно выключен для всего поддерева.
         const discountFolderIds = getDiscountFolderIds(catalog.categories || []);
 
-        const rawBlobIndex = await kvGetJson(PRODUCT_IMAGE_BLOB_INDEX_KEY).catch(() => null);
+        const [rawBlobIndex, rawDiscountOriginalPrices] = await Promise.all([
+            kvGetJson(PRODUCT_IMAGE_BLOB_INDEX_KEY).catch(() => null),
+            kvGetJson(DISCOUNT_ORIGINAL_PRICES_KEY).catch(() => null)
+        ]);
         const blobIndex = normalizeProductImageBlobIndex(rawBlobIndex);
+        const discountOriginalPrices = rawDiscountOriginalPrices && typeof rawDiscountOriginalPrices === 'object' && !Array.isArray(rawDiscountOriginalPrices)
+            ? rawDiscountOriginalPrices
+            : {};
         const products = (catalog.products || []).map(rawProduct => {
             const isDiscount = discountFolderIds.has(String(rawProduct?.folderId || ''));
+            const configuredOldPrice = Number(discountOriginalPrices[String(rawProduct?.id || '')]);
+            const oldPrice = isDiscount && Number.isFinite(configuredOldPrice) && configuredOldPrice > 0
+                ? configuredOldPrice
+                : 0;
             const product = {
                 ...rawProduct,
                 isDiscount,
+                oldPrice,
                 isNew: isDiscount ? false : !!rawProduct.isNew
             };
             const blobCard = directBlobCardUrl(blobIndex, product);
