@@ -2201,20 +2201,19 @@
             if (allProducts.length || categories.length) renderScreen(currentScreen());
         });
 
-        // Живые остатки обновляем уже после первого рендера. Серверный cooldown
-        // по-прежнему ограничивает реальный запрос к МойСклад разом в 3 минуты.
+        // Живые остатки обновляем уже после первого рендера через отдельный
+        // компактный endpoint. Полный каталог второй раз не читаем и не гоняем
+        // через Upstash ради изменения нескольких чисел.
         setTimeout(() => {
-            fetch('/api/get-data?refresh=1', { cache: 'no-store' })
+            fetch('/api/stock?refresh=1', { cache: 'no-store' })
                 .then(r => r.json())
                 .then(data => {
-                    if (data.error || !Array.isArray(data.products)) return;
-                    try { localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(data)); } catch (e) {}
-                    const freshById = new Map(data.products.map(prod => [prod.id, prod]));
+                    if (!data.success || !data.stock || typeof data.stock !== 'object') return;
                     allProducts.forEach(prod => {
-                        const fresh = freshById.get(prod.id);
-                        if (!fresh) return;
-                        prod.stock = (typeof fresh.stock === 'number') ? fresh.stock : null;
-                        prod.archived = !!fresh.outOfStock;
+                        if (!Object.prototype.hasOwnProperty.call(data.stock, prod.id)) return;
+                        const qty = Math.max(0, Number(data.stock[prod.id]) || 0);
+                        prod.stock = qty;
+                        prod.archived = qty <= 0;
                     });
                 })
                 .catch(() => {});
