@@ -95,17 +95,37 @@ export default async function handler(req, res) {
 
     const startedAt = Date.now();
     try {
-        const catalog = await kvGetCatalog();
-        if (!catalog || !Array.isArray(catalog.products)) {
-            return res.status(503).json({ success: false, error: 'Каталог ещё не создан' });
-        }
-
         const previousCursor = Number(await kvGetJson(SCAN_CURSOR_KEY).catch(() => 0)) || 0;
         const sinceMs = previousCursor
             ? Math.max(0, previousCursor - OVERLAP_MS)
             : Math.max(0, startedAt - INITIAL_LOOKBACK_MS);
 
+        // Сначала спрашиваем МойСклад только о товарах, изменённых после
+        // прошлого прохода. Если изменений нет, многомегабайтный catalog:v2
+        // вообще не читаем из Upstash.
         const changed = await fetchChangedProducts(sinceMs);
+        if (!changed.rows.length) {
+            await kvSetJson(SCAN_CURSOR_KEY, startedAt);
+            res.setHeader('Cache-Control', 'no-store');
+            return res.status(200).json({
+                success: true,
+                since: moySkladTime(sinceMs),
+                changedProductsReported: changed.total,
+                scannedProducts: 0,
+                matchedCatalogProducts: 0,
+                imageVersionChanges: 0,
+                removedImages: 0,
+                skippedUnexpanded: 0,
+                truncated: changed.truncated,
+                durationMs: Date.now() - startedAt
+            });
+        }
+
+        const catalog = await kvGetCatalog();
+        if (!catalog || !Array.isArray(catalog.products)) {
+            return res.status(503).json({ success: false, error: 'Каталог ещё не создан' });
+        }
+
         const byId = new Map(catalog.products.map(product => [product.id, product]));
         const imageHrefsRaw = await kvGetJson(IMAGE_HREFS_KEY).catch(() => null);
         const imageHrefs = imageHrefsRaw && typeof imageHrefsRaw === 'object'
@@ -158,8 +178,11 @@ export default async function handler(req, res) {
 
             const links = imageLinks(rows);
             if (links.minis.length || links.fulls.length) {
-                imageHrefs[product.id] = links;
-                hrefsChanged = true;
+                const previousLinks = imageHrefs[product.id];
+                if (JSON.stringify(previousLinks || null) !== JSON.stringify(links)) {
+                    imageHrefs[product.id] = links;
+                    hrefsChanged = true;
+                }
             }
 
             if (product.imageVersion !== version || Number(product.imageCount || 0) !== imageCount) {
@@ -174,6 +197,7 @@ export default async function handler(req, res) {
         const writes = [];
         if (catalogChanged) writes.push(kvSetCatalog(catalog));
         if (hrefsChanged) writes.push(kvSetJson(IMAGE_HREFS_KEY, imageHrefs));
+        if (versionChanges > 0) writes.push(kvSetJson('product-image-blob-dirty:v1', true));
         // Advance the cursor only after all MoySklad reads and catalog processing
         // succeeded. A failed run therefore gets retried instead of losing edits.
         writes.push(kvSetJson(SCAN_CURSOR_KEY, startedAt));
