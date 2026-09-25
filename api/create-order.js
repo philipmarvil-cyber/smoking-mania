@@ -1,6 +1,6 @@
 // Создание заказа покупателя в МойСклад из корзины бота.
 // Все запросы идут через fetchJson с троттлингом и ретраями на 429.
-import { API, fetchJson, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, getLiveStock, sendToAdminsForType } from './_catalog-lib.js';
+import { API, fetchJson, kvGetCatalog, kvGetJson, kvSetJson, kvGetStock, kvSetStock, stockMapFromProducts, getLiveStock, sendToAdminsForType } from './_catalog-lib.js';
 import { recordTelegramOrder } from './_user-lib.js';
 
 export default async function handler(req, res) {
@@ -30,6 +30,8 @@ export default async function handler(req, res) {
         // (именно так и уходило в -1). Берём минимум — какой бы источник ни
         // отставал, мы всё равно не продадим лишнего.
         const catalog = await kvGetCatalog();
+        let cachedStock = await kvGetStock().catch(() => null);
+        if (!cachedStock) cachedStock = stockMapFromProducts(catalog?.products || []);
         const productIds = items.map(i => i.id).filter(Boolean);
         let liveStock = {};
         try {
@@ -47,7 +49,8 @@ export default async function handler(req, res) {
 
             const candidates = [];
             if (liveStock.hasOwnProperty(i.id)) candidates.push(liveStock[i.id]);
-            if (cachedProduct && typeof cachedProduct.stock === 'number') candidates.push(cachedProduct.stock);
+            if (Object.prototype.hasOwnProperty.call(cachedStock, i.id)) candidates.push(Number(cachedStock[i.id]) || 0);
+            else if (cachedProduct && typeof cachedProduct.stock === 'number') candidates.push(cachedProduct.stock);
             const availableStock = candidates.length ? Math.min(...candidates) : null;
 
             if (availableStock !== null && availableStock < requestedQty) {
@@ -160,20 +163,18 @@ export default async function handler(req, res) {
             reservedCount = 0; // не удалось подтвердить резерв — заказ всё равно создан, разберёмся вручную
         }
 
-        // 5. Списываем купленное количество из кэша каталога сразу же —
-        // чтобы все пользователи бота мгновенно увидели актуальный остаток
-        // и пометку "Нет в наличии", не дожидаясь ночной синхронизации.
-        if (catalog && Array.isArray(catalog.products)) {
-            items.forEach(i => {
-                const product = catalog.products.find(p => p.id === i.id);
-                if (product && typeof product.stock === 'number') {
-                    const qty = Math.max(1, parseInt(i.qty, 10) || 1);
-                    product.stock = Math.max(0, product.stock - qty);
-                    product.outOfStock = product.stock <= 0;
-                }
-            });
-            await kvSetCatalog(catalog);
-        }
+        // 5. Списываем купленное количество только из компактного stock:v1.
+        // Раньше ради этого перезаписывался весь catalog:v2 на тысячи товаров.
+        items.forEach(i => {
+            if (!i.id) return;
+            const current = Object.prototype.hasOwnProperty.call(cachedStock, i.id)
+                ? Math.max(0, Number(cachedStock[i.id]) || 0)
+                : null;
+            if (current === null) return;
+            const qty = Math.max(1, parseInt(i.qty, 10) || 1);
+            cachedStock[i.id] = Math.max(0, current - qty);
+        });
+        await kvSetStock(cachedStock);
 
         // Сохраняем связку telegramUserId → id заказа в KV — раньше "Мои
         // заказы" полагались только на локальный CloudStorage устройства,
