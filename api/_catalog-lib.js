@@ -13,6 +13,7 @@ const HEADERS = {
 };
 
 const CATALOG_KEY = 'catalog:v2'; // v2 — формат стал компактным (только нужные поля)
+const STOCK_KEY = 'stock:v1'; // отдельный компактный кэш остатков, чтобы не перезаписывать весь каталог
 
 // Дата "первого появления" каждого товара: { productId: timestampMs }.
 // При самом первом запуске все существующие товары получают метку BASELINE (0)
@@ -109,6 +110,25 @@ export async function kvGetCatalog() {
 
 export async function kvSetCatalog(value) {
     return kvSetJson(CATALOG_KEY, value);
+}
+
+export async function kvGetStock() {
+    const value = await kvGetJson(STOCK_KEY);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+export async function kvSetStock(value) {
+    return kvSetJson(STOCK_KEY, value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+}
+
+export function stockMapFromProducts(products = []) {
+    const stock = {};
+    for (const product of products || []) {
+        const id = String(product?.id || '').trim();
+        if (!id || typeof product?.stock !== 'number') continue;
+        stock[id] = Math.max(0, Number(product.stock) || 0);
+    }
+    return stock;
 }
 
 // =====================================================================
@@ -269,44 +289,65 @@ export async function notifyRestockedProducts(oldById, newProducts) {
 const REFRESH_COOLDOWN_MS = 3 * 60 * 1000; // не чаще раза в 3 минуты
 const REFRESH_COOLDOWN_KEY = 'stock-refresh-cooldown';
 
+async function notifyRestockedFromStock(previousStock, nextStock) {
+    if (!previousStock) return { restockedCount: 0, notified: 0 };
+
+    const restockedIds = Object.keys(nextStock).filter(id =>
+        Number(previousStock[id] || 0) <= 0 && Number(nextStock[id] || 0) > 0
+    );
+    if (!restockedIds.length) return { restockedCount: 0, notified: 0 };
+
+    // Полный каталог читаем только если реально есть подписчик на товар,
+    // который только что появился в наличии. В обычном refresh это чтение
+    // вообще не происходит.
+    const waiting = [];
+    for (const productId of restockedIds) {
+        const subscribers = await kvGetJson(`restock:${productId}`);
+        if (Array.isArray(subscribers) && subscribers.length) {
+            waiting.push({ productId, subscribers });
+        }
+    }
+    if (!waiting.length) return { restockedCount: restockedIds.length, notified: 0 };
+
+    const catalog = await kvGetCatalog().catch(() => null);
+    const names = new Map(
+        (catalog?.products || []).map(product => [String(product.id), product.name])
+    );
+
+    let notified = 0;
+    for (const item of waiting) {
+        const productName = names.get(item.productId) || item.productId;
+        await Promise.all(item.subscribers.map(chatId =>
+            sendTelegramMessage(chatId, `✅ «${productName}» снова в наличии!`)
+        ));
+        notified += item.subscribers.length;
+        await kvSetJson(`restock:${item.productId}`, []);
+    }
+
+    return { restockedCount: restockedIds.length, notified };
+}
+
 export async function refreshAllStock() {
     const lastRun = await kvGetJson(REFRESH_COOLDOWN_KEY);
-    if (lastRun && Date.now() - lastRun < REFRESH_COOLDOWN_MS) return false; // ещё рано, недавно уже обновляли
-    await kvSetJson(REFRESH_COOLDOWN_KEY, Date.now()); // ставим "занято" сразу, до самого запроса
+    if (lastRun && Date.now() - lastRun < REFRESH_COOLDOWN_MS) return false;
+    await kvSetJson(REFRESH_COOLDOWN_KEY, Date.now());
 
-    const catalog = await kvGetCatalog();
-    if (!catalog || !Array.isArray(catalog.products) || !catalog.products.length) return false;
+    const previousStock = await kvGetStock();
 
     const stockRows = await fetchAllRows(`${API}/report/stock/all?limit=1000`).catch(() => null);
-    if (!stockRows) return false; // не удалось получить отчёт — кэш не трогаем
+    if (!stockRows) return false;
 
-    const stockById = {};
+    const nextStock = {};
     stockRows.forEach(row => {
         const id = extractId(row.meta?.href);
-        if (id) stockById[id] = row.quantity ?? row.stock ?? 0;
-    });
-    const stockReportHasData = stockRows.length > 0;
-
-    // Снимок "было" — до перезаписи — нужен, чтобы понять, какие товары
-    // именно СЕЙЧАС появились в наличии (а не просто были в наличии всегда).
-    const beforeById = {};
-    catalog.products.forEach(p => { beforeById[p.id] = { outOfStock: p.outOfStock }; });
-
-    catalog.products.forEach(product => {
-        const stock = stockById.hasOwnProperty(product.id)
-            ? stockById[product.id]
-            : (stockReportHasData ? 0 : null);
-        product.stock = stock === null ? null : Math.max(0, stock);
-        product.outOfStock = stock === null ? false : stock <= 0;
+        if (id) nextStock[id] = Math.max(0, Number(row.quantity ?? row.stock ?? 0) || 0);
     });
 
-    const saved = await kvSetCatalog(catalog);
-    // Уведомляем подписавшихся на "Уведомить о поступлении" — раньше это
-    // делала только ночная полная синхронизация, и уведомления не приходили,
-    // если остаток обновлялся этим "лёгким" путём (через вебхук или при
-    // обычной загрузке каталога).
-    await notifyRestockedProducts(beforeById, catalog.products).catch(() => {});
-    return saved;
+    const saved = await kvSetStock(nextStock);
+    if (!saved) return false;
+
+    await notifyRestockedFromStock(previousStock, nextStock).catch(() => {});
+    return true;
 }
 
 // =====================================================================
