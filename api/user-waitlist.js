@@ -1,4 +1,4 @@
-import { kvGetJson, kvGetCatalog } from './_catalog-lib.js';
+import { kvGetJson, kvGetCatalog, kvGetStock } from './_catalog-lib.js';
 
 const LOG_KEY = 'notify-subs:v1';
 const PURCHASED_PREFIX = 'waitlist-purchased:v1:';
@@ -23,9 +23,10 @@ export default async function handler(req, res) {
     }
 
     try {
-        const [log, catalog, purchasedRaw] = await Promise.all([
+        const [log, catalog, stock, purchasedRaw] = await Promise.all([
             kvGetJson(LOG_KEY),
             kvGetCatalog().catch(() => null),
+            kvGetStock().catch(() => null),
             kvGetJson(PURCHASED_PREFIX + telegramUserId).catch(() => null)
         ]);
         const latestByProduct = new Map();
@@ -69,7 +70,10 @@ export default async function handler(req, res) {
                 const product = productsById.get(item.productId) || null;
                 const subs = await kvGetJson(`restock:${item.productId}`);
                 const active = Array.isArray(subs) && subs.some(id => String(id) === telegramUserId);
-                const inStock = !!product && !product.outOfStock && !product.archived;
+                const hasLiveStock = !!stock && Object.prototype.hasOwnProperty.call(stock, item.productId);
+                const inStock = !!product && !product.archived && (
+                    hasLiveStock ? Number(stock[item.productId] || 0) > 0 : !product.outOfStock
+                );
 
                 // Активная заявка всегда остаётся. Уже сработавшую показываем,
                 // пока товар реально есть в наличии. Старые неактивные записи,

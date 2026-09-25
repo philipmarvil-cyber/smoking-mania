@@ -1,6 +1,6 @@
 // Синхронизация каталога: МойСклад → Vercel KV.
 // Запускается кроном (vercel.json) раз в сутки или вручную открытием URL.
-import { loadCatalogData, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, notifyRestockedProducts } from './_catalog-lib.js';
+import { loadCatalogData, kvGetCatalog, kvSetCatalog, kvGetJson, kvSetJson, kvGetStock, kvSetStock, stockMapFromProducts, notifyRestockedFromStock } from './_catalog-lib.js';
 
 const CARD_IMAGE_WIDTH = 640;
 const CARD_IMAGE_QUALITY = 82;
@@ -108,7 +108,10 @@ export default async function handler(req, res) {
         }
         await kvSetJson(lockKey, startedAt);
 
-        const oldCatalog = await kvGetCatalog();
+        const [oldCatalog, oldStock] = await Promise.all([
+            kvGetCatalog(),
+            kvGetStock().catch(() => null)
+        ]);
         const oldById = {};
         if (oldCatalog && Array.isArray(oldCatalog.products)) {
             oldCatalog.products.forEach(p => { oldById[p.id] = p; });
@@ -125,15 +128,23 @@ export default async function handler(req, res) {
             product.img = `${product.img}${separator}r=${IMAGE_RECOVERY_EPOCH}`;
         });
 
-        const saved = await kvSetCatalog({ ...data, syncedAt: Date.now() });
-        if (!saved) throw new Error('Не удалось сохранить обновлённый каталог в KV');
+        const nextStock = stockMapFromProducts(data.products);
+        const [savedCatalog, savedStock] = await Promise.all([
+            kvSetCatalog({ ...data, syncedAt: Date.now() }),
+            kvSetStock(nextStock)
+        ]);
+        if (!savedCatalog || !savedStock) throw new Error('Не удалось сохранить обновлённый каталог/остатки в KV');
 
-        const { restockedCount, notified } = await notifyRestockedProducts(oldById, data.products);
+        const { restockedCount, notified } = await notifyRestockedFromStock(oldStock, nextStock);
         const imageWarm = await warmChangedCardImages(req, data.products, oldById, startedAt);
+        if (imageWarm.candidates > 0) {
+            await kvSetJson('product-image-blob-dirty:v1', true);
+        }
 
         res.status(200).json({
             success: true,
             savedToKv: true,
+            stockSavedSeparately: true,
             products: data.products.length,
             categories: data.categories.length,
             newItems: data.products.filter(p => p.isNew).length,

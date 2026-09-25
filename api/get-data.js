@@ -1,7 +1,7 @@
 // Отдаёт каталог фронтенду. Обычная загрузка читает готовый каталог из KV
 // и НЕ ждёт живого запроса к МойСклад. Обновление остатков запускается
 // отдельно через ?refresh=1 уже после первого рендера интерфейса.
-import { kvGetCatalog, kvSetCatalog, loadCatalogData, refreshAllStock, kvGetJson } from './_catalog-lib.js';
+import { kvGetCatalog, kvSetCatalog, loadCatalogData, refreshAllStock, kvGetJson, kvGetStock, kvSetStock, stockMapFromProducts } from './_catalog-lib.js';
 import { PRODUCT_IMAGE_BLOB_INDEX_KEY, normalizeProductImageBlobIndex, directBlobCardUrl } from './blob-image-index.js';
 
 const DISCOUNT_ORIGINAL_PRICES_KEY = 'discount-original-prices:v1';
@@ -48,13 +48,17 @@ export default async function handler(req, res) {
         if (!catalog) {
             isColdStart = true;
             catalog = await loadCatalogData();
-            await kvSetCatalog({ ...catalog, syncedAt: Date.now() });
+            await Promise.all([
+                kvSetCatalog({ ...catalog, syncedAt: Date.now() }),
+                kvSetStock(stockMapFromProducts(catalog.products || []))
+            ]);
         }
 
         if (!isColdStart && req.query.refresh === '1') {
-            const refreshed = await refreshAllStock().catch(() => false);
-            if (refreshed) catalog = await kvGetCatalog();
+            await refreshAllStock().catch(() => false);
         }
+
+        const liveStock = await kvGetStock().catch(() => null);
 
         // Защита для уже закэшированного каталога: «Дисконт» и его товары
         // видимы как обычно, но isNew принудительно выключен для всего поддерева.
@@ -74,8 +78,13 @@ export default async function handler(req, res) {
             const oldPrice = isDiscount && Number.isFinite(configuredOldPrice) && configuredOldPrice > 0
                 ? configuredOldPrice
                 : 0;
+            const productId = String(rawProduct?.id || '');
+            const hasLiveStock = !!liveStock && Object.prototype.hasOwnProperty.call(liveStock, productId);
+            const liveQuantity = hasLiveStock ? Math.max(0, Number(liveStock[productId]) || 0) : null;
             const product = {
                 ...rawProduct,
+                stock: hasLiveStock ? liveQuantity : rawProduct.stock,
+                outOfStock: hasLiveStock ? liveQuantity <= 0 : !!rawProduct.outOfStock,
                 isDiscount,
                 oldPrice,
                 isNew: isDiscount ? false : !!rawProduct.isNew

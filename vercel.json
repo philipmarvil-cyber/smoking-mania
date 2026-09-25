@@ -5,35 +5,77 @@
     {
       "source": "/card-quality.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
       ]
     },
     {
       "source": "/favorites-waitlist.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
       ]
     }
   ],
   "images": {
-    "sizes": [384, 640, 750, 1080],
+    "sizes": [
+      384,
+      640,
+      750,
+      1080
+    ],
     "localPatterns": [
-      { "pathname": "^/api/product-image$" }
+      {
+        "pathname": "^/api/product-image$"
+      }
     ],
     "minimumCacheTTL": 2592000,
-    "qualities": [82],
-    "formats": ["image/webp"]
+    "qualities": [
+      82
+    ],
+    "formats": [
+      "image/webp"
+    ]
   },
   "functions": {
-    "api/sync-catalog.js": { "maxDuration": 60 },
-    "api/migrate-product-images.js": { "maxDuration": 60 },
-    "api/order-webhook.js": { "maxDuration": 30 },
-    "api/get-data.js": { "maxDuration": 30 },
-    "api/banners.js": { "maxDuration": 30 }
+    "api/sync-catalog.js": {
+      "maxDuration": 60
+    },
+    "api/migrate-product-images.js": {
+      "maxDuration": 60
+    },
+    "api/order-webhook.js": {
+      "maxDuration": 30
+    },
+    "api/get-data.js": {
+      "maxDuration": 30
+    },
+    "api/banners.js": {
+      "maxDuration": 30
+    },
+    "api/refresh-product-images.js": {
+      "maxDuration": 60
+    },
+    "api/stock.js": {
+      "maxDuration": 30
+    }
   },
   "crons": [
-    { "path": "/api/sync-catalog", "schedule": "0 3 * * *" },
-    { "path": "/api/migrate-product-images", "schedule": "* * * * *" },
-    { "path": "/api/detect-product-image-changes", "schedule": "* * * * *" }
+    {
+      "path": "/api/sync-catalog",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/refresh-product-images",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/migrate-product-images",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }
