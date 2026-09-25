@@ -289,7 +289,7 @@ export async function notifyRestockedProducts(oldById, newProducts) {
 const REFRESH_COOLDOWN_MS = 3 * 60 * 1000; // не чаще раза в 3 минуты
 const REFRESH_COOLDOWN_KEY = 'stock-refresh-cooldown';
 
-async function notifyRestockedFromStock(previousStock, nextStock) {
+export async function notifyRestockedFromStock(previousStock, nextStock) {
     if (!previousStock) return { restockedCount: 0, notified: 0 };
 
     const restockedIds = Object.keys(nextStock).filter(id =>
